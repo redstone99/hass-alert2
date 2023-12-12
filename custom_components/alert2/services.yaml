@@ -1,0 +1,42 @@
+report:
+  name: Report Event
+  description: Report that an event alert fired
+  fields:
+    domain:
+      required: true
+      selector:
+        text:
+    name:
+      required: true
+      selector:
+        text:
+    message:
+      description: Extra text to include in the alert message
+      selector:
+        text:
+
+notification_control:
+  name: Notification Control
+  description: Enable/Disable/Snooze notifications. Affects current and future alert firings.
+  target:
+    entity:
+      domain: alert2
+  fields:
+    enable:
+      name: Notifications
+      description: Enable, disable or snooze notifications
+      example: true
+      required: true
+      selector:
+        select:
+          options:
+            - label: "Enable"
+              value: "on"
+            - label: "Disable"
+              value: "off"
+    snooze_until:
+      name: Snooze until
+      description: Notifications will only be sent for alerts that fire after this time.  Should only be set if Notifications is set to "Snooze". Format can be "2000-01-20 04:23:00". Time is local time.
+      required: false
+      selector:
+        text:

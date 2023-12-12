@@ -1,0 +1,9 @@
+{
+    "domain": "alert2",
+    "name": "Event-based alerting",
+    "documentation": "https://equatinelabs.com",
+    "requirements": ["pyserial-asyncio==0.5"],
+    "codeowners": [],
+    "version": "0.1",
+    "dependencies": [ "notify" ]
+}
