@@ -129,7 +129,9 @@ class Alert2Overview extends LitElement {
                 if (aconf.entity.startsWith('alert2.')) {
                     // 'custom:' gets stripped off in src/panels/lovelace/create-element/create-element-base.ts
                     aconf.type = 'custom:hui-alert2-entity-row';
-                    aconf.tap_action = { action: "fire-dom-event" };
+                    // fire-dom-event causes ll-custom event to fire, if we're using hui-generic-entity-row, which we're not anymore.
+                    // This should have no effect.
+                    // aconf.tap_action = { action: "fire-dom-event" };
                 }
             }
             entListHtml = html`${entitiesConf.map((entityConf) => this.renderEntity(entityConf)
@@ -163,17 +165,35 @@ class Alert2Overview extends LitElement {
         let outerThis = this;
         // hui-generic-entity-row calls handleAction on events, including clicks.
         // we set the action to take on 'tap' to be 'fire-dom-event', which generates a 'll-custom' event
-        element.addEventListener('ll-custom', (ev)=>outerThis._alertClick(ev, entityName));
+        // NOTE - the hui- code gobbles up the click event and on chrome-mobile seems to gobble up clicks on an 'ack' button as well :(,
+        // and further, the ll-custom event does not include information on which element was originally clicked on. :(
+        //
+        //element.addEventListener('ll-custom', (ev)=>outerThis._alertClick(ev, entityName));
+        element.addEventListener('click', (ev)=>outerThis._alertClick(ev, entityName));
+        //element.addEventListener('click', this.anev2);
+        //console.log('foo2', element);
+        //console.log('ick', element.shadowRoot.querySelector('hui-generic-entity-row'));
+        //return html`<div class="jEvWrapper" @click=${this.anev1} >${element}</div>`;
         return html`<div class="jEvWrapper">${element}</div>`;
     }
+    //anev1(ev) {
+        //console.log('anev1', ev);
+   // }
+   // anev2(ev) {
+    //    console.log('anev2', ev);
+    //}
     _alertClick(ev, entityName) {
         let style = '';
+
+        //let e = ev || window.event;
+        //let srcElem = e.target || e.srcElement;
+        //console.log('click4', srcElem, ev, ev.srcElement.nodeName, ev.target.nodeName, srcElem.nodeName);
         let cardTools = customElements.get('card-tools');
         let x = cardTools.popUp('Alert2 info for ' + entityName, { type: 'custom:more-info-alert2-container', entityName: entityName }, true, style);
         x.then(()=>{
             // dialog has been opened
         });
-        return false;
+        return true;
     }
     static styles = css`
       ha-card {
@@ -311,6 +331,10 @@ class Alert2EntityRow extends LitElement  {
         }
         this._config = config;
     }
+    _rowClick(ev) {
+        console.log('_rowClick', ev);
+        return true;
+    }
     render() {
         if (!this._hass || !this._config) {
             console.warn('foo, not ready to render');
@@ -325,16 +349,58 @@ class Alert2EntityRow extends LitElement  {
       `;
         }
 
+        // This is essentially the guts of hui-generic-entity-row, except it does not swallow click events, like hui-generic-entity-row does (and converts it to ll-custom).  That means we can react to a click on a 'Ack' button in a row entity.
         return html`
-      <hui-generic-entity-row .hass=${this._hass} .config=${this._config}>
-        <ha-alert2-state .hass=${this._hass} .stateObj=${stateObj}>
-        </ha-alert2-state>
-      </hui-generic-entity-row>
-      `;
+         <state-badge
+        class="pointer"
+        .hass=${this._hass}
+        .stateObj=${stateObj}
+        @click=${this._rowClick}
+        tabindex="0"></state-badge>
+       <div class="info pointer text-content" title=${stateObj.entity_id} @click=${this._rowClick}  >${stateObj.entity_id}</div>
+       <div class="text-content value pointer" title=${stateObj.entity_id}  @click=${this._rowClick} >
+           <div class="state">
+              <ha-alert2-state .hass=${this._hass} .stateObj=${stateObj}>
+              </ha-alert2-state>
+           </div>
+       </div>
+`;
+       
+        //return html`
+//      <hui-generic-entity-row .hass=${this._hass} .config=${this._config}>
+//        <ha-alert2-state .hass=${this._hass} .stateObj=${stateObj}>
+//        </ha-alert2-state>
+//      </hui-generic-entity-row>
+//      `;
     }
 
     static styles = css`
+      :host {
+        display: flex;
+        align-items: center;
+        flex-direction: row;
+      }
+      .info {
+        margin-left: 16px;
+        margin-right: 8px;
+        flex: 1 1 30%;
+      }
+      .info,
+      .info > * {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
       ha-alert2-state {
+        text-align: right;
+      }
+      state-badge {
+        flex: 0 0 40px;
+      }
+      .pointer {
+        cursor: pointer;
+      }
+      .state {
         text-align: right;
       }
     `;
@@ -415,6 +481,7 @@ class HaAlert2State extends LitElement {
         this.dispatchEvent(event);
     }
     async _jack(ev) {
+        console.log('_jack clicked');
         this._ackInProgress = true;
         let abutton = ev.target;
         ev.stopPropagation();

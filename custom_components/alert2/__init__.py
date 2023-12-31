@@ -772,6 +772,7 @@ class Alert2Data:
         hass.bus.async_listen(EVENT_TYPE, self.handle_report)
         hass.services.async_register(DOMAIN, 'report', self.doreport)
         hass.services.async_register(DOMAIN, 'ack_all', self.ackAll)
+        hass.services.async_register(DOMAIN, 'log', self.dolog)
         self.component.async_register_entity_service(
             'notification_control',
             cv.make_entity_service_schema(NOTIFICATION_CONTROL_SCHEMA),
@@ -836,6 +837,12 @@ class Alert2Data:
                 entities.append(self.declareEvent(x['domain'], 'unhandled_exception'))
         await self.component.async_add_entities(entities)
         
+    async def dolog(self, call):
+        logLevel = 'info'
+        if 'level' in call.data and call.data['level'] in [ 'debug', 'info', 'warning', 'error', 'critical' ]:
+            logLevel = call.data['level']
+        txt = call.data['message'] if 'message' in call.data else None
+        getattr(_LOGGER, logLevel)(f'Log: {txt}')
     async def doreport(self, call):
         txt = call.data['message'] if 'message' in call.data else None
         report(call.data['domain'], call.data['name'], txt)
