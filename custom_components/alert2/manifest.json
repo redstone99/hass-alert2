@@ -4,6 +4,6 @@
     "documentation": "https://equatinelabs.com",
     "requirements": ["pyserial-asyncio==0.5"],
     "codeowners": [],
-    "version": "0.1",
+    "version": "0.2",
     "dependencies": [ "notify" ]
 }

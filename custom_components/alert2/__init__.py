@@ -262,7 +262,7 @@ class AlertBase(RestoreEntity):
     # override_timing overrides time since last notify, but does not override
     #    snooze or disabled
     def can_notify_now(self, now, override_timing=False):
-        if self.last_notified_time:
+        if self.last_notified_time and self.notification_frequency_mins > 0:
             if self.last_ack_time and self.last_ack_time > self.last_notified_time:
                 # If we've acked since last notification, it resets the last_notified_time effectively
                 remaining_secs = 0

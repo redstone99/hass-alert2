@@ -3,7 +3,8 @@ import voluptuous as vol
 from voluptuous.humanize import humanize_error
 import homeassistant.helpers.config_validation as cv
 import logging
-from homeassistant.helpers import config_per_platform, config_validation as cv
+from homeassistant.helpers import config_validation as cv
+from homeassistant import config as ha_config
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
 _LOGGER = logging.getLogger(__name__)
@@ -11,7 +12,7 @@ _LOGGER = logging.getLogger(__name__)
 SINGLE_TRACKED_SCHEMA = vol.Schema({
     vol.Required('domain'): cv.string,
     vol.Required('name'): cv.string,
-    vol.Optional('notification_frequency_mins'): vol.Coerce(float),
+    vol.Optional('notification_frequency_mins'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
     vol.Optional('notifier'): cv.string,
 })
 SINGLE_ALERT_SCHEMA = vol.Schema({
@@ -20,13 +21,13 @@ SINGLE_ALERT_SCHEMA = vol.Schema({
     vol.Optional('trigger'): cv.TRIGGER_SCHEMA,
     vol.Required('condition'): cv.template,
     vol.Required('message'): cv.template,
-    vol.Optional('notification_frequency_mins'): vol.Coerce(float),
+    vol.Optional('notification_frequency_mins'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
     vol.Optional('notifier'): cv.string
 })
 
 ALERT2_SCHEMA = vol.Schema({
     vol.Optional('defaults'): vol.Schema({
-        vol.Optional('notification_frequency_mins'): vol.Coerce(float),
+        vol.Optional('notification_frequency_mins'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
         vol.Optional('notifier'): cv.string,
     }),
     vol.Optional('tracked'): vol.All(
@@ -45,7 +46,7 @@ async def async_validate_config(hass: HomeAssistant, config: ConfigType) -> Conf
     #
     # Purpose of this is to give a more informative error in the alert config
     #
-    for section_name, p_config in config_per_platform(config, DOMAIN):
+    for section_name, p_config in ha_config.config_per_platform(config, DOMAIN):
         if 'alerts' in p_config:
             for analert in p_config['alerts']:
                 try:
