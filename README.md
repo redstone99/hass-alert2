@@ -33,7 +33,7 @@ Alert2 is not yet a bundled component in HomeAssistant, so installation requires
 
 1. Create the directories `custom_components` and `www` in your Home Assistant configuration directory if they don't already exist.
 
-   Your configuration directory is something like 'config' share if using [hass.io](https://home-assistant.io/hassio/) with the [Samba](https://home-assistant.io/addons/samba/) add-on or typically `~/.home-assistant/` for Linux installations.
+   Your configuration directory is the directory with `configuration.yaml`, and is something like 'config' share if using [hass.io](https://home-assistant.io/hassio/) with the [Samba](https://home-assistant.io/addons/samba/) add-on or something like `~/.home-assistant/` for Linux installations.
 1. Copy `alert2` and its contents from the `custom_components` directory in this project into the directory `custom_components`.
 1. Copy `alert2.js` from the `www` directory in this project into the directory `www`.
 
@@ -107,7 +107,7 @@ A `defaults:` subsection specifies default values for parameters common to every
 
 | Key | Type | Description |
 |---|---|---|
-| `notification_frequency_mins` | float | Minimum frequency between notifications of alert firings. Also is the frequency of reminders for ongoing, un-ack'd condition alerts.<br>TODO - allow this be a template argument to support arbitrary functions calculating next notification delay. |
+| `notification_frequency_mins` | float | Minimum interval in minutes between notifications of alert firings. Also is the frequency of reminders for ongoing, un-ack'd condition alerts. May be 0 to indicate no limit on frequency of notifications.<br>TODO - allow this be a template argument to support arbitrary functions calculating next notification delay. |
 | `notifier` | string | Name of notifier to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration |
 
 Example:
