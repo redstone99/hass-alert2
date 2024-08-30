@@ -40,31 +40,3 @@ notification_control:
       required: false
       selector:
         text:
-
-log:
-  name: Log
-  description: Write message to HA log (like _LOGGER.xxx(msg))
-  fields:
-    level:
-      name: Log Level
-      description: Logging level
-      example: info
-      required: true
-      selector:
-        select:
-          options:
-            - label: "Debug"
-              value: "debug"
-            - label: "Info"
-              value: "info"
-            - label: "Warning"
-              value: "warning"
-            - label: "Error"
-              value: "error"
-            - label: "Critical"
-              value: "critical"
-    message:
-      description: Text to write to log.
-      required: true
-      selector:
-        text:
