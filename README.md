@@ -2,6 +2,20 @@
 
 # Alert2
 
+[![License][license-shield]](LICENSE)
+![Project Maintenance][maintenance-shield]
+[![GitHub Activity][commits-shield]][commits]
+
+[![hacs][hacsbadge]][hacs]
+[![Discord][discord-shield]][discord]
+[![Community Forum][forum-shield]][forum]
+
+[![GitHub Release][release-shield]][releases]
+[![issues][issues-shield]][issues-link]
+[![release-badge]][release-workflow]
+[![validate-badge]][validate-workflow]
+[![lint-badge]][lint-workflow]
+
 Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supports alerting and sending notifications based on conditions and events. It's a retake on the original [Alert](https://www.home-assistant.io/integrations/alert/) integration.
 
 ## Table of Contents
@@ -28,17 +42,32 @@ Suggestions welcome! File an [Issue](https://github.com/redstone99/hass-alert2/i
 
 ## Installation
 
-TODO - support HACS installs.
+### HACS install (recommended)
 
-### Manual 
+1. If HACS is not installed, follow HACS installation and configuration at https://hacs.xyz/.
 
-Alert2 is not yet a bundled component in HomeAssistant, so installation requires a few more steps than otherwise.
+2. Click the button below or visit the HACS _Integrations_ pane and add `https://github.com/ufozone/ha-unifi-voucher.git` as an `Integration` by following [these instructions](https://hacs.xyz/docs/faq/custom_repositories/).
+
+    [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=redstone99&repository=hass-alert2&category=integration)
+
+3. Install the integration.
+
+4. foo
+
+4. Restart Home Assistant.
+
+### Manual install
+
+1. Download the `Source code.zip` file from the repository [release section](https://github.com/redstone99/hass-alert2/releases) and extract it.
+
+   We do not recommend downloading directly from the `master` branch.
 
 1. Create the directories `custom_components` and `www` in your Home Assistant configuration directory if they don't already exist.
 
-   Your configuration directory is the directory with `configuration.yaml`, and is something like 'config' share if using [hass.io](https://home-assistant.io/hassio/) with the [Samba](https://home-assistant.io/addons/samba/) add-on or something like `~/.home-assistant/` for Linux installations.
-1. Copy `alert2` and its contents from the `custom_components` directory in this project into the directory `custom_components`.
-1. Copy `alert2.js` from the `www` directory in this project into the directory `www`.
+   Your configuration directory is the directory with `configuration.yaml`. It is commonly `/config`, or may be something like `~/.home-assistant/` for Linux installations.
+   
+1. Copy the `alert2` folder inside the `custom_components` directory in this project into the directory `custom_components` in your config.
+1. Copy `alert2.js` from the `www` directory in this project into the directory `www` in your config.
 
    Your config directory should look similar to this after copying:
    
@@ -47,6 +76,16 @@ Alert2 is not yet a bundled component in HomeAssistant, so installation requires
         <config dir>/custom_components/alert2/__init__.py
         <config dir>/custom_components/alert2/sensor.py
          ... etc...
+
+### Setup
+
+
+* Click this button:
+
+    [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=alert2)
+
+* Or use the "Add Integration" in Home Assistant, Settings, Devices & Services and select "Alert2".
+
 
 
 1. Add the following line to your `configuration.yaml` file:
