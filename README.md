@@ -2,20 +2,6 @@
 
 # Alert2
 
-[![License][license-shield]](LICENSE)
-![Project Maintenance][maintenance-shield]
-[![GitHub Activity][commits-shield]][commits]
-
-[![hacs][hacsbadge]][hacs]
-[![Discord][discord-shield]][discord]
-[![Community Forum][forum-shield]][forum]
-
-[![GitHub Release][release-shield]][releases]
-[![issues][issues-shield]][issues-link]
-[![release-badge]][release-workflow]
-[![validate-badge]][validate-workflow]
-[![lint-badge]][lint-workflow]
-
 Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supports alerting and sending notifications based on conditions and events. It's a retake on the original [Alert](https://www.home-assistant.io/integrations/alert/) integration.
 
 ## Table of Contents
@@ -46,15 +32,13 @@ Suggestions welcome! File an [Issue](https://github.com/redstone99/hass-alert2/i
 
 1. If HACS is not installed, follow HACS installation and configuration at https://hacs.xyz/.
 
-2. Click the button below or visit the HACS _Integrations_ pane and add `https://github.com/ufozone/ha-unifi-voucher.git` as an `Integration` by following [these instructions](https://hacs.xyz/docs/faq/custom_repositories/).
+1. Click the button below or visit the HACS _Integrations_ pane and add `https://github.com/redstone99/hass-alert2.git` as an `Integration` by following [these instructions](https://hacs.xyz/docs/faq/custom_repositories/).
 
     [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=redstone99&repository=hass-alert2&category=integration)
 
-3. Install the integration.
+1. Install the integration.
 
-4. foo
-
-4. Restart Home Assistant.
+1. Restart Home Assistant.
 
 ### Manual install
 
@@ -79,27 +63,26 @@ Suggestions welcome! File an [Issue](https://github.com/redstone99/hass-alert2/i
 
 ### Setup
 
-
-* Click this button:
-
-    [![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=alert2)
-
-* Or use the "Add Integration" in Home Assistant, Settings, Devices & Services and select "Alert2".
+Setup is done through editing your `configuration.yaml` file.
 
 
-
-1. Add the following line to your `configuration.yaml` file:
+1. Add the following line to `configuration.yaml`:
 
         alert2:
 
     The [Configuration](#configuration) section, below, has details on what else to add here.
 
-    Also, add the two lines in bold to the `resources` section of the lovelace section:
+1. We also recommend adding support for the Alert2 Lovelace UI element. To do that, if you're configuring Lovelace in YAML mode, add the two lines in bold to the `resources` subsection of the lovelace section of `configuration.yaml`:
 
     <pre>lovelace:
+      mode: yaml
       resources:
         <b>- url: /local/alert2.js</b>
           <b>type: module</b></pre>
+
+
+    If you configure Lovelace via the UI, then enable "Advanced mode" in your user profile, then click on Settings -> Dashboards -> Resources.  "Resources" may appear only in the triple vertical dots on the upper right of the dashboards page. Click on "Add Resource".
+
 1. Restart HomeAssistant
 
 ## Description
@@ -173,10 +156,10 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `condition` | string | optional | Template string. Alert is firing if the template evaluates to truthy AND any other alert options specified below are also true.  |
 | `trigger` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Indicates an event-based alert. Alert fires when the trigger does, if also any `condition` specified is truthy. |
 | `threshold:` | dict | optional | Subsection specifying a threshold criteria with hysteresis. Alert is firing if the threshold value exceeds bounds AND any `condition` specified is truthy. Not available for event-based alerts. |
-| &#8618;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`value` | string | required | A template evaluating to a float value to be compared to threshold limits. |
-| &#8618;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`hysteresis` | float | required | Compare `value` to limits using hysteresis (see description below) |
-| &#8618;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`maximum` | float | optional | Maximum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
-| &#8618;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`minimum` | float | optional | Minimum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
+| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`value` | string | required | A template evaluating to a float value to be compared to threshold limits. |
+| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`hysteresis` | float | required | Compare `value` to limits using hysteresis (see description below) |
+| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`maximum` | float | optional | Maximum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
+| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`minimum` | float | optional | Minimum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
 | `message` | string | optional | Template string evaluated when the alert fires. This text is included in notifications. For event-based alerts, the message can reference the `trigger` variable (see example below). |
 | `notification_frequency_mins` | float | optional | Override the default `notification_frequency_mins`|
 | `notifier` | string | optional | Override the default `notifier`. If the notifier specified here is not available, then the default notifier is tried. If the default notifier is not available then notification will fall back to `notify.notify`. |

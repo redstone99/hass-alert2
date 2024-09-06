@@ -1,6 +1,6 @@
 {
     "domain": "alert2",
-    "name": "Event-based alerting",
+    "name": "Alert2",
     "documentation": "https://github.com/redstone99/hass-alert2",
     "requirements": ["pyserial-asyncio==0.5"],
     "codeowners": [],
