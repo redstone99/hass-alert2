@@ -1,4 +1,11 @@
-<!-- ~/tmp/general-env/bin/grip -b ~/tmp/hass-alert2/README.md -->
+<!-- ~/tmp/general-env/bin/grip -b ~/tmp/hass-alert2/README.md
+To spin up a fresh HA for testing:
+mkdir -p ha-test/custom_components/hacs
+wget https://github.com/hacs/integration/releases/latest/download/hacs.zip
+unzip hacs.zip -d ha-test/custom_components/hacs  ; rm hacs.zip
+cp .homeassistant/run ha-test/run
+chgrp -R homeassistant ha-test ; chmod -R g+w ha-test
+-->
 
 # Alert2
 
@@ -32,9 +39,11 @@ Suggestions welcome! File an [Issue](https://github.com/redstone99/hass-alert2/i
 
 1. If HACS is not installed, follow HACS installation and configuration at https://hacs.xyz/.
 
-1. Click the button below or visit the HACS _Integrations_ pane and add `https://github.com/redstone99/hass-alert2.git` as an `Integration` by following [these instructions](https://hacs.xyz/docs/faq/custom_repositories/).
+1. Click the button below
 
     [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=redstone99&repository=hass-alert2&category=integration)
+
+    or visit the HACS _Integrations_ pane and add `https://github.com/redstone99/hass-alert2.git` as an `Integration` by following [these instructions](https://hacs.xyz/docs/faq/custom_repositories/).
 
 1. Install the integration.
 
