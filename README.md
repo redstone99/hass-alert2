@@ -5,6 +5,11 @@ wget https://github.com/hacs/integration/releases/latest/download/hacs.zip
 unzip hacs.zip -d ha-test/custom_components/hacs  ; rm hacs.zip
 cp .homeassistant/run ha-test/run
 chgrp -R homeassistant ha-test ; chmod -R g+w ha-test
+cp ha-test.old/configuration.yaml ha-test
+# comment out lovelace stuff
+# restart home assistant
+# install HACS as integration
+# test install alert2
 -->
 
 # Alert2
@@ -15,6 +20,7 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 
 - [New features](#new-features)
 - [Installation](#installation)
+- [Setup](#setup)
 - [Description](#description)
 - [Configuration](#configuration)
 - [Front-end UI](#front-end-ui)
@@ -43,9 +49,9 @@ Suggestions welcome! File an [Issue](https://github.com/redstone99/hass-alert2/i
 
     [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=redstone99&repository=hass-alert2&category=integration)
 
-    or visit the HACS _Integrations_ pane and add `https://github.com/redstone99/hass-alert2.git` as an `Integration` by following [these instructions](https://hacs.xyz/docs/faq/custom_repositories/).
+    or visit the HACS pane and add `https://github.com/redstone99/hass-alert2.git` as a custom repository of type  `Integration` by following [these instructions](https://hacs.xyz/docs/faq/custom_repositories/).
 
-1. Install the integration.
+1. You should be on the Alert2 doc page in HACS. Click "Download" button (bottom right of screen) to download the integration.  If for some reason adding the repository did not take you to the Alert2 doc page, you may need to click again on the HACS pane, search for "Alert2" and click on it to get to the page.
 
 1. We strongly recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) card which is a compact, convenient way to view and manage Alert2 alerts.
 
@@ -70,7 +76,7 @@ Suggestions welcome! File an [Issue](https://github.com/redstone99/hass-alert2/i
 
 1. We strongly recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) card which is a compact, convenient way to view and manage Alert2 alerts.
 
-### Setup
+## Setup
 
 Setup is done through editing your `configuration.yaml` file.
 
