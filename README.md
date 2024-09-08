@@ -43,7 +43,7 @@ Suggestions welcome! File an [Issue](https://github.com/redstone99/hass-alert2/i
 
 ### HACS install (recommended)
 
-1. If HACS is not installed, follow HACS installation and configuration at https://hacs.xyz/.
+1. If HACS is not installed, follow HACS installation and configuration instructions at https://hacs.xyz/.
 
 1. Click the button below
 
@@ -51,13 +51,15 @@ Suggestions welcome! File an [Issue](https://github.com/redstone99/hass-alert2/i
 
     or visit the HACS pane and add `https://github.com/redstone99/hass-alert2.git` as a custom repository of type  `Integration` by following [these instructions](https://hacs.xyz/docs/faq/custom_repositories/).
 
-1. You should be on the Alert2 doc page in HACS. Click "Download" button (bottom right of screen) to download the integration.  If for some reason adding the repository did not take you to the Alert2 doc page, you may need to click again on the HACS pane, search for "Alert2" and click on it to get to the page.
+1. The UI should now show the Alert2 doc page in HACS. Click "Download" button (bottom right of screen) to download the Alert2 integration.
 
-1. We strongly recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) card which is a compact, convenient way to view and manage Alert2 alerts.
+    If for some reason adding the repository did not take you to the Alert2 doc page, you may need to click again on the HACS pane, search for "Alert2" and click on it to get to the page (and the download button).
+
+1. We strongly recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) card which is a compact way to view and manage Alert2 alerts.
 
 ### Manual install
 
-1. Download the `Source code.zip` file from the repository [release section](https://github.com/redstone99/hass-alert2/releases) and extract it.
+1. Download the `Source code (zip)` link from the repository [release section](https://github.com/redstone99/hass-alert2/releases) under "Assets" and extract it.
 
    We do not recommend downloading directly from the `master` branch.
 
@@ -65,7 +67,7 @@ Suggestions welcome! File an [Issue](https://github.com/redstone99/hass-alert2/i
 
    Your configuration directory is the directory with `configuration.yaml`. It is commonly `/config`, or may be something like `~/.home-assistant/` for Linux installations.
    
-1. Copy the `alert2` folder inside the `custom_components` directory in this project into the directory `custom_components` in your config.
+1. Copy the `alert2` folder inside the `custom_components` directory in the `Source code` link you downloaded into the directory `custom_components` in your config.
 
    Your config directory should look similar to this after copying:
    
@@ -74,7 +76,7 @@ Suggestions welcome! File an [Issue](https://github.com/redstone99/hass-alert2/i
         <config dir>/custom_components/alert2/sensor.py
          ... etc...
 
-1. We strongly recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) card which is a compact, convenient way to view and manage Alert2 alerts.
+1. We strongly recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) card which is a compact way to view and manage Alert2 alerts.
 
 ## Setup
 
@@ -250,7 +252,7 @@ Also, alert2 entities are built on `RestoreEntity`, which backs itself up every 
 
 ## Front-end UI
 
-We recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui), which includes a card for conveniently viewing and managing Alert2 alerts.  It also enhances the information shown in the "more-info" dialog when viewing Alert2 entities.
+We recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui), which includes a card for compactly viewing and managing Alert2 alerts.  It also enhances the information shown in the "more-info" dialog when viewing Alert2 entities.
 
 ![Alert2 overview card](resources/overview.png)
 
@@ -282,7 +284,7 @@ A few other service calls are used internally by alert2.js, but are available as
 <br>`alert2.notification_control` adjust the notification settings.
 <br>`alert2.ack` acks a single alert.
 
-More details on these calls are in the `services.yaml` file in this repo.
+More details on these calls are in the `services.yaml` file in this repo, or in the UI by going to "Developer tools" -> "Actions".
 
 ## Python alerting
 
