@@ -137,9 +137,20 @@ class AlertBase(RestoreEntity):
         self.alertData = alertData
         self._condition_template = config['condition'] if 'condition' in config else None
         self._message_template = config['message'] if 'message' in config else None
+        self._done_message_template = config['done_message'] if 'done_message' in config else None
+        self._title_template = config['title'] if 'title' in config else None
+        self._data = config['data'] if 'data' in config else None
+        self._target = config['target'] if 'target' in config else None
+        self._friendly_name = config['friendly_name'] if 'friendly_name' in config else None
         if self._message_template is not None:
             self._message_template.hass = hass
+        if self._done_message_template is not None:
+            self._done_message_template.hass = hass
+        if self._title_template is not None:
+            self._title_template.hass = hass
         self.notification_frequency_mins = getField('notification_frequency_mins', config, defaults)
+        self.annotate_messages = getField('annotate_messages', config, defaults)
+        #self._raw_messages = config['raw_messages'] if 'raw_messages' in config else None
 
         self.last_notified_time = None
         self.last_fired_time = None
@@ -195,6 +206,7 @@ class AlertBase(RestoreEntity):
             'last_fired_time': self.last_fired_time,
             'last_fired_message': self.last_fired_message,
             'last_ack_time': self.last_ack_time,
+            'friendly_name2': self._friendly_name, # Entity class defines "friendly_name" so we have to use something different.
             'fires_since_last_notify': self.fires_since_last_notify,
             'notification_control': self.notification_control,
         }
@@ -346,14 +358,20 @@ class AlertBase(RestoreEntity):
         if skip_notify:
             doNotify = False
 
-        msg = f'{self.alDomain} {self.alName}'
-        if doNotify and self.fires_since_last_notify > 0:
-            secs_since_last = (now - self.last_fired_time).total_seconds()
-            msg += f' +{self.fires_since_last_notify}x (most recently {agoStr(secs_since_last)} ago)'
-            self.fires_since_last_notify = 0
-        if len(message) > 0:
-            msg += f': {message}'
-        _LOGGER.warning(f'Alert2 {msg}')
+        if self.annotate_messages or (not is_fire):
+            if self._friendly_name is None:
+                msg = f'Alert2 {self.alDomain} {self.alName}'
+            else:
+                msg = self._friendly_name
+            if doNotify and self.fires_since_last_notify > 0:
+                secs_since_last = (now - self.last_fired_time).total_seconds()
+                msg += f' +{self.fires_since_last_notify}x (most recently {agoStr(secs_since_last)} ago)'
+                self.fires_since_last_notify = 0
+            if len(message) > 0:
+                msg += f': {message}'
+        else:
+            msg = message
+        _LOGGER.warning(f'{msg}')
             
         if doNotify:
             self.last_notified_time = now
@@ -374,16 +392,28 @@ class AlertBase(RestoreEntity):
                     # At that point, our obligation to notify on the current alert is done.
                     report(DOMAIN, 'notify_failed', f'no notifier {self.notifier} to notify {self.alDomain}:{self.alName}')
                     return True
+
+            tmsg = msg
+            if len(tmsg) > 600:
+                tmsg = tmsg[:600] + '...'
+            _LOGGER.warning(f'Notifying {self.notifier}: {tmsg}')
+            # message field in components/notify/const.py:NOTIFY_SERVICE_SCHEMA is a template and will be rendered
+            args = {'message': jinja2Escape(tmsg) }
+            if self._data is not None:
+                args['data'] = self._data
+            if self._target is not None:
+                args['target'] = self._target
+            if self._title_template is not None:
+                try:
+                    args['title'] = self._title_template.async_render(parse_result=False)
+                except TemplateError as err:
+                    report(DOMAIN, 'template_error', f'Title template for {self.name}: {err}')
+                    # Continue and notify anyways
             async def foo():
-                tmsg = str(f'Alert2 {msg}')
-                if len(tmsg) > 600:
-                    tmsg = tmsg[:600] + '...'
-                _LOGGER.warning(f'Notifying {self.notifier}: {tmsg}')
-                # message field in components/notify/const.py:NOTIFY_SERVICE_SCHEMA is a template and will be rendered
                 await self.hass.services.async_call(
                     'notify', self.notifier, # eg 'raw_jtelegram'
-                    {'message': jinja2Escape(tmsg) } )
-                _LOGGER.warning(f'Notifying done: {self.notifier}')
+                    args)
+                _LOGGER.debug(f'Notifying done: {self.notifier}')
             atask = create_task(self.hass, DOMAIN, foo())
         else:
             if is_fire:
@@ -625,7 +655,15 @@ class ConditionAlertBase(AlertBase):
             else:
                 is_acked = self.last_ack_time and self.last_on_time and self.last_ack_time > self.last_on_time
                 secs_on = (self.last_off_time - self.last_on_time).total_seconds()
-                didNotify = self._notify(now, False, f'turned off after {agoStr(secs_on)}.',
+                if self._done_message_template is not None:
+                    try:
+                        msg = self._done_message_template.async_render(parse_result=False)
+                    except TemplateError as err:
+                        report(DOMAIN, 'template_error', f'done_message template for {self.name}: {err}')
+                        msg = f'turned off after {agoStr(secs_on)}. [done_message template error]'
+                else:
+                    msg = f'turned off after {agoStr(secs_on)}.'
+                didNotify = self._notify(now, False, msg,
                                          override_timing=self.notified_on,
                                          skip_notify=is_acked) # presumably, this means alert ended shortly after we tried notifying, so schedule one more notify for last interval of alert
                 if didNotify:
@@ -913,7 +951,7 @@ class Alert2Data:
         self.sensorDict = None
         self.binarySensorDict = None
         self.evCount = 0
-        self.defaults = { 'notification_frequency_mins': 60, 'notifier': 'notify' }
+        self.defaults = { 'notification_frequency_mins': 60, 'notifier': 'notify', 'annotate_messages': True }
         self.notifiers = set()
         self.notifiers.add(self.defaults['notifier']) # We'll do this again once we processConfig
         self.haStarted = False

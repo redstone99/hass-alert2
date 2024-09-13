@@ -27,9 +27,14 @@ SINGLE_TRACKED_SCHEMA = vol.Schema({
 SINGLE_ALERT_SCHEMA_BASE = vol.Schema({
     vol.Required('domain'): cv.string,
     vol.Required('name'): cv.string,
+    vol.Optional('friendly_name'): cv.string,
     vol.Optional('message'): cv.template,
+    vol.Optional('title'): cv.template,
+    vol.Optional('target'): cv.string,
+    vol.Optional('data'): dict,
     vol.Optional('notification_frequency_mins'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
-    vol.Optional('notifier'): cv.string
+    vol.Optional('notifier'): cv.string,
+    vol.Optional('annotate_messages'): bool,
 })
 SINGLE_ALERT_SCHEMA_EVENT = SINGLE_ALERT_SCHEMA_BASE.extend({
         vol.Required('trigger'): cv.TRIGGER_SCHEMA,
@@ -44,11 +49,13 @@ SINGLE_ALERT_SCHEMA_CONDITION = has_atleast_oneof(['condition', 'threshold'], SI
             vol.Optional('maximum'): vol.Coerce(float),
             })),
         vol.Optional('early_start'): bool,
+        vol.Optional('done_message'): cv.template,
     }))
                                  
 DEFAULTS_SCHEMA = vol.Schema({
-        vol.Optional('notification_frequency_mins'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
-        vol.Optional('notifier'): cv.string,
+    vol.Optional('notification_frequency_mins'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
+    vol.Optional('notifier'): cv.string,
+    vol.Optional('annotate_messages'): bool,
 })
 
 TOP_LEVEL_SCHEMA = vol.Schema({

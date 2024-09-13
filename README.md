@@ -108,11 +108,13 @@ Each alert maintains a bit indicating whether it has been ack'd or not.  That bi
 
 ### Notifications
 
-Each time an alert fires, a notification can be sent. Notifications can also be sent periodically to remind you of previous alert firings.
+Notifications can be sent when an alert starts firing, when an alert stops firing, and periodically as a reminder that an alert is still firing.
 
-There are a few mechanisms available for controlling when a notification is sent.
+Notification message text be specified for when an alert starts firing (via `message`) or stops firing (via `done_message`), but the reminder message text is fixed.
 
-* `notification_frequency_mins` - this config parameter specifies how often notifications or reminders are sent for a specific alert. It applies to single or multiple firings. So whether an alert is firing continuously for a long time or fires many times, notification frequency does not exceed this parameter.  The parameter also controls how often reminder notifications are sent.
+There are a few mechanisms available for controlling when and whether notifications are sent.
+
+* `notification_frequency_mins` - this config parameter specifies how often notifications or reminders are sent for a specific alert. By default it applies to single or multiple firings. So whether an alert is firing continuously for a long time or fires many times, notification frequency does not exceed this parameter.  The parameter also controls how often reminder notifications are sent.
 
 * Ack'ing an alert prevents any further notifications for the current firing (for condition alerts) or previous firings (for event alerts) of the alert.  Condition alerts cause notification reminders to be sent until the firing is ack'd. Ack'ing affects only the current firing of the alert, not future firings.
 
@@ -140,12 +142,13 @@ A `defaults:` subsection specifies default values for parameters common to every
 
 | Key | Type | Description |
 |---|---|---|
-| `notification_frequency_mins` | float | Minimum interval in minutes between notifications of alert firings. Also is the frequency of reminders for ongoing, un-ack'd condition alerts. May be 0 to indicate no limit on frequency of notifications.  60 minutes if not specified.<br>TODO - allow this be a template argument to support arbitrary functions calculating next notification delay. |
+| `notification_frequency_mins` | float | Minimum interval in minutes between notifications of alert firings. Also is the frequency of reminders for ongoing, un-ack'd condition alerts. May be 0 to indicate no limit on frequency of notifications.  60 minutes if not specified.<br>Note - this parameter limits notifications across multiple alert firings. TODO - replace the limit mechanism and make this easier to understand. |
 | `notifier` | string | Name of notifier to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`. Defaults to `notify` (i.e., so system will default to `notify.notify` for notifications)|
+| `annotate_messages` | bool | If true, add extra information text to `message` and `done_message`, like number of times alert has fired since last notifcation, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform  |
 
 Example:
 
-    alert2:
+     alert2:
       defaults:
         notification_frequency_mins: 60
         notifier: telegram
@@ -159,6 +162,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 |---|---|---|---|
 |`domain` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `domain` is typically the object causing the alert (e.g., garage door) |
 | `name` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `name` is typically the particular fault occurring (e.g., open_too_long) |
+| `friendly_name` | string | optional | Name to display instead of the default entity name. Surfaces in the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) overview card |
 | `condition` | string | optional | Template string. Alert is firing if the template evaluates to truthy AND any other alert options specified below are also true.  |
 | `trigger` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Indicates an event-based alert. Alert fires when the trigger does, if also any `condition` specified is truthy. |
 | `threshold:` | dict | optional | Subsection specifying a threshold criteria with hysteresis. Alert is firing if the threshold value exceeds bounds AND any `condition` specified is truthy. Not available for event-based alerts. |
@@ -167,6 +171,11 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`maximum` | float | optional | Maximum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`minimum` | float | optional | Minimum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
 | `message` | string | optional | Template string evaluated when the alert fires. This text is included in notifications. For event-based alerts, the message can reference the `trigger` variable (see example below). |
+| `data` | dict | optional | Optional dictionary passed as the "data" parameter to the notify service call |
+| `target` | string | optional | String passed as the "target" parameter to the notify service call |
+| `title` | template | optional | Passed as the "title" parameter to the notify service call |
+| `done_message` | template | optional | Message to send when a condition alert turns off.  Replaces the default message (something like  "Alert [name] turned off after x minutes") |
+| `annotate_messages` | bool | optional | Override the default value of `annotate_messages`.  |
 | `notification_frequency_mins` | float | optional | Override the default `notification_frequency_mins`|
 | `notifier` | string | optional | Override the default `notifier`. If the notifier specified here is not available, then the default notifier is tried. If the default notifier is not available then notification will fall back to `notify.notify`. |
 | `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts.  |
