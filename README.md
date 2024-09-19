@@ -32,7 +32,7 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 
 - **Native event-based alerting**. No need to approximate it with conditions and time windows.
 - **Template conditions**.  No need for extra binary sensors. Also means the logic for an alert is in one place in your config file, which makes it easier to manage.
-- **Snooze / disable notifications**. Handy for noisy sensors or while developing your alerts.
+- **Snooze / disable / throttle notifications**. Handy for noisy sensors or while developing your alerts.
 - **Persistent notification details**. In your HA dashboard, you can view past alert firings as well as the message text sent in notifications.
 - **Custom frontend card**. Makes it easier to view and manage recent alerts.
 - **Hysteresis**. Reduce spurious alerts as sensors fluctuate.
@@ -97,87 +97,136 @@ Alert2 supports two kinds of alerts:
 
 - **Condition-based alerts**. The alert watches a specified condition. It is "firing", aka "on", while the condition is true. This is similar to the existing [Alert](https://www.home-assistant.io/integrations/alert/) integration. Example: a temperature sensor that reports a high temperature.
 
-    The condition specification supports templates and hysteresis.
 - **Event-based alerts**. The alert waits for a specified trigger to occur and is "firing" for just that moment.  Example: a problematic MQTT message arrives.
 
-Each alert can specify a template message that is evaluated each time the alert fires. That message is sent out with notifications and also is viewable in the front-end UI.
+Configuration details and examples are in the [Configuration section]((#configuration)). Here we provide an overview.
 
-Each alert maintains a bit indicating whether it has been ack'd or not.  That bit is reset each time the alert fires. Ack'ing is done by clicking a button in the UI (described below). Ack'ing stops reminder notifications (see below) and is indicated visually in the UI.
+### Condition alerts
 
+Condition alerts can specify a `condition` template. The alert is firing when the condition evaluates to true.
 
+An alert can also specify a `threshold` dict that includes min/max and optional hysteresis.  If a threshold is specified, the alert is firing if the threshold is exceeded AND any `condition` specified is true.
+
+Hysteresis is also available via the `on_for_at_least_secs` parameter. If specified, the alert starts firing once any `threshold` is exceeded AND any `condition` is true for at least the time interval specified. This is similar in motiviation to the `skip_first` option in the old Alert integration.
+
+### Event alerts
+
+Event alerts may be triggered either by an explicit `trigger` option in the config, or by a service call to `alert2.report`.
+An event alert can also specify a `condition` template. The alert fires if it is triggered AND the condition evaluates to true.
+
+### Common alert features
+
+Each alert maintains a bit indicating whether it has been ack'd or not.  That bit is reset each time the alert fires. Ack'ing is done by clicking a button in the UI (described below) or calling the `alert2.ack` service. Ack'ing stops reminder notifications (see below) and is indicated visually in the UI.
 
 ### Notifications
 
-Notifications can be sent when an alert starts firing, when an alert stops firing, and periodically as a reminder that an alert is still firing.
+Notifications are sent when an event alert fires, and also when a condition alert starts firing, stops firing, and periodically as a reminder that the condition alert is still firing.
 
-Notification message text be specified for when an alert starts firing (via `message`) or stops firing (via `done_message`), but the reminder message text is fixed.
+Each notification by default includes some basic context information (detailed below).  An alert can also specify a template `message` to be sent  each time the alert fires. That message is sent out with notifications and also is viewable in the front-end UI.  Condition alerts can also specify a `done_message` to be sent when the alert stops firing.
 
 There are a few mechanisms available for controlling when and whether notifications are sent.
 
-* `notification_frequency_mins` - this config parameter specifies how often notifications or reminders are sent for a specific alert. By default it applies to single or multiple firings. So whether an alert is firing continuously for a long time or fires many times, notification frequency does not exceed this parameter.  The parameter also controls how often reminder notifications are sent.
+* `reminder_frequency_mins` - this config parameter specifies how often reminders are sent while an alert continues to fire. May be a list of values (similar to the `repeat` option in the old Alert integration).
 
-* Ack'ing an alert prevents any further notifications for the current firing (for condition alerts) or previous firings (for event alerts) of the alert.  Condition alerts cause notification reminders to be sent until the firing is ack'd. Ack'ing affects only the current firing of the alert, not future firings.
+* `throttle_fires_per_mins` - this config parameter throttles notifications for an alert that fires frequently. It affects all notifications for the alert.
+
+* Ack'ing an alert prevents further reminders and the stop notification for the current firing of a condition alert. For both condition and event alerts, ack'ing also prevents any throttled notification of previous firings of the alert.
 
 * Snoozing notifications for an alert prevents any notifications from current or future firings of an alert for a specified period of time.
 
 * Disabling notifications for an alert prevents any notifications until it is enabled again.  Snoozing & disabling affect only notifications. Alerts will still fire and be recorded for reviewing in your dashboard.
 
-The text of a notification can include a custom message with details. It also includes some basic information such as how long the alert has been firing (for condition alerts) as well as how many times it has fired since the last notification. Usually the notification text will be simple, like:
 
-    Alert2 my_test_alert: turned off after 5m
+#### Notification text
 
-meaning your condition alert stopped firing after being on for 5 minutes. For very active alerts, you may see text like:
+The text of each notification by default includes some basic context information that varies based on the type of notification. That information may be augmented with the `message` or `done_message` options.  Notification text looks like:
 
-    Alert2 my_test_alert +4x (most recently 20m ago): on for 20m
+* Event alert fires: `message` text prepended with name (or `friendly_name`) of alert.
 
-meaning your alert has fired four times since the last notification. Most recently it started firing 20 minutes ago and is still firing.
+        Alert2 boiler_ignition_error: `message`
+
+* Condition alert fires: `message` text prepended with name (or `friendly_name`) of alert.  Default message is "turned on" if no message specified. Alert name omitted if `annotate_messages` is false
+
+        Alert2 kitchen_door_open: turned on
+
+* Condition alert reminder:
+
+        Alert2 kitchen_door_open: on for 5m
+
+* Condition alert stops firing: `done_message` text prepended with name (or `friendly_name`) of alert.  Default message is "turned off after ..." if no `done_message` specified. Only `done_message` text is sent if `annotate_messages` is false. Setting `annotate_messages` to false may be useful for notification platforms that parse the message (such as the "clear_notification" message of the `mobile_app` platform)
+
+        Alert2 kitchen_door_open: turned off after 10m
+
+* Either event or condition alert fires and exceeds `throttle_fires_per_mins`.  Message is prepended with "[Throttling starts]", which can not be overriden with `annotate_messages`:
+
+        [Throttling starts] Alert2 kitchen_door_open: turned on
+
+* Throttling ends for event or condition alert that specified `throttle_fires_per_mins`.  Message includes information on what happened while the alert was throttled:
+
+        [Throttling ends] Alert2 kitchen_door_open: fired 10x (most recently 15m ago): turned off 19s ago after being on for 3m
+
 
 ## Configuration
 
-Alert configuration is done through the `alert2:` section of your `configuration.yaml` file.
+Alert configuration is done through the `alert2:` section of your `configuration.yaml` file.  There are three sections, `defaults`, `alerts`, and  `tracked`.
 
 ### Defaults
 
-A `defaults:` subsection specifies default values for parameters common to every alert. Each of these parameters must be specified either in this subsection, or on a per-alert basis.  Per-alert settings override any defaults.
+A `defaults:` subsection specifies default values for parameters common to every alert. Each of these parameters may be specified either in this subsection, or over-ridden on a per-alert basis.
+
+The defaults specified here apply also to internal alerts that may fire, such as due to a config error or assertion failure.
+
 
 | Key | Type | Description |
 |---|---|---|
-| `notification_frequency_mins` | float | Minimum interval in minutes between notifications of alert firings. Also is the frequency of reminders for ongoing, un-ack'd condition alerts. May be 0 to indicate no limit on frequency of notifications.  60 minutes if not specified.<br>Note - this parameter limits notifications across multiple alert firings. TODO - replace the limit mechanism and make this easier to understand. |
-| `notifier` | string | Name of notifier to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`. Defaults to `notify` (i.e., so system will default to `notify.notify` for notifications)|
-| `annotate_messages` | bool | If true, add extra information text to `message` and `done_message`, like number of times alert has fired since last notifcation, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform  |
+| `reminder_frequency_mins` | float or list<br>=60 | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay beteen reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration). Defaults to 60 minutes if not specified. |
+| `notifier` | string ="notify" | Name of notifier to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`. Defaults to `notify` (i.e., so Alert2 will default to invoking `notify.notify` for notifications)|
+| `annotate_messages` | bool =true | If true, add extra context information to notifications, like number of times alert has fired since last notifcation, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform. Defaults to true. |
+| `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, if you specify "[10, 60]", then you'll receive no more than 10 notifications of the alert firing every hour.
 
 Example:
 
      alert2:
-      defaults:
-        notification_frequency_mins: 60
-        notifier: telegram
+       defaults:
+         reminder_frequency_mins: 60
+         notifier: telegram
+         annotate_messages: true
+         throttle_fires_per_mins: [ 10, 60 ]
+
+Note `reminder_frequency_mins` or `throttle_fires_per_mins` may be specified as a list using a YAML flow sequece or on separate lines. The following two are identical in YAML:
+
+        reminder_frequency_mins: [ 10, 20, 60 ]
+        reminder_frequency_mins:
+          - 10
+          - 20
+          - 60
 
 ### Alerts
 
-The `alerts:` subsection contains a list of condition-based and event-based alert specifications.  The full list of parameters for each alert are as follows.
+The `alerts:` subsection contains a list of condition-based and event-based alert specifications. The full list of parameters for each alert are as follows.
 
 
 | Key | Type | Required | Description |
 |---|---|---|---|
-|`domain` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `domain` is typically the object causing the alert (e.g., garage door) |
-| `name` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `name` is typically the particular fault occurring (e.g., open_too_long) |
+|`domain` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `domain` is typically the object causing the alert (e.g., garage door). |
+| `name` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `name` is typically the particular fault occurring (e.g., open_too_long)  |
 | `friendly_name` | string | optional | Name to display instead of the default entity name. Surfaces in the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) overview card |
 | `condition` | string | optional | Template string. Alert is firing if the template evaluates to truthy AND any other alert options specified below are also true.  |
 | `trigger` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Indicates an event-based alert. Alert fires when the trigger does, if also any `condition` specified is truthy. |
 | `threshold:` | dict | optional | Subsection specifying a threshold criteria with hysteresis. Alert is firing if the threshold value exceeds bounds AND any `condition` specified is truthy. Not available for event-based alerts. |
-| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`value` | string | required | A template evaluating to a float value to be compared to threshold limits. |
-| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`hysteresis` | float | required | Compare `value` to limits using hysteresis (see description below) |
+| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`value` | string | required | A template evaluating to a float to be compared to threshold limits. |
+| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`hysteresis` | float | required | Compare `value` to limits using hysteresis. threshold is considered exceeded if value exceeds min/max, but does not reset until value increases past min+hysteresis or decreases past max-hysteresis. (see description below) |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`maximum` | float | optional | Maximum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`minimum` | float | optional | Minimum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
-| `message` | string | optional | Template string evaluated when the alert fires. This text is included in notifications. For event-based alerts, the message can reference the `trigger` variable (see example below). |
+| `message` | template | optional | Template string evaluated when the alert fires. This text is included in notifications. For event-based alerts, the message can reference the `trigger` variable (see example below). Because notifications by default include context information like the alert domain and name, the message can be brief or even omitted all together |
+| `done_message` | template | optional | Message to send when a condition alert turns off.  Replaces the default message (something like  "Alert2 [name] turned off after x minutes") |
 | `data` | dict | optional | Optional dictionary passed as the "data" parameter to the notify service call |
 | `target` | string | optional | String passed as the "target" parameter to the notify service call |
 | `title` | template | optional | Passed as the "title" parameter to the notify service call |
-| `done_message` | template | optional | Message to send when a condition alert turns off.  Replaces the default message (something like  "Alert [name] turned off after x minutes") |
 | `annotate_messages` | bool | optional | Override the default value of `annotate_messages`.  |
-| `notification_frequency_mins` | float | optional | Override the default `notification_frequency_mins`|
+| `reminder_frequency_mins` | float | optional | Override the default `notification_frequency_mins`|
 | `notifier` | string | optional | Override the default `notifier`. If the notifier specified here is not available, then the default notifier is tried. If the default notifier is not available then notification will fall back to `notify.notify`. |
+| `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts.  |
 
 Alert names are split into `domain` and `name`. The reason is partly for semantic clarity and also for future management features, like grouping alerts by domain.
@@ -207,6 +256,10 @@ There are a few different forms of condition-based alerts.  The simplest is an a
           condition: "{{ states('sensor.nest_therm_fl2_temperature')|float <= 50 }}"
           message: "Temp: {{ states('sensor.nest_therm_fl2_temperature') }}"
 
+Notifications include by default context informatoin, so the resulting text might be:
+
+    Alert2 thermostat_fl2_temperature_low: Temp: 45
+
 An alert can alternatively specify a threshold with hysteresis.  So the previous temperature-low alert could be specified with hysteresis as:
 
     alert2:
@@ -223,17 +276,34 @@ This alert would start firing if the temperature drops below 50 and won't stop f
 
 A `condition` may be specified along with a `threshold`. In this case, the alert fires when the condition is true AND the threshold value is out of bounds.
 
-### Service-triggered alerts
+#### Common alert features
 
-Event-based alerts can also be triggered by a hass service call (described below). It is useful to declare these alert names in the config file for two reasons. First, to avoid an extra alert firing that indicates an undeclared alert has fired. And second, so that the alert state can be recovered when HomeAssistant restarts.
+Alerts may pass additional data to the notifier which is convenient for notification platforms such as [`mobile_app`](https://companion.home-assistant.io/docs/notifications/notifications-basic/). Example:
 
-The `tracked` subsection is where to declare these alerts. The only parameters allowed for each alert in this alert list are the `domain` and `name` keys defined above, and overrides to defaults.
+    alert2:
+      alerts:
+        - domain: cam_basement
+          name: motion_while_away
+          condition: "{{ (states('sensor.jdahua_basement_motion') == 'on') and
+                         (states('input_select.homeaway') in [ 'Away-local', 'Away-travel' ]) and
+                         ((now().timestamp() - states.input_select.homeaway.last_changed.timestamp()) > 5*60) }}"
+          notifier: mobile_app_pixel_6
+          title: "test title"
+          data:
+            group: "motion-alarms"
+
+
+### Tracked
+
+The `tracked` config subsection is for declaring event alerts that have no `trigger` specification and so can only be triggered by a service call to `alert2.report`. Declaring these alerts here avoids an "undeclared alert" alert when reporting, and also enables the system to restore the alert state when HomeAssistant restarts.
+
+Any of the above event alert parameters may be specified here except for `message` (since `alert2.report` specifies the message), `trigger` and `condition`.
 
 Example:
 
     alert2:
       defaults:
-        notification_frequency_mins: 60
+        reminder_frequency_mins: 60
         notifier: telegram
       alerts:
         ...
@@ -293,7 +363,7 @@ A few other service calls are used internally by alert2.js, but are available as
 <br>`alert2.notification_control` adjust the notification settings.
 <br>`alert2.ack` acks a single alert.
 
-More details on these calls are in the `services.yaml` file in this repo, or in the UI by going to "Developer tools" -> "Actions".
+More details on these calls are in the [`services.yaml`](https://github.com/redstone99/hass-alert2/blob/master/custom_components/alert2/services.yaml) file in this repo, or in the UI by going to "Developer tools" -> "Actions".
 
 ## Python alerting
 
