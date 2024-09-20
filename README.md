@@ -12,14 +12,15 @@ cp ha-test.old/configuration.yaml ha-test
 # test install alert2
 -->
 
-# Alert2
-
-Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supports alerting and sending notifications based on conditions and events. It's a retake on the original [Alert](https://www.home-assistant.io/integrations/alert/) integration.
-
 [![GitHub Release](https://img.shields.io/github/v/release/redstone99/hass-alert2)](https://github.com/redstone99/hass-alert2/releases)
 [![GitHub Release Date](https://img.shields.io/github/release-date/redstone99/hass-alert2)](https://github.com/redstone99/hass-alert2/releases)
 [![GitHub commit activity](https://img.shields.io/github/commit-activity/y/redstone99/hass-alert2)](https://github.com/redstone99/hass-alert2/commits/master/)
 <!-- ![GitHub commits since latest release](https://img.shields.io/github/commits-since/redstone99/hass-alert2/latest) -->
+
+# Alert2
+
+Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supports alerting and sending notifications based on conditions and events. It's a retake on the original [Alert](https://www.home-assistant.io/integrations/alert/) integration.
+
 
 ## Table of Contents
 
