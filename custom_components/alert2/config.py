@@ -18,45 +18,47 @@ def has_atleast_oneof(alist: list, aschema):
         return obj2
     return validate
 
+DEFAULTS_SCHEMA = vol.Schema({
+    vol.Optional('notifier'): cv.string,
+    vol.Optional('annotate_messages'): cv.boolean,
+    vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
+    vol.Optional('throttle_fires_per_mins'): vol.Schema(vol.All(vol.ExactSequence([int, vol.Coerce(float)]),
+                                                                 vol.ExactSequence([vol.Range(min=1.),vol.Range(min=0.01)])))
+})
 SINGLE_TRACKED_SCHEMA = vol.Schema({
     vol.Required('domain'): cv.string,
     vol.Required('name'): cv.string,
-    vol.Optional('notification_frequency_mins'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
-    vol.Optional('notifier'): cv.string,
-})
-SINGLE_ALERT_SCHEMA_BASE = vol.Schema({
-    vol.Required('domain'): cv.string,
-    vol.Required('name'): cv.string,
     vol.Optional('friendly_name'): cv.string,
-    vol.Optional('message'): cv.template,
+    vol.Optional('notifier'): cv.string,
     vol.Optional('title'): cv.template,
     vol.Optional('target'): cv.string,
     vol.Optional('data'): dict,
-    vol.Optional('notification_frequency_mins'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
-    vol.Optional('notifier'): cv.string,
-    vol.Optional('annotate_messages'): bool,
+    vol.Optional('throttle_fires_per_mins'): vol.Schema(vol.All(vol.ExactSequence([int, vol.Coerce(float)]),
+                                                                 # 0.001 hours is 3.6 seconds
+                                                                 vol.ExactSequence([vol.Range(min=1.),vol.Range(min=0.01)]))),
+    vol.Optional('annotate_messages'): cv.boolean,
+})
+SINGLE_ALERT_SCHEMA_BASE = SINGLE_TRACKED_SCHEMA.extend({
+    vol.Optional('message'): cv.template,
 })
 SINGLE_ALERT_SCHEMA_EVENT = SINGLE_ALERT_SCHEMA_BASE.extend({
-        vol.Required('trigger'): cv.TRIGGER_SCHEMA,
-        vol.Required('condition'): cv.template,
-    })
-SINGLE_ALERT_SCHEMA_CONDITION = has_atleast_oneof(['condition', 'threshold'], SINGLE_ALERT_SCHEMA_BASE.extend({ 
-        vol.Optional('condition'): cv.template,
-        vol.Optional('threshold'): has_atleast_oneof(['minimum', 'maximum'], vol.Schema({
-            vol.Required('value'): cv.template,
-            vol.Required('hysteresis'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
-            vol.Optional('minimum'): vol.Coerce(float),
-            vol.Optional('maximum'): vol.Coerce(float),
-            })),
-        vol.Optional('early_start'): bool,
-        vol.Optional('done_message'): cv.template,
-    }))
-                                 
-DEFAULTS_SCHEMA = vol.Schema({
-    vol.Optional('notification_frequency_mins'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
-    vol.Optional('notifier'): cv.string,
-    vol.Optional('annotate_messages'): bool,
+    vol.Required('trigger'): cv.TRIGGER_SCHEMA,
+    vol.Required('condition'): cv.template,
 })
+SINGLE_ALERT_SCHEMA_CONDITION = has_atleast_oneof(['condition', 'threshold'], SINGLE_ALERT_SCHEMA_BASE.extend({ 
+    vol.Optional('condition'): cv.template,
+    vol.Optional('threshold'): has_atleast_oneof(['minimum', 'maximum'], vol.Schema({
+        vol.Required('value'): cv.template,
+        vol.Required('hysteresis'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
+        vol.Optional('minimum'): vol.Coerce(float),
+        vol.Optional('maximum'): vol.Coerce(float),
+    })),
+    vol.Optional('early_start'): bool,
+    vol.Optional('done_message'): cv.template,
+    vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
+    vol.Optional('on_for_at_least_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
+}))
+                                 
 
 TOP_LEVEL_SCHEMA = vol.Schema({
     vol.Optional('defaults'): dict,

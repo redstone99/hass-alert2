@@ -16,6 +16,11 @@ cp ha-test.old/configuration.yaml ha-test
 
 Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supports alerting and sending notifications based on conditions and events. It's a retake on the original [Alert](https://www.home-assistant.io/integrations/alert/) integration.
 
+[![GitHub Release](https://img.shields.io/github/v/release/redstone99/hass-alert2)](https://github.com/redstone99/hass-alert2/releases)
+[![GitHub Release Date](https://img.shields.io/github/release-date/redstone99/hass-alert2)](https://github.com/redstone99/hass-alert2/releases)
+[![GitHub commit activity](https://img.shields.io/github/commit-activity/y/redstone99/hass-alert2)](https://github.com/redstone99/hass-alert2/commits/master/)
+<!-- ![GitHub commits since latest release](https://img.shields.io/github/commits-since/redstone99/hass-alert2/latest) -->
+
 ## Table of Contents
 
 - [New features](#new-features)
@@ -99,13 +104,13 @@ Alert2 supports two kinds of alerts:
 
 - **Event-based alerts**. The alert waits for a specified trigger to occur and is "firing" for just that moment.  Example: a problematic MQTT message arrives.
 
-Configuration details and examples are in the [Configuration section]((#configuration)). Here we provide an overview.
+Configuration details and examples are in the [Configuration section]((#configuration)). Here is an overview:
 
 ### Condition alerts
 
 Condition alerts can specify a `condition` template. The alert is firing when the condition evaluates to true.
 
-An alert can also specify a `threshold` dict that includes min/max and optional hysteresis.  If a threshold is specified, the alert is firing if the threshold is exceeded AND any `condition` specified is true.
+An alert can also specify a `threshold` dict that includes min/max limits and optional hysteresis.  If a threshold is specified, the alert is firing if the threshold is exceeded AND any `condition` specified is true.
 
 Hysteresis is also available via the `on_for_at_least_secs` parameter. If specified, the alert starts firing once any `threshold` is exceeded AND any `condition` is true for at least the time interval specified. This is similar in motiviation to the `skip_first` option in the old Alert integration.
 
@@ -168,21 +173,21 @@ The text of each notification by default includes some basic context information
 
 ## Configuration
 
-Alert configuration is done through the `alert2:` section of your `configuration.yaml` file.  There are three sections, `defaults`, `alerts`, and  `tracked`.
+Alert configuration is done through the `alert2:` section of your `configuration.yaml` file.  There are three subsections: `defaults`, `alerts`, and  `tracked`.
 
 ### Defaults
 
-A `defaults:` subsection specifies default values for parameters common to every alert. Each of these parameters may be specified either in this subsection, or over-ridden on a per-alert basis.
+The `defaults:` subsection specifies default values for parameters common to every alert. Each of these parameters may be specified either in this subsection or over-ridden on a per-alert basis.
 
 The defaults specified here apply also to internal alerts that may fire, such as due to a config error or assertion failure.
 
 
 | Key | Type | Description |
 |---|---|---|
-| `reminder_frequency_mins` | float or list<br>=60 | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay beteen reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration). Defaults to 60 minutes if not specified. |
-| `notifier` | string ="notify" | Name of notifier to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`. Defaults to `notify` (i.e., so Alert2 will default to invoking `notify.notify` for notifications)|
-| `annotate_messages` | bool =true | If true, add extra context information to notifications, like number of times alert has fired since last notifcation, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform. Defaults to true. |
-| `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, if you specify "[10, 60]", then you'll receive no more than 10 notifications of the alert firing every hour.
+| `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay beteen reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. |
+| `notifier` | string | Name of notifier to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `notify` (i.e., the service `notify.notify`)|
+| `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notifcation, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
+| `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on a list of two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, "[10, 60]" means you'll receive no more than 10 notifications of the alert firing every hour.<br>Default is no throttling. |
 
 Example:
 
@@ -210,16 +215,16 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 |---|---|---|---|
 |`domain` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `domain` is typically the object causing the alert (e.g., garage door). |
 | `name` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `name` is typically the particular fault occurring (e.g., open_too_long)  |
-| `friendly_name` | string | optional | Name to display instead of the default entity name. Surfaces in the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) overview card |
-| `condition` | string | optional | Template string. Alert is firing if the template evaluates to truthy AND any other alert options specified below are also true.  |
+| `friendly_name` | string | optional | Name to display instead of the entity name. Surfaces in the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) overview card |
+| `condition` | template | optional | Template string. Alert is firing if the template evaluates to truthy AND any other alert options specified below are also true.  |
 | `trigger` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Indicates an event-based alert. Alert fires when the trigger does, if also any `condition` specified is truthy. |
 | `threshold:` | dict | optional | Subsection specifying a threshold criteria with hysteresis. Alert is firing if the threshold value exceeds bounds AND any `condition` specified is truthy. Not available for event-based alerts. |
-| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`value` | string | required | A template evaluating to a float to be compared to threshold limits. |
+| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`value` | template | required | A template evaluating to a float to be compared to threshold limits. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`hysteresis` | float | required | Compare `value` to limits using hysteresis. threshold is considered exceeded if value exceeds min/max, but does not reset until value increases past min+hysteresis or decreases past max-hysteresis. (see description below) |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`maximum` | float | optional | Maximum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`minimum` | float | optional | Minimum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
 | `message` | template | optional | Template string evaluated when the alert fires. This text is included in notifications. For event-based alerts, the message can reference the `trigger` variable (see example below). Because notifications by default include context information like the alert domain and name, the message can be brief or even omitted all together |
-| `done_message` | template | optional | Message to send when a condition alert turns off.  Replaces the default message (something like  "Alert2 [name] turned off after x minutes") |
+| `done_message` | template | optional | Message to send when a condition alert turns off.  Replaces the default message (e.g., "Alert2 [name] turned off after x minutes") |
 | `data` | dict | optional | Optional dictionary passed as the "data" parameter to the notify service call |
 | `target` | string | optional | String passed as the "target" parameter to the notify service call |
 | `title` | template | optional | Passed as the "title" parameter to the notify service call |
@@ -357,7 +362,7 @@ An example of using alert2.report in the action section of an automation:
               name: "fault_{{trigger.event.data.name}}"
               message: "code is {{ trigger.event.data.dData.Code }}"
 
-A few other service calls are used internally by alert2.js, but are available as well:
+A few other service calls are used internally by [Alert2 UI](https://github.com/redstone99/hass-alert2-ui), but are available as well:
 
 `alert2.ack_all` acks all alerts.
 <br>`alert2.notification_control` adjust the notification settings.

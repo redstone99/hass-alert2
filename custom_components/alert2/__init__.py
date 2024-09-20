@@ -1,33 +1,41 @@
 #
-# Alert2 supports two types of alerts: condition alerts and event alerts.
-# Condition alerts are considered 'firing' when the condition associated with them is true.
-#    E.g., a temperature is too high
-# Event alerts are considered firing for the single moment when the event occurs.
-#    E.g., a certain MQTT message arrives
+# Alert2
+#
+# Basic documentation on this integration is at https://github.com/redstone99/hass-alert2/tree/master
+#
+# TODO - document more completely
 #
 import asyncio
-import datetime
-from io import StringIO
+import copy
+import datetime as rawdt
+from   enum import Enum
+from   io import StringIO
 import logging
-from typing import Any
+from   typing import Any
 import voluptuous as vol
-
-from collections.abc import Callable
-from homeassistant.const import (
+from   homeassistant.const import (
     EVENT_HOMEASSISTANT_STOP,
     EVENT_HOMEASSISTANT_STARTED
 )
-from homeassistant.core import HomeAssistant, callback, Context, Event, EventStateChangedData
-from homeassistant.exceptions import TemplateError
-from homeassistant.helpers import template as template_helper, discovery
+from   homeassistant.core import HomeAssistant, callback, Context, Event, EventStateChangedData
+from   homeassistant.exceptions import TemplateError
+from   homeassistant.helpers import template as template_helper, discovery
 import homeassistant.helpers.config_validation as cv
-from homeassistant.helpers.entity_component import EntityComponent
-from homeassistant.helpers.event import async_track_template_result, TrackTemplate, TrackTemplateResult
-from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.helpers.trigger import async_initialize_triggers
-from homeassistant.helpers.typing import ConfigType
+from   homeassistant.helpers.entity_component import EntityComponent
+from   homeassistant.helpers.event import async_track_template_result, TrackTemplate, TrackTemplateResult
+from   homeassistant.helpers.restore_state import RestoreEntity
+from   homeassistant.helpers.trigger import async_initialize_triggers
+from   homeassistant.helpers.typing import ConfigType
 import homeassistant.util.dt as dt
-import config
+
+from .config import (
+    DEFAULTS_SCHEMA,
+    SINGLE_TRACKED_SCHEMA,
+    SINGLE_ALERT_SCHEMA_BASE,
+    SINGLE_ALERT_SCHEMA_EVENT,
+    SINGLE_ALERT_SCHEMA_CONDITION,
+    TOP_LEVEL_SCHEMA
+)
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "alert2"
@@ -42,25 +50,76 @@ global_tasks = set()
 moduleLoadTime = dt.now()
 kNotifierInitGraceSecs = 120
 
+##########################################################
+#
+# BEGIN - Utility functions for developers to call
+#
+#
+
+#
 # report() - report that an event alert has fired
 # 
 def report(domain: str, name: str, message: str | None = None, isException: bool = False) -> None:
     data = { 'domain' : domain, 'name' : name }
     if message is not None:
         data['message'] = message
-    #if global_hass:
-    global_hass.bus.async_fire(EVENT_TYPE, data)
-    #else:
     if isException:
         _LOGGER.exception(f'Err reported: {data}')
     else:
         _LOGGER.error(f'Err reported: {data}')
-
+    if global_hass:
+        global_hass.bus.async_fire(EVENT_TYPE, data)
+    else:
+        _LOGGER.error('report() called before Alert2 has initialized. reporting skipped.')
+        
+#
+# declareEventMulti - takes array of config entries. E.g.:
+#
+#    declareEventMulti([  { 'domain': 'mydomain', 'name': 'some err 1' },
+#                         { 'domain': 'mydomain', 'name': 'some err 2' } ])
+#
 async def declareEventMulti(arr):
     await global_hass.data[DOMAIN].declareEventMulti(arr)
 
+#
+# create_task() - similar to hass.async_create_task() but it also report exceptions if they happen so the task doesn't die silently.
+#                 Task will be cancelled when HA shuts down. 
+# afut is a future
+# returns a task object.
+#
+def create_task(hass, domain, afut):
+    global global_tasks
+    atask = hass.loop.create_task( afut )
+    cb = lambda ttask: taskDone(domain, ttask)
+    atask.add_done_callback(cb)
+    _LOGGER.debug(f'create_task called for domain {domain}, {atask}')
+    global_tasks.add(atask)
+    return atask
+
+#
+# cancel_task - cancel a task created with create_task().  atask is the task returned by create_task()
+#
+def cancel_task(domain, atask):
+    global global_tasks
+    _LOGGER.debug(f'Calling cancel_task for {domain} and {atask}')
+    # Cancelling a task means its done handler is called, so no need to remove task from global_tasks
+    atask.cancel()
+
+
+##########################################################
+#
+# END of utility functions. Below this is Alert2 internal code.
+#
+    
+class NotificationReason(Enum):
+    Fire = 1
+    StopFiring = 2
+    Reminder = 3
+
 # return a string x, st, jinja2.Template(x).render() == astr
 # message field in components/notify/const.py:NOTIFY_SERVICE_SCHEMA is a template and will be rendered
+# That is, even though notifications comopnent complains about passing templates to notify, it still calls render()
+# and so to get a straight message through you have to jinja2Escape it.
 def jinja2Escape(astr):
     a2str = astr.replace('{%', '{% endraw %}{{"{%"}}{% raw %}')
     return '{% raw %}' + a2str + '{% endraw %}'
@@ -84,36 +143,103 @@ def taskDone(domain, atask):
         _LOGGER.error(f'unhandled_exception with stack {astack}')
         report(domain, 'unhandled_exception', str(ex))
 
-# create_task() - similar to hass.async_create_task() but it also report exceptions if they happen so the task doesn't die silently.
-# Task will be cancelled when HA shutsdown
-# returns a task object.
-def create_task(hass, domain, afut):
-    global global_tasks
-    atask = hass.loop.create_task( afut )
-    cb = lambda ttask: taskDone(domain, ttask)
-    atask.add_done_callback(cb)
-    _LOGGER.debug(f'create_task called for domain {domain}, {atask}')
-    global_tasks.add(atask)
-    return atask
 
-# Cancel a task created with create_task().  atask is the task returned by create_task()
-def cancel_task(domain, atask):
-    global global_tasks
-    _LOGGER.debug(f'Calling cancel_task for {domain} and {atask}')
-    # I think cancelling a task means its done handler is called
-    #if atask in global_tasks:
-    #    global_tasks.remove(atask)
-    #else:
-    #    report(DOMAIN, 'assert', f'taskDone called2 for domain {domain},  {atask} but is not in global_tasks')
-    atask.cancel()
-
-def getField(fieldName, config, defaults):
+def getField(fieldName, config, defaults, requireDefault=True):
     if fieldName in config:
         return config[fieldName]
     elif fieldName in defaults:
         return defaults[fieldName]
     else:
-        raise vol.Invalid(f'Alert {config["domain"]},{config["name"]} config or defaults must specify {fieldName}')
+        if requireDefault:
+            raise vol.Invalid(f'Alert {config["domain"]},{config["name"]} config or defaults must specify {fieldName}')
+        else:
+            return None
+
+    
+class MovingSum:
+    """This class tracks how many alert firings have happened in the last inverval_mins.
+    """
+    def __init__(self, amax, interval_mins):
+        self.maxCount = amax
+        self.intervalSecs = interval_mins * 60
+        self.numBuckets = 10
+        # First bucket is most recent
+        self.buckets = [0]*self.numBuckets
+        self.singleBucketSecs = self.intervalSecs / self.numBuckets
+        self.lastAdvanceTime = None
+        #self.cacheKnowUnderLimit = True
+        
+    def reportFire(self, now):
+        self._updateBuckets(now)
+        self.buckets[0] += 1
+        if self.lastAdvanceTime is None:
+            self.lastAdvanceTime = now
+        _LOGGER.debug(f'reportFire: {self.buckets}')
+
+    # Invariant after _updateBuckets() call is either
+    # self.lastAdvanceTime is not None:
+    #    in which case it is less than singleBucketHours older than now
+    #    and sum(self.buckets) > 0
+    # or self.lastAdvanceTime is None
+    #    in which case sum(self.buckets) == 0
+    def _updateBuckets(self, now):
+        currSum = sum(self.buckets)
+        if currSum == 0:
+            self.lastAdvanceTime = None
+            return
+        if not self.lastAdvanceTime:
+            report(DOMAIN, 'assert', f'MovingAvg no lastAdvanceTime but buckets not empty {currSum}')
+            self.lastAdvanceTime = now
+        secsSinceLastAdvance = (now - self.lastAdvanceTime).total_seconds()
+        bucketAdvancesSinceLast = secsSinceLastAdvance / self.singleBucketSecs
+        _LOGGER.debug(f'  _updateBuckets: secsSinceLastAdvance={secsSinceLastAdvance} secsLeft={self.singleBucketSecs-secsSinceLastAdvance},  {self.buckets}')
+        if bucketAdvancesSinceLast < 1:
+            return
+        bucketAdvancesSinceLastInt = int(bucketAdvancesSinceLast)
+        numAdvances = min(self.numBuckets, bucketAdvancesSinceLastInt)
+        self.buckets = [0]*numAdvances + self.buckets[:-numAdvances]
+        if len(self.buckets) != self.numBuckets:
+            report(DOMAIN, 'assert', f'MovingAvg bucket update logic produced wrong length {self.numBuckets} vs {self.buckets}')
+            self.buckets = [0]*self.numBuckets
+        newSum = sum(self.buckets)
+        if newSum == 0:
+            self.lastAdvanceTime = None
+            return
+        self.lastAdvanceTime = self.lastAdvanceTime + rawdt.timedelta(seconds=(bucketAdvancesSinceLastInt*self.singleBucketSecs))
+        if (now - self.lastAdvanceTime).total_seconds() > self.singleBucketSecs:
+            report(DOMAIN, 'assert', f'MovingAvg _updateBuckets left more than a single bucket interval of time left')
+        return
+
+    # Return number of seconds remaining until the number of alert fires reported in the last interval_mins has dropped below
+    # the threshold.
+    def remainingSecs(self, now):
+        self._updateBuckets(now)
+        acumm = 0
+        # Calculate idx to be the first bucket that needs to rotate out to bring total down to <= max
+        for idx in range(self.numBuckets):
+            acumm += self.buckets[idx]
+            if acumm > self.maxCount:
+                break
+            # There's room for more firings, so move to next bucket
+        if acumm <= self.maxCount:
+            _LOGGER.debug(f'remainingSecs: acumm={acumm} ret0 {self.buckets}')
+            return 0
+        # Seconds to wait if we're at the beginning of a bucket interval right now
+        secsToWait = (self.numBuckets - idx) * self.singleBucketSecs
+
+        # Account for the fact that we are partially through a bucket advance interval
+        if not self.lastAdvanceTime:
+            report(DOMAIN, 'assert', f'MovingAvg not empty but somehow missing bucketAdvanceTime')
+            return 0
+        intervalSecsElapsed = (now - self.lastAdvanceTime).total_seconds()
+        secsToWait = secsToWait - intervalSecsElapsed
+        #secsToWait = secsToWait + 5
+        if secsToWait < 0:
+            report(DOMAIN, 'assert', f'MovingAvg secsToWait produced negative: {secsToWait}')
+            return 60
+        _LOGGER.debug(f'remainingSecs: ret={secsToWait},  {self.buckets}')
+        return secsToWait
+
     
 # Functionality common to both event alerts and condition alerts
 class AlertBase(RestoreEntity):
@@ -148,18 +274,22 @@ class AlertBase(RestoreEntity):
             self._done_message_template.hass = hass
         if self._title_template is not None:
             self._title_template.hass = hass
-        self.notification_frequency_mins = getField('notification_frequency_mins', config, defaults)
         self.annotate_messages = getField('annotate_messages', config, defaults)
-        #self._raw_messages = config['raw_messages'] if 'raw_messages' in config else None
-
+        throttle_fires_per_mins = getField('throttle_fires_per_mins', config, defaults, requireDefault=False)
+        self.movingSum = None
+        if throttle_fires_per_mins is not None:
+            self.movingSum = MovingSum(throttle_fires_per_mins[0], throttle_fires_per_mins[1])
+        self.notified_max_on = False
+        
+        # State restored on restart
         self.last_notified_time = None
         self.last_fired_time = None
         self.last_fired_message = None
         self.last_ack_time = None
         self.fires_since_last_notify = 0  # or since last ack
-
         # enabled, disabled, or snooze unti time
         self.notification_control = NOTIFICATIONS_ENABLED
+
         self.future_notification_info = None
         
     async def async_added_to_hass(self) -> None:
@@ -182,6 +312,9 @@ class AlertBase(RestoreEntity):
                         self.last_fired_message = last_state.attributes['last_fired_message']
                     if 'fires_since_last_notify' in last_state.attributes:
                         self.fires_since_last_notify = int(last_state.attributes['fires_since_last_notify'])
+                    # Grouped within last_fired_time since notified_max_on turns on only in response to a firing
+                    if 'notified_max_on' in last_state.attributes:
+                        self.notified_max_on = int(last_state.attributes['notified_max_on'])
             if 'last_ack_time' in last_state.attributes and last_state.attributes['last_ack_time']:
                 tdate = dt.parse_datetime(last_state.attributes['last_ack_time'])
                 if not self.last_ack_time or tdate > self.last_ack_time:
@@ -208,6 +341,7 @@ class AlertBase(RestoreEntity):
             'last_ack_time': self.last_ack_time,
             'friendly_name2': self._friendly_name, # Entity class defines "friendly_name" so we have to use something different.
             'fires_since_last_notify': self.fires_since_last_notify,
+            'notified_max_on': self.notified_max_on,
             'notification_control': self.notification_control,
         }
         baseDict.update(self.more_state_attributes())
@@ -221,7 +355,7 @@ class AlertBase(RestoreEntity):
         assert False, "not implemented"
 
     async def async_notification_control( 
-        self, enable: bool, snooze_until: datetime.datetime | None = None
+        self, enable: bool, snooze_until: rawdt.datetime | None = None
     ) -> None:
         _LOGGER.info(f'{self.name} got async_notification_control with enable={enable} and snooze_until={snooze_until}')
         if enable:
@@ -254,6 +388,8 @@ class AlertBase(RestoreEntity):
         if self.fires_since_last_notify != 0:
             self.fires_since_last_notify = 0
             needWrite = True
+        # purpose of sub_ack_int is so, when someone clicks "Ack All", we don't actually update and log
+        # every single alert in existence.
         if self.sub_ack_int():
             needWrite = True
         if needWrite:
@@ -262,65 +398,91 @@ class AlertBase(RestoreEntity):
             self.async_write_ha_state()
 
     # idempotent, can call many times
-    # Used to be check_notify
     def reminder_check(self, now = None):
         if not now:
             now = dt.now()
         if self.future_notification_info is not None:
             cancel_task(DOMAIN, self.future_notification_info['task'])
         self.future_notification_info = None
-        need_reminder = (self.fires_since_last_notify > 0) or self.sub_need_reminder()
+        need_reminder = (self.fires_since_last_notify > 0) or self.notified_max_on or self.sub_need_reminder()
         if need_reminder:
-            remaining_secs = self.can_notify_now(now)
-            if remaining_secs == False:
+            remaining_secs, rem_reason = self.can_notify_now(now, NotificationReason.Reminder)
+            if rem_reason == NOTIFICATIONS_DISABLED:
                 return
-            if remaining_secs == True:
+            if remaining_secs == 0:
                 self.notify_timer_cb(now)
             else:
                 if not (isinstance(remaining_secs, int) or isinstance(remaining_secs, float)) or remaining_secs <= 0:
                     report(DOMAIN, 'assert', f'In reminder_check, remaining_secs={remaining_secs} of type={type(remaining_secs)} for {self.name}')
                     return
                 self.schedule_reminder(remaining_secs)
+
+    def sub_calc_next_reminder_frequency_mins(self, now):
+        assert False, "Not Implemented"
         
     # Return False if disabled
-    #        True if can do immediately
-    #        float seconds remaining till can notify otherwise
-    # override_timing overrides time since last notify, but does not override
-    #    snooze or disabled
-    def can_notify_now(self, now, override_timing=False):
-        if self.last_notified_time and self.notification_frequency_mins > 0:
-            if self.last_ack_time and self.last_ack_time > self.last_notified_time:
-                # If we've acked since last notification, it resets the last_notified_time effectively
-                remaining_secs = 0
-            else:
-                secs_since_last = (now - self.last_notified_time).total_seconds()
-                next_secs = self.notification_frequency_mins * 60.0
-                remaining_secs = next_secs - secs_since_last
-        else:
-            remaining_secs = 0
+    #        float seconds remaining till can notify otherwise. 0 if can do immediately
+    # returns tuple:
+    #    False/float:  False if disabled, otherwise 0 or seconds till can notify
+    #    string: reason for delay
+    def can_notify_now(self, now, reason: NotificationReason):
         if self.notification_control == NOTIFICATIONS_DISABLED:
-            return False
+            return (30*24*3600, NOTIFICATIONS_DISABLED)
+        # First calculate snooze, max_limit, normal, startup remaining time till can notify independently,
+        # then combine the logic.
+        snooze_remaining_secs = 0
         if self.notification_control != NOTIFICATIONS_ENABLED:
-            future_secs = (self.notification_control - now).total_seconds()
-            if future_secs <= 0:
+            snooze_remaining_secs = (self.notification_control - now).total_seconds()
+            if snooze_remaining_secs <= 0:
                 self.notification_control = NOTIFICATIONS_ENABLED
                 self.async_write_ha_state()
                 self.alertData.noteChange()
-            else:
-                if future_secs > remaining_secs:
-                    remaining_secs = future_secs
-        if override_timing and self.notification_control == NOTIFICATIONS_ENABLED:
-            remaining_secs = 0
-        if remaining_secs > 0:
-            return remaining_secs
+                snooze_remaining_secs = 0
+
+        max_limit_remaining_secs = self.movingSum.remainingSecs(now) if self.movingSum is not None else 0
+
+        normal_remaining_secs = 0
+        if reason == NotificationReason.Reminder:
+            reminder_frequency_mins = self.sub_calc_next_reminder_frequency_mins(now)
+            if self.last_notified_time and reminder_frequency_mins > 0:
+                secs_since_last = (now - self.last_notified_time).total_seconds()
+                next_secs = reminder_frequency_mins * 60.0
+                normal_remaining_secs = max(0, next_secs - secs_since_last)
+
+        startup_remaining_secs = 0
         if not self.hass.services.has_service('notify', self.notifier):
             uptimeSecs = (dt.now() - moduleLoadTime).total_seconds()
             graceRemainSecs = kNotifierInitGraceSecs - uptimeSecs
             if graceRemainSecs > 0:
                 # HA still may be initializing and hasn't gotten around to loading the notifiers yet.
-                return 10
+                startup_remaining_secs = 10
             # Otherwise, do the notify, which will fail and fire the notify_failed alert
-        return True
+
+        if self.notified_max_on and max_limit_remaining_secs == 0:
+            # If throttling turned off, it overrides the notification frequency setting
+            normal_remaining_secs = 0
+            
+        # Now combine the logic
+        remaining_secs = 0
+        freas = 'good-to-go-should-never-see'
+        if max_limit_remaining_secs > remaining_secs:
+            remaining_secs = max_limit_remaining_secs
+            freas = 'max_limited'
+        if snooze_remaining_secs > remaining_secs:
+            remaining_secs = snooze_remaining_secs
+            freas = 'snoozed'
+        if startup_remaining_secs > remaining_secs:
+            remaining_secs = startup_remaining_secs
+            freas = 'delayed_init'
+        if normal_remaining_secs > remaining_secs:
+            remaining_secs = normal_remaining_secs
+            freas = 'reminder'
+            _LOGGER.debug(f'    reminder_frequency_mins = {reminder_frequency_mins}')
+        #remaining_secs = max(max_limit_remaining_secs, snooze_remaining_secs,
+        #                     startup_remaining_secs, normal_remaining_secs)
+        _LOGGER.debug(f'can_notify_now {self.name}, snooze_remaining_secs={snooze_remaining_secs} max_limit_remaining_secs={max_limit_remaining_secs} normal_remaining_secs={normal_remaining_secs} startup_remaining_secs={startup_remaining_secs} remaining_secs={remaining_secs} freas={freas}')
+        return (remaining_secs, freas)
+            
             
     def schedule_reminder(self, remaining_secs):
         async def foo():
@@ -348,30 +510,85 @@ class AlertBase(RestoreEntity):
     # Does not write out state updates
     # Returns True if notified.  False if didn't notify
     #   (may return True if intended to notify but notifier wasn't available)
-    def _notify(self, now, is_fire, message, override_timing=False, skip_notify=False):
+    # Does not call async_write_ha_state(), caller must
+    #
+    # There are message possibilities:
+    #    Alert fired/turned on
+    #    Alert fired/turned triggering over max
+    #    Alert still on reminder
+    #    Alert turned off
+    #    max disengaged with alert off (max stopped. filtered 3 firings, mostly recently x min ago, which turned off x min ago
+    #    max disengaged with alert on  (max stopped. filtered 3 firings, mostly recently x min ago, (still on)
+    #
+    def _notify(self, now, reason: NotificationReason, message, skip_notify=False):
+        # Call can_notify_now before reportFire so that if reportFire crosses max threshold, we
+        # still notify that max threshold has been crossed
+        remaining_secs, remaining_reason = self.can_notify_now(now, reason)
+        _LOGGER.debug(f'in _notify, remaining_secs={remaining_secs} {remaining_reason}, ms={self.movingSum}')
+        
         if self.future_notification_info is not None:
             cancel_task(DOMAIN, self.future_notification_info['task'])
         self.future_notification_info = None  # TODO - could avoid recreates if we keep it around.
 
-        remaining_secs = self.can_notify_now(now, override_timing)
-        doNotify = remaining_secs == True
+        doNotify = remaining_secs == 0
         if skip_notify:
             doNotify = False
 
-        if self.annotate_messages or (not is_fire):
+        msg = ''
+            
+        triggeredMaxLimit = False
+        if reason == NotificationReason.Fire:
+            if doNotify and self.movingSum is not None:
+                # We're calling movingSum.reportFire and before above can_notify_now, which calls movingSum.remaining_secs
+                # both of which call movingSum._updateBuckets().  Since we use the same 'now., we should
+                # be guaranteed the 2nd call doesn't change anything.
+                self.movingSum.reportFire(now)
+
+        #what to do if stopped throttling right before call to _notify, and then fire() started throttling again?
+        #then doNotify is true, and max_limit_remaining_secs > 0 and self.notified_max_on is true, so
+        #will get xxx firex 6x message but no throttling update
+                
+        max_limit_remaining_secs = self.movingSum.remainingSecs(now) if self.movingSum is not None else 0
+        if max_limit_remaining_secs > 0 and not self.notified_max_on:
+            # throttling started hopefully due to a Fire that just happened.
+            self.notified_max_on = True
+            msg += '[Throttling started] '
+            if not doNotify:
+                report(DOMAIN, 'assert', f'{self.name}: saw throttling start, but not notifying. Seems impossible. {max_limit_remaining_secs} ')
+        elif doNotify and max_limit_remaining_secs > 0 and self.notified_max_on:
+            # doNotify means throttling turned off before call to _notify().
+            # But it's now back on, which must be result of Fire.  In otherwords, throttling briefly turned off.
+            # we would have expected a reminder call to _notify to notice the throttling had turned off, but
+            # schedule_reminder() adds a second delay, so it's possible the reminder is a second away.
+            # In other otherwords, a fire happened in the gap between throttling expiring and the reminder call to _notify to observe it.
+            #_LOGGER.error('seems like throttling turned off earlier but without notification :(')
+            msg += '[Throttling restarted] '
+        elif max_limit_remaining_secs == 0 and self.notified_max_on:
+            self.notified_max_on = False
+            msg += '[Throttling ending] '
+            if not doNotify and remaining_reason not in [ NOTIFICATIONS_DISABLED, 'snoozed' ]:
+                report(DOMAIN, 'assert', f'{self.name}: saw throttling stop, but not notifyign, seems impossible. {remaining_secs}, {remaining_reason}')
+
+                
+        addedName = False
+        if self.annotate_messages or reason == NotificationReason.Reminder:
+            addedName = True
             if self._friendly_name is None:
-                msg = f'Alert2 {self.alDomain} {self.alName}'
+                msg += f'Alert2 {self.name}'
             else:
-                msg = self._friendly_name
-            if doNotify and self.fires_since_last_notify > 0:
-                secs_since_last = (now - self.last_fired_time).total_seconds()
-                msg += f' +{self.fires_since_last_notify}x (most recently {agoStr(secs_since_last)} ago)'
-                self.fires_since_last_notify = 0
-            if len(message) > 0:
-                msg += f': {message}'
-        else:
-            msg = message
-        _LOGGER.warning(f'{msg}')
+                msg += self._friendly_name
+            
+        if doNotify and self.fires_since_last_notify > 0:
+            secs_since_last = (now - self.last_fired_time).total_seconds()
+            msg += f' fired {self.fires_since_last_notify}x (most recently {agoStr(secs_since_last)} ago)'
+            self.fires_since_last_notify = 0
+            
+        if len(message) > 0:
+            if addedName:
+                msg += ': '
+            msg += f'{message}'
+
+        _LOGGER.warning(f'_notify msg={msg}')
             
         if doNotify:
             self.last_notified_time = now
@@ -416,26 +633,25 @@ class AlertBase(RestoreEntity):
                 _LOGGER.debug(f'Notifying done: {self.notifier}')
             atask = create_task(self.hass, DOMAIN, foo())
         else:
-            if is_fire:
+            if reason == NotificationReason.Fire:
                 self.fires_since_last_notify += 1
 
-            tillmsg = ''
-            if remaining_secs != False:
-                tillmsg = f', next notify is {remaining_secs} secs away'
-            if remaining_secs == False:
-                cause = 'disabled '
-            elif self.notification_control not in [ NOTIFICATIONS_ENABLED, NOTIFICATIONS_DISABLED ]:
-                cause = 'snoozed '
+            if remaining_reason == NOTIFICATIONS_DISABLED:
+                tillmsg = 'disabled'
             else:
-                cause = ''
-            smsg = f'  Skipping notify for {cause}alert {self.alDomain}:{self.alName}{tillmsg}'
+                tillmsg = f', {remaining_reason} next notify is {remaining_secs} secs away'
+            smsg = f'  Skipping notify for {self.alDomain}.{self.alName} {tillmsg}'
             _LOGGER.warning(smsg)
-            if remaining_secs != False:
+            if remaining_reason != NOTIFICATIONS_DISABLED:
+                if remaining_secs == 0:
+                    report(DOMAIN, 'assert', f'{self.name}, not notifying but remaining time is 0')
+                    remaining_secs = 60
                 self.schedule_reminder(remaining_secs)
                 
-        if is_fire:
+        if reason == NotificationReason.Fire:
             self.last_fired_message = message
             self.last_fired_time = now
+        #_LOGGER.warning('')
         return doNotify
 
 def agoStr(secondsAgo):
@@ -547,7 +763,7 @@ class EventAlert(AlertBase):
     async def record_event(self, message: str):
         now = dt.now()
         msg = message
-        didNotify = self._notify(now, True, message)
+        didNotify = self._notify(now, NotificationReason.Fire, message)
         self.async_write_ha_state()
         self.alertData.noteChange()
     
@@ -555,15 +771,18 @@ class EventAlert(AlertBase):
         if self.fires_since_last_notify <= 0:
             report(DOMAIN, 'assert', f'in notify_timer_cb, fires_since_last_notify is not positive, is {self.fires_since_last_notify} for {self.name}')
         msg = f'Last msg: {self.last_fired_message}'
-        didNotify = self._notify(now, False, msg)
+        didNotify = self._notify(now, NotificationReason.Reminder, msg)
         if not didNotify:
             report(DOMAIN, 'assert', f'in notify_timer_cb, didNotify was false for {self.name}')
         self.async_write_ha_state()
         self.alertData.noteChange()
+        return didNotify
     def sub_ack_int(self):
         return self.last_fired_time and (not self.last_ack_time or self.last_ack_time <= self.last_fired_time)
     def sub_need_reminder(self):
         return False
+    def sub_calc_next_reminder_frequency_mins(self, now):
+        return 0
 
 # Base class for two types of condition alerts. One type is the complement of EventAlert.
 # The other type is an alert that can be fired manually via python.
@@ -576,25 +795,40 @@ class ConditionAlertBase(AlertBase):
             defaults
     ) -> None:
         AlertBase.__init__(self, hass, alertData, config=config, defaults=defaults)
-        
+
+        # Restored on HA restart
         self.last_on_time = None
         self.last_off_time = None
+        self.reminders_since_fire = 0
+
         # Did we notify or reminder notify that the current alert is on.
         # used so we can then notify it turned off.
-        self.notified_on = False
+        #self.notified_on = False
         self.added_to_hass_called = False
+        self.reminder_frequency_mins = getField('reminder_frequency_mins', config, defaults)
+        # For hysteresis turning on
+        self.on_for_at_least_secs = config['on_for_at_least_secs'] if 'on_for_at_least_secs' in config else 0
+        # If on_for_at_least_secs is set, we distinguish between when a condition turned true
+        # and when the alert turns on.
+        # We don't restore this parameter cuz we don't know that cond was true while HA was down.
+        self.cond_true_time = None
+        self.cond_true_task = None
         
     @property
     def state(self) -> str:
-        if self.last_on_time and ( (not self.last_off_time) or self.last_on_time > self.last_off_time):
+        oldIsOn = self.last_on_time and ( (not self.last_off_time) or self.last_on_time > self.last_off_time)
+        if oldIsOn:
             return "on"
         else:
             return "off"
+                
     def more_state_attributes(self):
         return {
             'last_on_time': self.last_on_time,
             'last_off_time': self.last_off_time,
-            'notified_on': self.notified_on,
+            'reminders_since_fire': self.reminders_since_fire,
+            'cond_true_time': self.cond_true_time,
+            #'notified_on': self.notified_on,
         }
     async def async_added_to_hass(self) -> None:
         """Restore state and register callbacks."""
@@ -605,34 +839,70 @@ class ConditionAlertBase(AlertBase):
             # First part of 'if' is just for migration I think
             if ('last_on_time' in last_state.attributes) and last_state.attributes['last_on_time']:
                 tdate = dt.parse_datetime(last_state.attributes['last_on_time'])
-                if self.last_on_time is None or tdate > self.last_on_time:
+                if self.last_on_time is None or tdate >= self.last_on_time:
                     self.last_on_time = tdate
-                    if 'notified_on' in last_state.attributes:
-                        val = last_state.attributes['notified_on']
-                        if not isinstance(val, bool):
-                            low = val.lower()
-                            if low not in ['true', 'false']:
-                                _LOGGER.error(f'Got bad val for notified_on: {low} {type(low)}')
-                            val = low == 'true'
-                        self.notified_on = val
+                    if 'reminders_since_fire' in last_state.attributes:
+                        self.reminders_since_fire = max(self.reminders_since_fire, last_state.attributes['reminders_since_fire'])
+                    #if 'notified_on' in last_state.attributes:
+                    #    val = last_state.attributes['notified_on']
+                    #    if not isinstance(val, bool):
+                    #        low = val.lower()
+                    #        if low not in ['true', 'false']:
+                    #            _LOGGER.error(f'Got bad val for notified_on: {low} {type(low)}')
+                    #        val = low == 'true'
+                    #    self.notified_on = val
             if ('last_off_time' in last_state.attributes) and last_state.attributes['last_off_time']:
                 tdate = dt.parse_datetime(last_state.attributes['last_off_time'])
                 if self.last_off_time is None or tdate > self.last_off_time:
                     self.last_off_time = tdate
+            # We don't restore cond_true_time/task becaues we don't know the cond was true while HA was restarting.
 
         self.reminder_check()
         self.added_to_hass_called = True
 
+    # Call when alert would otherwise be on
+    # return True if will wait for delayed on
+    def delayed_on_check(self, toState):
+        async def dodelay():
+            await asyncio.sleep(self.on_for_at_least_secs)
+            self.update_state_internal2(True)
+            self.cond_true_time = None
+            self.cond_true_task = None
+            
+        if toState:
+            if self.state == "off":
+                if self.cond_true_time == None:
+                    _LOGGER.debug(f'{self.name}, starting delay of {self.on_for_at_least_secs} until turning on')
+                    self.cond_true_time = dt.now()
+                    self.cond_true_task = create_task(self.hass, DOMAIN, dodelay())
+                else:
+                    report(DOMAIN, 'assert', f'for {self.name} turning on but already have delayed wait set')
+                return True
+            # else: already on, so fall through
+        else:
+            if self.cond_true_time != None:
+                _LOGGER.debug(f'{self.name}, stopping turn-on delay')
+                self.cond_true_time = None
+                cancel_task(DOMAIN, self.cond_true_task)
+                self.cond_true_task = None
+        return False
+        
     def update_state_internal(self, state:bool):
         if not isinstance(state, bool):
             report(DOMAIN, 'assert', f'update_state_internal ignoring call with non-bool {state} type={type(state)} for {self.name}')
             return
+
+        if self.on_for_at_least_secs > 0:
+            if self.delayed_on_check(state):
+                return
+        return self.update_state_internal2(state)
+    def update_state_internal2(self, state:bool):
+        now = dt.now()
         if (self.state == "on") == state:
             # no change
             # TODO - for keeping track of extremum of offending values, may want to run some update checking code.
             return
 
-        now = dt.now()
         if state:
             self.last_on_time = now
         else:
@@ -643,31 +913,36 @@ class ConditionAlertBase(AlertBase):
         if self.added_to_hass_called:
             if state:
                 msg = '' #'fired.'
-                if self._message_template is not None:
+                if self._message_template is None:
+                    msg = f'turned on'
+                else:
                     try:
                         msg = self._message_template.async_render(parse_result=False)
                     except TemplateError as err:
                         report(DOMAIN, 'template_error', f'Condition template for {self.name}: {err}')
                         return
-                self.notified_on = self._notify(now, True, msg)
-                if self.notified_on:
+                self.reminders_since_fire = 0
+                if self._notify(now, NotificationReason.Fire, msg):
                     self.reminder_check(now) # To schedule reminder
+                else:
+                    # did not notify, reminder already scheduled
+                    pass
             else:
                 is_acked = self.last_ack_time and self.last_on_time and self.last_ack_time > self.last_on_time
                 secs_on = (self.last_off_time - self.last_on_time).total_seconds()
-                if self._done_message_template is not None:
+                if self._done_message_template is None:
+                    msg = f'turned off after {agoStr(secs_on)}.'
+                else:
                     try:
                         msg = self._done_message_template.async_render(parse_result=False)
                     except TemplateError as err:
                         report(DOMAIN, 'template_error', f'done_message template for {self.name}: {err}')
                         msg = f'turned off after {agoStr(secs_on)}. [done_message template error]'
-                else:
-                    msg = f'turned off after {agoStr(secs_on)}.'
-                didNotify = self._notify(now, False, msg,
-                                         override_timing=self.notified_on,
+                didNotify = self._notify(now, NotificationReason.StopFiring, msg,
+                                         #override_timing=self.notified_on,
                                          skip_notify=is_acked) # presumably, this means alert ended shortly after we tried notifying, so schedule one more notify for last interval of alert
-                if didNotify:
-                    self.notified_on = False
+                #if didNotify:
+                #    self.notified_on = False
         self.async_write_ha_state()
         self.alertData.noteChange()
 
@@ -680,27 +955,26 @@ class ConditionAlertBase(AlertBase):
                 report(DOMAIN, 'assert', f'in notify_timer_cb, is_on=True but no self.last_on_time={self.last_on_time} for {self.name}')
             else:
                 secs_on = (now - self.last_on_time).total_seconds()
-                msg += f' on for {agoStr(secs_on)}'
+                msg += f'on for {agoStr(secs_on)}'
         else:
             secs_off = (now - self.last_off_time).total_seconds()
             secs_on = (self.last_off_time - self.last_on_time).total_seconds()
-            msg += f' turned off {agoStr(secs_off)} ago after being on for {agoStr(secs_on)}'
-        didNotify = self._notify(now, False, msg)
+            msg += f'turned off {agoStr(secs_off)} ago after being on for {agoStr(secs_on)}'
+        didNotify = self._notify(now, NotificationReason.Reminder, msg)
         if not didNotify:
             report(DOMAIN, 'assert', f'in notify_timer_cb, didNotify was false for {self.name}')
-        if didNotify:
-            if is_on:
-                self.notified_on = True
-            else:
-                self.notified_on = False
+        self.reminders_since_fire += 1
+        #if didNotify:
+        #    if is_on:
+        #        self.notified_on = True
+        #    else:
+        #        self.notified_on = False
         self.async_write_ha_state()
         self.alertData.noteChange()
         self.reminder_check(now)  # to set up next reminder (eg if alert is still on)
+        #return didNotify
     
     def sub_ack_int(self):
-        if self.notified_on:
-            self.notified_on = False
-            return True
         # So we update last_ack_time if state is on
         if self.state == 'on':
             return True
@@ -708,13 +982,34 @@ class ConditionAlertBase(AlertBase):
     
     def sub_need_reminder(self):
         #_LOGGER.warning(f'in sub_need_reminder. self.state={self.state} self.last_ack_time={self.last_ack_time}')
-        if self.state == 'on':
-            if not self.last_ack_time or self.last_ack_time < self.last_on_time:
-                return True
-            return False
-        # Alert is off
-        return self.notified_on
+        return self.state == 'on' and (not self.last_ack_time or self.last_ack_time < self.last_on_time)
+        #if self.state == 'on':
+        #    if not self.last_ack_time or self.last_ack_time < self.last_on_time:
+        #        return True
+        #    return False
+        # # Alert is off
+        #return self.notified_on
+    
+    def sub_calc_next_reminder_frequency_mins(self, now):
+        # alert may be off and this may be called as part of can_notify_now() after throttling ended.
+        if self.state != 'on' and not self.notified_max_on:
+            report(DOMAIN, 'assert', f'in sub_calc_next_reminder_frequency_mins, weird to ask when alert is not on. {self.name}')
+            # keep going
+        if not self.last_on_time:
+            report(DOMAIN, 'assert', f'in sub_calc_next_reminder_frequency_mins, can not calc reminder time since alert is not on. {self.name}')
+            return 0
+        idx = min(len(self.reminder_frequency_mins)-1, self.reminders_since_fire)
+        return self.reminder_frequency_mins[idx]
+        #mins_on = (now - self.last_on_time).total_seconds() / 60
+        #total_reminder_mins = 0
+        # # TODO - could optimize this computation since it's mostly the same each alert firing
+        #for reminderIdx in range(len(self.reminder_frequency_mins)):
+        #    total_reminder_mins += self.reminder_frequency_mins[reminderIdx]
+        #    if total_reminder_mins > mins_on:
+        #        return self.reminder_frequency_mins[reminderIdx]
+        #return self.reminder_frequency_mins[-1]
 
+    
 # From BinarySensorTemplate
 class ConditionAlert(ConditionAlertBase):
     def __init__(
@@ -935,11 +1230,14 @@ async def async_setup(hass, config: ConfigType):
     create_task(hass, DOMAIN, data.slowStartup())
     return True
 
-REPORT_SCHEMA = {
-    vol.Required("domain"): cv.string,
-    vol.Required("name"): cv.string,
-    vol.Optional("message"): cv.string,
-}
+# NOTE - this must be a single-level Schema.  If nest anything, then fix up copy.copy() shallow copy logic down in
+# handle_report_int()
+#REPORT_SCHEMA = {
+#    vol.Required("domain"): str,
+#    vol.Required("name"): str,
+#    vol.Optional("message"): str,
+#}
+
 
 class Alert2Data:
     def __init__(self, hass, config):
@@ -951,24 +1249,28 @@ class Alert2Data:
         self.sensorDict = None
         self.binarySensorDict = None
         self.evCount = 0
-        self.defaults = { 'notification_frequency_mins': 60, 'notifier': 'notify', 'annotate_messages': True }
+        self.defaults = DEFAULTS_SCHEMA({ 'reminder_frequency_mins': [60], 'notifier': 'notify', 'annotate_messages': True })
+        #self.defaults.update({ 'throttle_fires_per_mins': None })
         self.notifiers = set()
         self.notifiers.add(self.defaults['notifier']) # We'll do this again once we processConfig
         self.haStarted = False
+
+        self.defaultsError = None
 
     async def init2(self):
         # First, initialize enough so that report() will work for internal errors
         #
 
         # Try processing just the defaults part of the config, so they'll apply to the internal events we declare, below.
-        # report() isn't available yet, so skip any errors, wait until processConfig to retry and report errors in defaults section.
+        # report() isn't available yet, so defer error reporting until later in init
         if 'defaults' in self._rawConfig:
             try:
-                defCfg = config.DEFAULTS_SCHEMA(self._rawConfig['defaults'])
-                self.defaults.update(self._rawConfig['defaults'])
+                defCfg = DEFAULTS_SCHEMA(self._rawConfig['defaults'])
+                self.defaults.update(defCfg)
                 self.notifiers.add(self.defaults['notifier'])
             except vol.Invalid as v:
-                pass
+                # Error will be reported later in init.
+                self.defaultsError = v
         
         entities = []
         entities.append(self.declareEvent(DOMAIN, 'undeclared_event'))
@@ -1006,9 +1308,9 @@ class Alert2Data:
         
         # Maps event name to { dt: datetime when last sent notification, count: events since last notification }
         self.lastNotifyDict = {}
-        self.validator = vol.Schema(REPORT_SCHEMA)
-        self._hass.bus.async_listen(EVENT_TYPE, self.handle_report)
-        self._hass.services.async_register(DOMAIN, 'report', self.doreport)
+        #self.validator = vol.Schema(REPORT_SCHEMA)
+        self._hass.bus.async_listen(EVENT_TYPE, self.handle_event_report)
+        self._hass.services.async_register(DOMAIN, 'report', self.handle_service_report)
         self._hass.services.async_register(DOMAIN, 'ack_all', self.ackAll)
         #self._hass.services.async_register(DOMAIN, 'log', self.dolog)
         self.component.async_register_entity_service(
@@ -1027,18 +1329,15 @@ class Alert2Data:
         # Validate the config in pieces. We want alert2 to successfully initialize no matter how messed up the config is.
         # And if the config has an error, to process the rest of itas much as it can.
 
-        # We already tried processing the defaults section once. This is just to reprocess so we can report any errors
-        if 'defaults' in self._rawConfig:
-            try:
-                defCfg = config.DEFAULTS_SCHEMA(self._rawConfig['defaults'])
-            except vol.Invalid as v:
-                report(DOMAIN, 'config_error', f'error in defaults section of config: {v}')
+        # We already tried processing the defaults section once. Report errors encountered.
+        if self.defaultsError is not None:
+            report(DOMAIN, 'config_error', f'error in defaults section of config: {self.defaultsError}')
             
         entities = []
         if 'tracked' in self._rawConfig and isinstance(self._rawConfig['tracked'], list):
             for obj in self._rawConfig['tracked']:
                 try:
-                    trackedCfg = config.SINGLE_TRACKED_SCHEMA(obj)
+                    trackedCfg = SINGLE_TRACKED_SCHEMA(obj)
                     entities.append(self.declareEventInt(obj))
                 except vol.Invalid as v:
                     report(DOMAIN, 'config_error', f'error in tracked section of config: {v}. Relevant section: {obj}')
@@ -1047,10 +1346,10 @@ class Alert2Data:
             for obj in self._rawConfig['alerts']:
                 try:
                     if 'trigger' in obj:
-                        aCfg = config.SINGLE_ALERT_SCHEMA_EVENT(obj)
+                        aCfg = SINGLE_ALERT_SCHEMA_EVENT(obj)
                         entities.append(self.declareEventInt(aCfg))
                     else:
-                        aCfg = config.SINGLE_ALERT_SCHEMA_CONDITION(obj)
+                        aCfg = SINGLE_ALERT_SCHEMA_CONDITION(obj)
                         entities.append(self.declareCondition(aCfg, False))
                 except vol.Invalid as v:
                     report(DOMAIN, 'config_error', f'error in alerts section of config: {v}. Relevant section: {obj}')
@@ -1060,7 +1359,7 @@ class Alert2Data:
         # Now check the rest of the config
         # TODO - this is redoing a bunch of work parsing templates.
         try:
-            dCfg = config.TOP_LEVEL_SCHEMA(self._rawConfig)
+            dCfg = TOP_LEVEL_SCHEMA(self._rawConfig)
         except vol.Invalid as v:
             report(DOMAIN, 'config_error', f'error in top-level alert2 config: {v}')
 
@@ -1155,9 +1454,6 @@ class Alert2Data:
     #        logLevel = call.data['level']
     #    txt = call.data['message'] if 'message' in call.data else None
     #    getattr(_LOGGER, logLevel)(f'Log: {txt}')
-    async def doreport(self, call):
-        txt = call.data['message'] if 'message' in call.data else None
-        report(call.data['domain'], call.data['name'], txt)
     async def ackAll(self, call):
         _LOGGER.info(f'ackAll called')
         now = dt.now()
@@ -1172,24 +1468,38 @@ class Alert2Data:
         self.noteChange()
         
 
-    async def handle_report(self, ev: Event):
-        data = ev.data
-        try:
-            self.validator(data)
-        except vol.error.Error as ex:
-            msg = f'Invalid event data: {str(ex)} data={data}'
-            _LOGGER.warning(msg)
-            report(DOMAIN, 'malformed_call', msg, isException=True)
+    async def handle_service_report(self, call):
+        return await self.handle_report_int(call.data, 'service-call')
+    async def handle_event_report(self, ev: Event):
+        return await self.handle_report_int(ev.data, 'hass-event')
+    async def handle_report_int(self, data, tmsg):
+        self._hass.verify_event_loop_thread(f'checking in handle_report_int for {tmsg}')
+
+        # Grrr, have to manually validate data because voluptuous mutates a dict while validating and
+        # the data passed with a service call is immutable.
+        if not 'domain' in data or not isinstance(data['domain'], str):
+            report(DOMAIN, 'malformed_call', f'{tmsg} missing/non-string "domain" {data}')
+            return
+        if not 'name' in data or not isinstance(data['name'], str):
+            report(DOMAIN, 'malformed_call', f'{tmsg} missing/non-string "name" {data}')
+            return
         domain = data['domain']
         name = data['name']
-        if domain not in self.tracked or name not in self.tracked[domain]:
-            errmsg = f'event for {domain} and {name} not declared'
-            _LOGGER.warning(errmsg)
+        if not domain in self.tracked or not name in self.tracked[domain]:
+            errmsg = f'{tmsg} for {domain} and {name}'
             report(DOMAIN, 'undeclared_event', errmsg)
-            entity = self.declareEvent(domain, name)
+            alertObj = self.declareEvent(domain, name)
             await self.component.async_add_entities([entity])
-        entity = self.tracked[domain][name]
-        message = data['message'] if 'message' in data else ''
-        await entity.record_event(message)
+        else:
+            alertObj = self.tracked[domain][name]
 
+        message = ''
+        if 'message' in data:
+            if not isinstance(data['message'], str):
+                report(DOMAIN, 'malformed_call', f'{tmsg} non-string "message" {data}')
+                return
+            message = data['message']
+
+        await alertObj.record_event(message)
         self.inHandler = False
+
