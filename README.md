@@ -113,7 +113,7 @@ Condition alerts can specify a `condition` template. The alert is firing when th
 
 An alert can also specify a `threshold` dict that includes min/max limits and optional hysteresis.  If a threshold is specified, the alert is firing if the threshold is exceeded AND any `condition` specified is true.
 
-Hysteresis is also available via the `on_for_at_least_secs` parameter. If specified, the alert starts firing once any `threshold` is exceeded AND any `condition` is true for at least the time interval specified. This is similar in motiviation to the `skip_first` option in the old Alert integration.
+Hysteresis is also available via the `on_for_at_least_secs` parameter. If specified, the alert starts firing once any `threshold` is exceeded AND any `condition` is true for at least the time interval specified. This is similar in motivation to the `skip_first` option in the old Alert integration.
 
 ### Event alerts
 
@@ -163,7 +163,7 @@ The text of each notification by default includes some basic context information
 
         Alert2 kitchen_door_open: turned off after 10m
 
-* Either event or condition alert fires and exceeds `throttle_fires_per_mins`.  Message is prepended with "[Throttling starts]", which can not be overriden with `annotate_messages`:
+* Either event or condition alert fires and exceeds `throttle_fires_per_mins`.  Message is prepended with "[Throttling starts]", which can not be overridden with `annotate_messages`:
 
         [Throttling starts] Alert2 kitchen_door_open: turned on
 
@@ -185,9 +185,9 @@ The defaults specified here apply also to internal alerts that may fire, such as
 
 | Key | Type | Description |
 |---|---|---|
-| `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay beteen reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. |
-| `notifier` | string | Name of notifier to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `notify` (i.e., the service `notify.notify`)|
-| `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notifcation, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
+| `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. |
+| `notifier` | string | Name of notifier to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). |
+| `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notification, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
 | `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on a list of two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, "[10, 60]" means you'll receive no more than 10 notifications of the alert firing every hour.<br>Default is no throttling. |
 
 Example:
@@ -199,7 +199,7 @@ Example:
          annotate_messages: true
          throttle_fires_per_mins: [ 10, 60 ]
 
-Note `reminder_frequency_mins` or `throttle_fires_per_mins` may be specified as a list using a YAML flow sequece or on separate lines. The following two are identical in YAML:
+Note `reminder_frequency_mins` or `throttle_fires_per_mins` may be specified as a list using a YAML flow sequence or on separate lines. The following two are identical in YAML:
 
         reminder_frequency_mins: [ 10, 20, 60 ]
         reminder_frequency_mins:
@@ -262,7 +262,7 @@ There are a few different forms of condition-based alerts.  The simplest is an a
           condition: "{{ states('sensor.nest_therm_fl2_temperature')|float <= 50 }}"
           message: "Temp: {{ states('sensor.nest_therm_fl2_temperature') }}"
 
-Notifications include by default context informatoin, so the resulting text might be:
+Notifications include by default context information, so the resulting text might be:
 
     Alert2 thermostat_fl2_temperature_low: Temp: 45
 

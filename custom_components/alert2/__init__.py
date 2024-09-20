@@ -594,7 +594,9 @@ class AlertBase(RestoreEntity):
             self.last_notified_time = now
             notifier = self.notifier
             if self.alDomain == DOMAIN and self.alName == 'notify_failed':
-                if self.hass.services.has_service('notify', self.alertData.defaults['notifier']):
+                if self.hass.services.has_service('notify', notifier):
+                    pass
+                elif self.hass.services.has_service('notify', self.alertData.defaults['notifier']):
                     notifier = self.alertData.defaults['notifier']
                 elif self.hass.services.has_service('notify', 'notify'):
                     notifier = 'notify'
@@ -1249,7 +1251,7 @@ class Alert2Data:
         self.sensorDict = None
         self.binarySensorDict = None
         self.evCount = 0
-        self.defaults = DEFAULTS_SCHEMA({ 'reminder_frequency_mins': [60], 'notifier': 'notify', 'annotate_messages': True })
+        self.defaults = DEFAULTS_SCHEMA({ 'reminder_frequency_mins': [60], 'notifier': 'persistent_notification', 'annotate_messages': True })
         #self.defaults.update({ 'throttle_fires_per_mins': None })
         self.notifiers = set()
         self.notifiers.add(self.defaults['notifier']) # We'll do this again once we processConfig
