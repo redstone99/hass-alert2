@@ -809,8 +809,8 @@ class ConditionAlertBase(AlertBase):
         self.added_to_hass_called = False
         self.reminder_frequency_mins = getField('reminder_frequency_mins', config, defaults)
         # For hysteresis turning on
-        self.on_for_at_least_secs = config['on_for_at_least_secs'] if 'on_for_at_least_secs' in config else 0
-        # If on_for_at_least_secs is set, we distinguish between when a condition turned true
+        self.delay_on_secs = config['delay_on_secs'] if 'delay_on_secs' in config else 0
+        # If delay_on_secs is set, we distinguish between when a condition turned true
         # and when the alert turns on.
         # We don't restore this parameter cuz we don't know that cond was true while HA was down.
         self.cond_true_time = None
@@ -866,7 +866,7 @@ class ConditionAlertBase(AlertBase):
     # return True if will wait for delayed on
     def delayed_on_check(self, toState):
         async def dodelay():
-            await asyncio.sleep(self.on_for_at_least_secs)
+            await asyncio.sleep(self.delay_on_secs)
             self.update_state_internal2(True)
             self.cond_true_time = None
             self.cond_true_task = None
@@ -874,7 +874,7 @@ class ConditionAlertBase(AlertBase):
         if toState:
             if self.state == "off":
                 if self.cond_true_time == None:
-                    _LOGGER.debug(f'{self.name}, starting delay of {self.on_for_at_least_secs} until turning on')
+                    _LOGGER.debug(f'{self.name}, starting delay of {self.delay_on_secs} until turning on')
                     self.cond_true_time = dt.now()
                     self.cond_true_task = create_task(self.hass, DOMAIN, dodelay())
                 else:
@@ -894,7 +894,7 @@ class ConditionAlertBase(AlertBase):
             report(DOMAIN, 'assert', f'update_state_internal ignoring call with non-bool {state} type={type(state)} for {self.name}')
             return
 
-        if self.on_for_at_least_secs > 0:
+        if self.delay_on_secs > 0:
             if self.delayed_on_check(state):
                 return
         return self.update_state_internal2(state)

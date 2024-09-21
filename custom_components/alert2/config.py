@@ -56,7 +56,7 @@ SINGLE_ALERT_SCHEMA_CONDITION = has_atleast_oneof(['condition', 'threshold'], SI
     vol.Optional('early_start'): bool,
     vol.Optional('done_message'): cv.template,
     vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
-    vol.Optional('on_for_at_least_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
+    vol.Optional('delay_on_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
 }))
                                  
 

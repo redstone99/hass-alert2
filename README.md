@@ -113,7 +113,7 @@ Condition alerts can specify a `condition` template. The alert is firing when th
 
 An alert can also specify a `threshold` dict that includes min/max limits and optional hysteresis.  If a threshold is specified, the alert is firing if the threshold is exceeded AND any `condition` specified is true.
 
-Hysteresis is also available via the `on_for_at_least_secs` parameter. If specified, the alert starts firing once any `threshold` is exceeded AND any `condition` is true for at least the time interval specified. This is similar in motivation to the `skip_first` option in the old Alert integration.
+Hysteresis is also available via the `delay_on_secs` parameter. If specified, the alert starts firing once any `threshold` is exceeded AND any `condition` is true for at least the time interval specified. This is similar in motivation to the `skip_first` option in the old Alert integration.
 
 ### Event alerts
 
@@ -224,6 +224,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`hysteresis` | float | required | Compare `value` to limits using hysteresis. threshold is considered exceeded if value exceeds min/max, but does not reset until value increases past min+hysteresis or decreases past max-hysteresis. (see description below) |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`maximum` | float | optional | Maximum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`minimum` | float | optional | Minimum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
+| `delay_on_secs` | float | optional | Specifies number of seconds that any `condition` must be true and any threshold specified must be exceeded before the alert starts firing. Similar in motivation to the `skip_first` option in the old Alert integration. |
 | `message` | template | optional | Template string evaluated when the alert fires. This text is included in notifications. For event-based alerts, the message can reference the `trigger` variable (see example below). Because notifications by default include context information like the alert domain and name, the message can be brief or even omitted all together |
 | `done_message` | template | optional | Message to send when a condition alert turns off.  Replaces the default message (e.g., "Alert2 [name] turned off after x minutes") |
 | `data` | dict | optional | Optional dictionary passed as the "data" parameter to the notify service call |
@@ -280,7 +281,7 @@ An alert can alternatively specify a threshold with hysteresis.  So the previous
 
 This alert would start firing if the temperature drops below 50 and won't stop firing until the temperature rises to at least 55.  A corresponding logic applies when a `maximum` is specified. Both `minimum` and `maximum` may be specified together.
 
-A `condition` may be specified along with a `threshold`. In this case, the alert fires when the condition is true AND the threshold value is out of bounds.
+A `condition` may be specified along with a `threshold`. In this case, the alert fires when the condition is true AND the threshold value is out of bounds.  `delay_on_secs` is another form of hysteresis that may be specified to reduce false alarms. It requires an alert condition be true or threshold be exceed for at least the specified number of seconds before firing.
 
 #### Common alert features
 
