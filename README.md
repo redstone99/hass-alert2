@@ -324,6 +324,16 @@ Example:
         - domain: dahua
           name: side_porch_fault
 
+### Additional top-level options
+
+`skip_internal_errors` is a optional top-level option. If true, an entity for `alert2.error` will not be created, you will not receive any notifications for problems with your config file or Alert2 internal errors, and such errors won't show up in the Alert2 UI card.  Errors will still appear in the log file.  Example config fragment:
+
+    alert2:
+      defaults:
+        reminder_frequency_mins: 60
+      skip_internal_errors: true
+
+
 ### Alert recommendations
 
 As described above in `early_start`, alerts by default don't start being monitored until HA fully starts.  This is to reduce template errors during startup due to entities not being defined yet.  However, the downside is that if some problem prevents HA from fully starting, none of your alerts will be monitored.  To prevent this, we provide a binary_sensor entity, `binary_sensor.alert2_ha_startup_done`, that turns on when HA has fully started. That entity also has an attribute, `start_time`, that is the time the module loaded. Together you can use them to alert if HA startup takes too long as follows:
