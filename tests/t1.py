@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 import unittest
-from unittest.mock import Mock
+import re
+from unittest.mock import AsyncMock, Mock
 import sys
 import asyncio
 import datetime as dt
@@ -62,7 +63,11 @@ class FakeHA:
                 pass
         class restore_state:
             class RestoreEntity:
-                pass
+                @property
+                def name(self):
+                    return self._attr_name
+                def async_write_ha_state(self):
+                    pass
         class trigger:
             @staticmethod
             def async_initialize_triggers():
@@ -84,9 +89,11 @@ class FakeHass:
                                    )
         self.services = SimpleNamespace(async_register = lambda a, meth, func: self.service_async_register(a, meth, func),
                                         has_service = lambda dom, nm: f'{dom}.{nm}' in self.servHandlers,
+                                        async_call = lambda dom, nm, args: self.service_async_call(dom, nm, args)
                                         )
-        self.evHandlers = {}
-        self.servHandlers = {}
+        self.evHandlers = {  }
+        self.servHandlers = { 'notify.persistent_notification': AsyncMock(name='persist', spec_set=[]) }
+        self.loop = asyncio.get_running_loop()
     def verify_event_loop_thread(self, msg):
         return True
     def service_async_register(self, dom, nm, fun):
@@ -96,6 +103,9 @@ class FakeHass:
     def bus_async_fire(self, ev, data):
         obj = SimpleNamespace(data = data)
         asyncio.get_running_loop().create_task(self.evHandlers[ev](obj))
+    async def service_async_call(self, dom, nm, args):
+        call = SimpleNamespace(data = args)
+        await self.servHandlers[f'{dom}.{nm}'](call)
 sys.modules['homeassistant'] = FakeHA
 sys.modules['homeassistant.helpers.config_validation'] = FakeHA.helpers.config_validation
 sys.modules['homeassistant.helpers.entity_component'] = FakeHA.helpers.entity_component
@@ -109,7 +119,19 @@ import custom_components.alert2 as alert2
 class FooTest(unittest.IsolatedAsyncioTestCase):
     def setup(self):
         pass
+    async def waitForAllBut(self, oldTasks):
+        while True:
+            newTasks = asyncio.all_tasks()
+            sawOne = False
+            for k in newTasks:
+                if not k in oldTasks:
+                    sawOne = True
+                    print(f'about to wait_for {k}')
+                    await asyncio.wait_for(k, None)
+            if not sawOne:
+                break
     async def test_first(self):
+        oldTasks = asyncio.all_tasks()
         cfg = { 'alert2' : {
             'defaults' : {
                 'notifierz' : 'foobar'
@@ -119,8 +141,39 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         alert2.global_hass = hass
         gad = alert2.Alert2Data(hass, cfg)
         await gad.init2()
+        await self.waitForAllBut(oldTasks)
+        nn = hass.servHandlers['notify.persistent_notification']
+        nn.assert_awaited_once()
+        self.assertIsNotNone(re.search('defaults section.*extra keys', nn.await_args_list[0].args[0].data['message']))
+
+    async def test_ack(self):
+        oldTasks = asyncio.all_tasks()
+        cfg = { 'alert2' : {
+            'alerts' : [
+                {
+                    'domain': 'test',
+                    'name': 't1',
+                    'condition': '{{ true }}',
+                }
+            ],
+        } }
+        hass = FakeHass()
+        alert2.global_hass = hass
+        gad = alert2.Alert2Data(hass, cfg)
+        await gad.init2()
+        tal = gad.alerts['test']['t1']
+        tal.startWatchingEv() # normally called when EVENT_HOMEASSISTANT_STARTED happens
+        tal._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                               [ SimpleNamespace(template=
 
 
+        
+        await self.waitForAllBut(oldTasks)
+        nn = hass.servHandlers['notify.persistent_notification']
+        print(nn.await_args_list)
+        nn.assert_awaited_once()
+        self.assertIsNotNone(re.search('defaults section.*extra keys', nn.await_args_list[0].args[0].data['message']))
 
+        
 if __name__ == '__main__':
     unittest.main()
