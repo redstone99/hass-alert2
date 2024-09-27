@@ -53,7 +53,7 @@ SINGLE_ALERT_SCHEMA_CONDITION = has_atleast_oneof(['condition', 'threshold'], SI
         vol.Optional('minimum'): vol.Coerce(float),
         vol.Optional('maximum'): vol.Coerce(float),
     })),
-    vol.Optional('early_start'): bool,
+    vol.Optional('early_start'): cv.boolean,
     vol.Optional('done_message'): cv.template,
     vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
     vol.Optional('delay_on_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
@@ -63,5 +63,7 @@ SINGLE_ALERT_SCHEMA_CONDITION = has_atleast_oneof(['condition', 'threshold'], SI
 TOP_LEVEL_SCHEMA = vol.Schema({
     vol.Optional('defaults'): dict,
     vol.Optional('tracked'): list,
-    vol.Optional('alerts'): list
+    vol.Optional('alerts'): list,
+    # cv.boolean here must match code in Alert2Data.init2()
+    vol.Optional('skip_internal_errors'): cv.boolean
 })

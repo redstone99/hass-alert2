@@ -123,7 +123,9 @@ class NotificationReason(Enum):
 def jinja2Escape(astr):
     a2str = astr.replace('{%', '{% endraw %}{{"{%"}}{% raw %}')
     return '{% raw %}' + a2str + '{% endraw %}'
-    
+
+gAssertMsg = 'Internal error. Please report to Alert2 maintainers (github.com/redstone99/hass-alert2). Details:'
+
 def taskDone(domain, atask):
     _LOGGER.debug(f'Calling taskDone for {domain} and {atask}')
     global global_tasks
@@ -131,7 +133,7 @@ def taskDone(domain, atask):
         _LOGGER.debug(f'taskDone.. called for domain {domain}, {atask}')
         global_tasks.remove(atask)
     else:
-        report(DOMAIN, 'assert', f'taskDone called for domain {domain}, {atask} but is not in global_tasks')
+        report(DOMAIN, 'error', f'{gAssertMsg} taskDone called for domain {domain}, {atask} but is not in global_tasks')
     if atask.cancelled():
         _LOGGER.debug(f'taskDone: task was cancelled: {atask}')
         return
@@ -188,7 +190,7 @@ class MovingSum:
             self.lastAdvanceTime = None
             return
         if not self.lastAdvanceTime:
-            report(DOMAIN, 'assert', f'MovingAvg no lastAdvanceTime but buckets not empty {currSum}')
+            report(DOMAIN, 'error', f'{gAssertMsg} MovingAvg no lastAdvanceTime but buckets not empty {currSum}')
             self.lastAdvanceTime = now
         secsSinceLastAdvance = (now - self.lastAdvanceTime).total_seconds()
         bucketAdvancesSinceLast = secsSinceLastAdvance / self.singleBucketSecs
@@ -199,7 +201,7 @@ class MovingSum:
         numAdvances = min(self.numBuckets, bucketAdvancesSinceLastInt)
         self.buckets = [0]*numAdvances + self.buckets[:-numAdvances]
         if len(self.buckets) != self.numBuckets:
-            report(DOMAIN, 'assert', f'MovingAvg bucket update logic produced wrong length {self.numBuckets} vs {self.buckets}')
+            report(DOMAIN, 'error', f'{gAssertMsg} MovingAvg bucket update logic produced wrong length {self.numBuckets} vs {self.buckets}')
             self.buckets = [0]*self.numBuckets
         newSum = sum(self.buckets)
         if newSum == 0:
@@ -207,7 +209,7 @@ class MovingSum:
             return
         self.lastAdvanceTime = self.lastAdvanceTime + rawdt.timedelta(seconds=(bucketAdvancesSinceLastInt*self.singleBucketSecs))
         if (now - self.lastAdvanceTime).total_seconds() > self.singleBucketSecs:
-            report(DOMAIN, 'assert', f'MovingAvg _updateBuckets left more than a single bucket interval of time left')
+            report(DOMAIN, 'error', f'{gAssertMsg} MovingAvg _updateBuckets left more than a single bucket interval of time left')
         return
 
     # Return number of seconds remaining until the number of alert fires reported in the last interval_mins has dropped below
@@ -229,13 +231,13 @@ class MovingSum:
 
         # Account for the fact that we are partially through a bucket advance interval
         if not self.lastAdvanceTime:
-            report(DOMAIN, 'assert', f'MovingAvg not empty but somehow missing bucketAdvanceTime')
+            report(DOMAIN, 'error', f'{gAssertMsg} MovingAvg not empty but somehow missing bucketAdvanceTime')
             return 0
         intervalSecsElapsed = (now - self.lastAdvanceTime).total_seconds()
         secsToWait = secsToWait - intervalSecsElapsed
         #secsToWait = secsToWait + 5
         if secsToWait < 0:
-            report(DOMAIN, 'assert', f'MovingAvg secsToWait produced negative: {secsToWait}')
+            report(DOMAIN, 'error', f'{gAssertMsg} MovingAvg secsToWait produced negative: {secsToWait}')
             return 60
         _LOGGER.debug(f'remainingSecs: ret={secsToWait},  {self.buckets}')
         return secsToWait
@@ -361,7 +363,7 @@ class AlertBase(RestoreEntity):
         if enable:
             if snooze_until:
                 if snooze_until.tzinfo is None or snooze_until.tzinfo.utcoffset(snooze_until) is None:
-                    report(DOMAIN, 'assert', f'Notification control call has snooze time specified without timezone info: {snooze_until} for {self.name}')
+                    report(DOMAIN, 'error', f'{gAssertMsg} Notification control call has snooze time specified without timezone info: {snooze_until} for {self.name}')
                 new_snooze = snooze_until
             else:
                 new_snooze = NOTIFICATIONS_ENABLED
@@ -393,7 +395,7 @@ class AlertBase(RestoreEntity):
         if self.sub_ack_int():
             needWrite = True
         if needWrite:
-            _LOGGER.info(f'{self.name} ack_int')
+            _LOGGER.debug(f'{self.name} ack_int')
             self.last_ack_time = now
             self.async_write_ha_state()
 
@@ -405,15 +407,17 @@ class AlertBase(RestoreEntity):
             cancel_task(DOMAIN, self.future_notification_info['task'])
         self.future_notification_info = None
         need_reminder = (self.fires_since_last_notify > 0) or self.notified_max_on or self.sub_need_reminder()
+        _LOGGER.debug(f'reminder_check for {self.name}: need_reminder={need_reminder}')
         if need_reminder:
             remaining_secs, rem_reason = self.can_notify_now(now, NotificationReason.Reminder)
+            _LOGGER.debug(f'    remaining_secs={remaining_secs} rem_reason={rem_reason}')
             if rem_reason == NOTIFICATIONS_DISABLED:
                 return
             if remaining_secs == 0:
                 self.notify_timer_cb(now)
             else:
                 if not (isinstance(remaining_secs, int) or isinstance(remaining_secs, float)) or remaining_secs <= 0:
-                    report(DOMAIN, 'assert', f'In reminder_check, remaining_secs={remaining_secs} of type={type(remaining_secs)} for {self.name}')
+                    report(DOMAIN, 'error', f'{gAssertMsg} reminder_check, remaining_secs={remaining_secs} of type={type(remaining_secs)} for {self.name}')
                     return
                 self.schedule_reminder(remaining_secs)
 
@@ -456,7 +460,7 @@ class AlertBase(RestoreEntity):
             if graceRemainSecs > 0:
                 # HA still may be initializing and hasn't gotten around to loading the notifiers yet.
                 startup_remaining_secs = 10
-            # Otherwise, do the notify, which will fail and fire the notify_failed alert
+            # Otherwise, do the notify, which will fail and fall back to persistent_notification
 
         if self.notified_max_on and max_limit_remaining_secs == 0:
             # If throttling turned off, it overrides the notification frequency setting
@@ -491,7 +495,7 @@ class AlertBase(RestoreEntity):
                 # can_notify_now is True
                 await asyncio.sleep(remaining_secs + 1)
                 if asyncio.current_task() != self.future_notification_info['task']:
-                    report(DOMAIN, 'assert', f'In schedule_reminder remindar somehow is not correct task: {asyncio.current_task()} vs {self.future_notification_info["task"]} for {self.name}')
+                    report(DOMAIN, 'error', f'{gAssertMsg} schedule_reminder remindar somehow is not correct task: {asyncio.current_task()} vs {self.future_notification_info["task"]} for {self.name}')
                     return
                 self.future_notification_info = None
                 self.reminder_check()
@@ -499,9 +503,9 @@ class AlertBase(RestoreEntity):
                 _LOGGER.debug(f'Skipping cancel exception for task {asyncio.current_task()}')
             except Exception as ex:
                 msg = f'{self.name} In schedule_reminder/foo got exception: {ex.__class__}, {ex}'
-                report(DOMAIN, 'exception', msg, isException=True)
+                report(DOMAIN, 'error', f'{gAssertMsg} msg', isException=True)
         if self.future_notification_info is not None:
-            report(DOMAIN, 'assert', f'In schedule_reminder, ignoring since an outstanding reminder already exists: {self.future_notification_info} for {self.name}')
+            report(DOMAIN, 'error', f'{gAssertMsg} schedule_reminder, ignoring since an outstanding reminder already exists: {self.future_notification_info} for {self.name}')
             return
         atask = create_task(self.hass, DOMAIN, foo())
         self.future_notification_info = { 'task': atask }
@@ -554,7 +558,7 @@ class AlertBase(RestoreEntity):
             self.notified_max_on = True
             msg += '[Throttling started] '
             if not doNotify:
-                report(DOMAIN, 'assert', f'{self.name}: saw throttling start, but not notifying. Seems impossible. {max_limit_remaining_secs} ')
+                report(DOMAIN, 'error', f'{gAssertMsg} {self.name}: saw throttling start, but not notifying. Seems impossible. {max_limit_remaining_secs} ')
         elif doNotify and max_limit_remaining_secs > 0 and self.notified_max_on:
             # doNotify means throttling turned off before call to _notify().
             # But it's now back on, which must be result of Fire.  In otherwords, throttling briefly turned off.
@@ -567,7 +571,7 @@ class AlertBase(RestoreEntity):
             self.notified_max_on = False
             msg += '[Throttling ending] '
             if not doNotify and remaining_reason not in [ NOTIFICATIONS_DISABLED, 'snoozed' ]:
-                report(DOMAIN, 'assert', f'{self.name}: saw throttling stop, but not notifyign, seems impossible. {remaining_secs}, {remaining_reason}')
+                report(DOMAIN, 'error', f'{gAssertMsg} {self.name}: saw throttling stop, but not notifyign, seems impossible. {remaining_secs}, {remaining_reason}')
 
                 
         addedName = False
@@ -593,29 +597,16 @@ class AlertBase(RestoreEntity):
         if doNotify:
             self.last_notified_time = now
             notifier = self.notifier
-            if self.alDomain == DOMAIN and self.alName == 'notify_failed':
-                if self.hass.services.has_service('notify', notifier):
-                    pass
-                elif self.hass.services.has_service('notify', self.alertData.defaults['notifier']):
-                    notifier = self.alertData.defaults['notifier']
-                elif self.hass.services.has_service('notify', 'notify'):
-                    notifier = 'notify'
-                else:
-                    _LOGGER.error(f'No notifier found to notify notify_failed')
-                    return True
+            if self.hass.services.has_service('notify', notifier):
+                pass
             else:
-                if self.hass.services.has_service('notify', notifier):
-                    pass
-                else:
-                    # If the notifier isn't available, we fire an alert for that.
-                    # At that point, our obligation to notify on the current alert is done.
-                    report(DOMAIN, 'notify_failed', f'no notifier {self.notifier} to notify {self.alDomain}:{self.alName}')
-                    return True
+                msg += f' [ Notifier notify.{self.notifier} not available. Falling back to notify.persistent_notification ]'
+                notifier = 'persistent_notification'
 
             tmsg = msg
             if len(tmsg) > 600:
                 tmsg = tmsg[:600] + '...'
-            _LOGGER.warning(f'Notifying {self.notifier}: {tmsg}')
+            _LOGGER.warning(f'Notifying {notifier}: {tmsg}')
             # message field in components/notify/const.py:NOTIFY_SERVICE_SCHEMA is a template and will be rendered
             args = {'message': jinja2Escape(tmsg) }
             if self._data is not None:
@@ -626,13 +617,13 @@ class AlertBase(RestoreEntity):
                 try:
                     args['title'] = self._title_template.async_render(parse_result=False)
                 except TemplateError as err:
-                    report(DOMAIN, 'template_error', f'Title template for {self.name}: {err}')
+                    report(DOMAIN, 'error', f'{self.name} Title template: {err}')
                     # Continue and notify anyways
             async def foo():
                 await self.hass.services.async_call(
-                    'notify', self.notifier, # eg 'raw_jtelegram'
+                    'notify', notifier, # eg 'raw_jtelegram'
                     args)
-                _LOGGER.debug(f'Notifying done: {self.notifier}')
+                _LOGGER.debug(f'Notifying done: {notifier}')
             atask = create_task(self.hass, DOMAIN, foo())
         else:
             if reason == NotificationReason.Fire:
@@ -645,10 +636,9 @@ class AlertBase(RestoreEntity):
             smsg = f'  Skipping notify for {self.alDomain}.{self.alName} {tillmsg}'
             _LOGGER.warning(smsg)
             if remaining_reason != NOTIFICATIONS_DISABLED:
-                if remaining_secs == 0:
-                    report(DOMAIN, 'assert', f'{self.name}, not notifying but remaining time is 0')
-                    remaining_secs = 60
-                self.schedule_reminder(remaining_secs)
+                if remaining_secs > 0:
+                    self.schedule_reminder(remaining_secs)
+                # else:  must be that skip_notify is true because alert has already been acked
                 
         if reason == NotificationReason.Fire:
             self.last_fired_message = message
@@ -743,7 +733,7 @@ class EventAlert(AlertBase):
             # self._condition_template ok to reference cause condition required in the config schema for events
             rez = self._condition_template.async_render(variables, parse_result=False)
         except TemplateError as err:
-            report(DOMAIN, 'template_error', f'Condition template for {self.name}: {err}')
+            report(DOMAIN, 'error', f'{self.name} Condition template: {err}')
             return
         _LOGGER.debug(f'Got result: {rez}')
         brez = template_helper.result_as_boolean(rez)
@@ -756,7 +746,7 @@ class EventAlert(AlertBase):
                 try:
                     msg = self._message_template.async_render(variables, parse_result=False)
                 except TemplateError as err:
-                    report(DOMAIN, 'template_error', f'Message template for {self.name}: {err}')
+                    report(DOMAIN, 'error', f'{self.name} Message template: {err}')
                     return
             await self.record_event(msg)
         else:
@@ -771,11 +761,11 @@ class EventAlert(AlertBase):
     
     def notify_timer_cb(self, now):
         if self.fires_since_last_notify <= 0:
-            report(DOMAIN, 'assert', f'in notify_timer_cb, fires_since_last_notify is not positive, is {self.fires_since_last_notify} for {self.name}')
+            report(DOMAIN, 'error', f'{gAssertMsg} notify_timer_cb, fires_since_last_notify is not positive, is {self.fires_since_last_notify} for {self.name}')
         msg = f'Last msg: {self.last_fired_message}'
         didNotify = self._notify(now, NotificationReason.Reminder, msg)
         if not didNotify:
-            report(DOMAIN, 'assert', f'in notify_timer_cb, didNotify was false for {self.name}')
+            report(DOMAIN, 'error', f'{gAssertMsg} notify_timer_cb, didNotify was false for {self.name}')
         self.async_write_ha_state()
         self.alertData.noteChange()
         return didNotify
@@ -878,7 +868,7 @@ class ConditionAlertBase(AlertBase):
                     self.cond_true_time = dt.now()
                     self.cond_true_task = create_task(self.hass, DOMAIN, dodelay())
                 else:
-                    report(DOMAIN, 'assert', f'for {self.name} turning on but already have delayed wait set')
+                    report(DOMAIN, 'error', f'{gAssertMsg} {self.name} turning on but already have delayed wait set')
                 return True
             # else: already on, so fall through
         else:
@@ -891,7 +881,7 @@ class ConditionAlertBase(AlertBase):
         
     def update_state_internal(self, state:bool):
         if not isinstance(state, bool):
-            report(DOMAIN, 'assert', f'update_state_internal ignoring call with non-bool {state} type={type(state)} for {self.name}')
+            report(DOMAIN, 'error', f'{gAssertMsg} update_state_internal ignoring call with non-bool {state} type={type(state)} for {self.name}')
             return
 
         if self.delay_on_secs > 0:
@@ -921,7 +911,7 @@ class ConditionAlertBase(AlertBase):
                     try:
                         msg = self._message_template.async_render(parse_result=False)
                     except TemplateError as err:
-                        report(DOMAIN, 'template_error', f'Condition template for {self.name}: {err}')
+                        report(DOMAIN, 'error', f'{self.name} Condition template: {err}')
                         return
                 self.reminders_since_fire = 0
                 if self._notify(now, NotificationReason.Fire, msg):
@@ -938,7 +928,7 @@ class ConditionAlertBase(AlertBase):
                     try:
                         msg = self._done_message_template.async_render(parse_result=False)
                     except TemplateError as err:
-                        report(DOMAIN, 'template_error', f'done_message template for {self.name}: {err}')
+                        report(DOMAIN, 'error', f'{self.name} done_message template: {err}')
                         msg = f'turned off after {agoStr(secs_on)}. [done_message template error]'
                 didNotify = self._notify(now, NotificationReason.StopFiring, msg,
                                          #override_timing=self.notified_on,
@@ -954,7 +944,7 @@ class ConditionAlertBase(AlertBase):
         is_on = self.state == 'on'
         if is_on:
             if not self.last_on_time:
-                report(DOMAIN, 'assert', f'in notify_timer_cb, is_on=True but no self.last_on_time={self.last_on_time} for {self.name}')
+                report(DOMAIN, 'error', f'{gAssertMsg} notify_timer_cb, is_on=True but no self.last_on_time={self.last_on_time} for {self.name}')
             else:
                 secs_on = (now - self.last_on_time).total_seconds()
                 msg += f'on for {agoStr(secs_on)}'
@@ -964,7 +954,7 @@ class ConditionAlertBase(AlertBase):
             msg += f'turned off {agoStr(secs_off)} ago after being on for {agoStr(secs_on)}'
         didNotify = self._notify(now, NotificationReason.Reminder, msg)
         if not didNotify:
-            report(DOMAIN, 'assert', f'in notify_timer_cb, didNotify was false for {self.name}')
+            report(DOMAIN, 'error', f'{gAssertMsg} notify_timer_cb, didNotify was false for {self.name}')
         self.reminders_since_fire += 1
         #if didNotify:
         #    if is_on:
@@ -994,11 +984,13 @@ class ConditionAlertBase(AlertBase):
     
     def sub_calc_next_reminder_frequency_mins(self, now):
         # alert may be off and this may be called as part of can_notify_now() after throttling ended.
-        if self.state != 'on' and not self.notified_max_on:
-            report(DOMAIN, 'assert', f'in sub_calc_next_reminder_frequency_mins, weird to ask when alert is not on. {self.name}')
-            # keep going
+        # or alert may be off and this is called due to delayed_init
+        if self.state != 'on':
+            #if not self.notified_max_on:
+            #    report(DOMAIN, 'error', f'{gAssertMsg} sub_calc_next_reminder_frequency_mins, weird to ask when alert is not on. {self.name}')
+            pass
         if not self.last_on_time:
-            report(DOMAIN, 'assert', f'in sub_calc_next_reminder_frequency_mins, can not calc reminder time since alert is not on. {self.name}')
+            report(DOMAIN, 'error', f'{gAssertMsg} sub_calc_next_reminder_frequency_mins, can not calc reminder time since alert is not on. {self.name}')
             return 0
         idx = min(len(self.reminder_frequency_mins)-1, self.reminders_since_fire)
         return self.reminder_frequency_mins[idx]
@@ -1088,7 +1080,7 @@ class ConditionAlert(ConditionAlertBase):
         # _tracker_result_cb gets called multiple times for same entity_id.
         # This is how componnents/template/template_entity.py does it.
         if self._self_ref_update_count > 2:
-            report(DOMAIN, 'template_error', f'Detected template loop in {self.name}. event={event}. Skipping render')
+            report(DOMAIN, 'error', f'{self.name} Detected template loop. event={event}. Skipping render')
             return
 
         has_condition = False
@@ -1099,10 +1091,10 @@ class ConditionAlert(ConditionAlertBase):
             template = update.template
             result = update.result
             if isinstance(result, TemplateError):
-                report(DOMAIN, 'template_error', f'template {template} for {self.name}: {result}')
+                report(DOMAIN, 'error', f'{self.name} template {template}: {result}')
                 return
             if template is None:
-                report(DOMAIN, 'assert', f'template is None for {self.name}: {result}')
+                report(DOMAIN, 'error', f'{gAssertMsg} template is None for {self.name}: {result}')
             elif template == self._condition_template:
                 has_condition = True
                 condition_bool = template_helper.result_as_boolean(result)
@@ -1110,13 +1102,13 @@ class ConditionAlert(ConditionAlertBase):
                 has_threshold = True
                 thresh_result = result
             else:
-                report(DOMAIN, 'assert', f'template cb for {self.name} returned unexpected template rez={result} template={template}')
+                report(DOMAIN, 'error', f'{gAssertMsg} template cb for {self.name} returned unexpected template rez={result} template={template}')
         if not has_condition:
             if self._condition_template is not None:
                 try:
                     rez = self._condition_template.async_render(parse_result=False)
                 except TemplateError as err:
-                    report(DOMAIN, 'template_error', f'Condition template err for {self.name}: {err}')
+                    report(DOMAIN, 'error', f'{self.name} Condition template: {err}')
                     return
                 condition_bool = template_helper.result_as_boolean(rez)
                 
@@ -1125,13 +1117,13 @@ class ConditionAlert(ConditionAlertBase):
                 try:
                     thresh_result = self._threshold_value_template.async_render(parse_result=False)
                 except TemplateError as err:
-                    report(DOMAIN, 'template_error', f'Threshold value template for {self.name}: {err}')
+                    report(DOMAIN, 'error', f'{self.name} Threshold value template: {err}')
                     return
         if thresh_result is not None:
             try:
                 thresh_val = float(thresh_result)
             except ValueError:
-                report(DOMAIN, 'template_error', f'Threshold value of {self.name} returned "{thresh_result}" rather than a float')
+                report(DOMAIN, 'error', f'{self.name} Threshold value returned "{thresh_result}" rather than a float')
                 return
             
         # Now we have a condition_bool|None and a thresh_val|None
@@ -1142,7 +1134,7 @@ class ConditionAlert(ConditionAlertBase):
             if thresh_val is None:
                 if condition_bool is not True:
                     # Config valudation should prevent this
-                    report(DOMAIN, 'assert', f'template for {self.name} appears to have neither condition nor threshold test specified')
+                    report(DOMAIN, 'error', f'{gAssertMsg} template for {self.name} appears to have neither condition nor threshold test specified')
                 newState = True
             else:
                 aboveMax = self.threshold_max is not None and thresh_val > self.threshold_max
@@ -1162,7 +1154,7 @@ class ConditionAlert(ConditionAlertBase):
                             newState = False
         else:
             if condition_bool is not False:
-                report(DOMAIN, 'assert', f'template for {self.name}: condition_bool is neither None or bool. Is {condition_bool} {type(condition_bool)}')
+                report(DOMAIN, 'error', f'{gAssertMsg} template for {self.name}: condition_bool is neither None or bool. Is {condition_bool} {type(condition_bool)}')
             newState = False
         return self.update_state_internal(newState)
 
@@ -1186,7 +1178,7 @@ class ConditionAlertManual(ConditionAlertBase):
         if isinstance(newState, bool):
             self.update_state_internal(newState)
         else:
-            report(DOMAIN, 'assert', f'ConditionAlertManual::set_state ignoring call with non-bool: {newState} with type={type(newState)} for {self.name}')
+            report(DOMAIN, 'error', f'{gAssertMsg} ConditionAlertManual::set_state ignoring call with non-bool: {newState} with type={type(newState)} for {self.name}')
 
         
 NOTIFICATION_CONTROL_SCHEMA = {
@@ -1273,20 +1265,30 @@ class Alert2Data:
             except vol.Invalid as v:
                 # Error will be reported later in init.
                 self.defaultsError = v
-        
-        entities = []
-        entities.append(self.declareEvent(DOMAIN, 'undeclared_event'))
-        entities.append(self.declareEvent(DOMAIN, 'unhandled_exception'))
-        # the notifier choice for notify_failed is special logic. The value for notifier specified here is ignored, but
-        # put persistent_notification here since it should always be available (once HA starts), in case
-        # the config specifies a default notifier that is not available
-        entities.append(self.declareEvent(DOMAIN, 'notify_failed', 'persistent_notification'))
-        entities.append(self.declareEvent(DOMAIN, 'template_error'))
-        entities.append(self.declareEvent(DOMAIN, 'config_error'))
-        entities.append(self.declareEvent(DOMAIN, 'malformed_call'))
-        entities.append(self.declareEvent(DOMAIN, 'exception'))
-        entities.append(self.declareEvent(DOMAIN, 'assert'))
-        await self.component.async_add_entities(entities)
+
+        self.skip_internal_errors = False
+        if 'skip_internal_errors' in self._rawConfig:
+            try:
+                self.skip_internal_errors = cv.boolean(self._rawConfig['skip_internal_errors'])
+            except vol.Invalid as v:
+                # Will be handled when we validate the TOP_LEVEL_SCHEMA
+                pass
+            
+        if not self.skip_internal_errors:
+            entities = []
+            entities.append(self.declareEvent(DOMAIN, 'error'))
+            #entities.append(self.declareEvent(DOMAIN, 'undeclared_event'))
+            #entities.append(self.declareEvent(DOMAIN, 'unhandled_exception'))
+            # the notifier choice for notify_failed is special logic. The value for notifier specified here is ignored, but
+            # put persistent_notification here since it should always be available (once HA starts), in case
+            # the config specifies a default notifier that is not available
+            #entities.append(self.declareEvent(DOMAIN, 'notify_failed', 'persistent_notification'))
+            #entities.append(self.declareEvent(DOMAIN, 'template_error'))
+            #entities.append(self.declareEvent(DOMAIN, 'config_error'))
+            #entities.append(self.declareEvent(DOMAIN, 'malformed_call'))
+            #entities.append(self.declareEvent(DOMAIN, 'exception'))
+            #entities.append(self.declareEvent(DOMAIN, 'assert'))
+            await self.component.async_add_entities(entities)
 
         # Now that report() is available, continue init that might use it
         
@@ -1300,7 +1302,7 @@ class Alert2Data:
             if self.inHandler:
                 return
             self.inHandler = True
-            report(DOMAIN, 'exception', str(context))
+            report(DOMAIN, 'error', f'exception {context}')
             if oldHandler:
                 oldHandler(loop, context)
             self.inHandler = False
@@ -1333,7 +1335,7 @@ class Alert2Data:
 
         # We already tried processing the defaults section once. Report errors encountered.
         if self.defaultsError is not None:
-            report(DOMAIN, 'config_error', f'error in defaults section of config: {self.defaultsError}')
+            report(DOMAIN, 'error', f'defaults section of config: {self.defaultsError}')
             
         entities = []
         if 'tracked' in self._rawConfig and isinstance(self._rawConfig['tracked'], list):
@@ -1342,7 +1344,7 @@ class Alert2Data:
                     trackedCfg = SINGLE_TRACKED_SCHEMA(obj)
                     entities.append(self.declareEventInt(obj))
                 except vol.Invalid as v:
-                    report(DOMAIN, 'config_error', f'error in tracked section of config: {v}. Relevant section: {obj}')
+                    report(DOMAIN, 'error', f'tracked section of config: {v}. Relevant section: {obj}')
 
         if 'alerts' in self._rawConfig and isinstance(self._rawConfig['alerts'], list):
             for obj in self._rawConfig['alerts']:
@@ -1354,7 +1356,7 @@ class Alert2Data:
                         aCfg = SINGLE_ALERT_SCHEMA_CONDITION(obj)
                         entities.append(self.declareCondition(aCfg, False))
                 except vol.Invalid as v:
-                    report(DOMAIN, 'config_error', f'error in alerts section of config: {v}. Relevant section: {obj}')
+                    report(DOMAIN, 'error', f'alerts section of config: {v}. Relevant section: {obj}')
                     
         await self.component.async_add_entities(entities)
 
@@ -1363,7 +1365,7 @@ class Alert2Data:
         try:
             dCfg = TOP_LEVEL_SCHEMA(self._rawConfig)
         except vol.Invalid as v:
-            report(DOMAIN, 'config_error', f'error in top-level alert2 config: {v}')
+            report(DOMAIN, 'error', f'top-level alert2 config: {v}')
 
     def haStartedEv(self, event):
         self._hass.loop.call_soon_threadsafe(self.haStartedEv2)
@@ -1390,7 +1392,7 @@ class Alert2Data:
             await asyncio.sleep(graceRemainSecs)
         for ann in self.notifiers:
             if not self._hass.services.has_service('notify', ann):
-                report(DOMAIN, 'notify_failed', f'notifier notify.{ann} is not avaiable after startup grace period')
+                report(DOMAIN, 'error', f'notifier notify.{ann} referenced by an alert but is still not avaiable after startup grace period')
     
     def setSensorDict(self, adict):
         _LOGGER.debug(f'called setSensorDict')
@@ -1418,7 +1420,7 @@ class Alert2Data:
         if not domain in self.tracked:
             self.tracked[domain] = {}
         if name in self.tracked[domain]:
-            report(DOMAIN, 'assert', f'Duplicate declaration of event for domain={domain} name={name}')
+            report(DOMAIN, 'error', f'Duplicate declaration of event for domain={domain} name={name}')
             return
         entity = EventAlert(self._hass, self, config, self.defaults)
         self.tracked[domain][name] = entity
@@ -1431,7 +1433,7 @@ class Alert2Data:
         if not domain in self.alerts:
             self.alerts[domain] = {}
         if name in self.alerts[domain]:
-            report(DOMAIN, 'assert', f'Duplicate declaration of condition for domain={domain} name={name}')
+            report(DOMAIN, 'error', f'Duplicate declaration of condition for domain={domain} name={name}')
             return
         if isManual:
             entity = ConditionAlertManual(self._hass, self, config, self.defaults)
@@ -1480,28 +1482,36 @@ class Alert2Data:
         # Grrr, have to manually validate data because voluptuous mutates a dict while validating and
         # the data passed with a service call is immutable.
         if not 'domain' in data or not isinstance(data['domain'], str):
-            report(DOMAIN, 'malformed_call', f'{tmsg} missing/non-string "domain" {data}')
+            report(DOMAIN, 'error', f'malformed call {tmsg} missing/non-string "domain" {data}')
             return
         if not 'name' in data or not isinstance(data['name'], str):
-            report(DOMAIN, 'malformed_call', f'{tmsg} missing/non-string "name" {data}')
+            report(DOMAIN, 'error', f'malformed call {tmsg} missing/non-string "name" {data}')
             return
         domain = data['domain']
         name = data['name']
+        if self.skip_internal_errors:
+            if domain == DOMAIN and name == 'error':
+                # The internal error was logged back up in report(), so no need to log again
+                #msg = data['message'] if 'message' in data else ''
+                # _LOGGER.error(msg)
+                return
+        
         if not domain in self.tracked or not name in self.tracked[domain]:
             errmsg = f'{tmsg} for {domain} and {name}'
-            report(DOMAIN, 'undeclared_event', errmsg)
+            report(DOMAIN, 'error', f'undeclared event {errmsg}')
             alertObj = self.declareEvent(domain, name)
-            await self.component.async_add_entities([entity])
+            await self.component.async_add_entities([alertObj])
         else:
             alertObj = self.tracked[domain][name]
 
         message = ''
         if 'message' in data:
             if not isinstance(data['message'], str):
-                report(DOMAIN, 'malformed_call', f'{tmsg} non-string "message" {data}')
+                report(DOMAIN, 'error', f'Malformed call {tmsg} non-string "message" {data}')
                 return
             message = data['message']
 
         await alertObj.record_event(message)
+        # TODO - I'm not sure this line does anythign, and probably is wrong.
         self.inHandler = False
 

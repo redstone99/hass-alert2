@@ -171,6 +171,10 @@ The text of each notification by default includes some basic context information
 
         [Throttling ends] Alert2 kitchen_door_open: fired 10x (most recently 15m ago): turned off 19s ago after being on for 3m
 
+### Alert2 internal errors
+
+Alert2 automatically defines an alert, `alert2.error`. This alert uses your default settings. It fires and will notify you of problems in your configuration file as well as if Alert2 internally encounters a problem.  If you don't want to be notified of errors like these, an option, `skip_internal_errors`, is available. One reason this alert is important is because if Alert2 itself encounters a problem, you may stop receiving alerts for things you do care about. So in a sense, this alert is at least as important as your most important alert.
+
 
 ## Configuration
 
