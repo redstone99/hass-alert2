@@ -5,6 +5,9 @@ from unittest.mock import AsyncMock, Mock
 import sys
 import asyncio
 import datetime as dt
+import logging
+_LOGGER = logging.getLogger(None) # get root logger
+_LOGGER.setLevel(logging.DEBUG)
 from types import SimpleNamespace
 sys.path.append('/home/redstone/home-monitoring/homeassistant')
 class FakeConst:
@@ -30,6 +33,9 @@ class FakeExceptions:
 sys.modules['homeassistant.exceptions'] = FakeExceptions
 class FakeHelpers:
     class template:
+        @staticmethod
+        def result_as_boolean(rez):
+            return bool(rez)
         pass
     class discovery:
         pass
@@ -50,15 +56,19 @@ class FakeHA:
                 def __init__(self, logger, domain, hass):
                     pass
                 async def async_add_entities(self, ents):
+                    for ent in ents: # usualy done by Entity::_async_process_registry_update_or_remove
+                        ent.entity_id = f'alert2.{ent.name}'
+                        await ent.async_added_to_hass()
                     pass
                 def async_register_entity_service(self, n1, ss, n2):
                     pass
         class event:
             @staticmethod
-            def async_track_template_result():
-                pass
+            def async_track_template_result(hass, trackers, cb):
+                return SimpleNamespace(async_refresh = lambda: None)
             class TrackTemplate:
-                pass
+                def __init__(self, a, b):
+                    pass
             class TrackTemplateResult:
                 pass
         class restore_state:
@@ -68,6 +78,12 @@ class FakeHA:
                     return self._attr_name
                 def async_write_ha_state(self):
                     pass
+                def async_set_context(self, ctx):
+                    pass
+                async def async_added_to_hass(self):
+                    pass
+                async def async_get_last_state(self):
+                    return None
         class trigger:
             @staticmethod
             def async_initialize_triggers():
@@ -116,6 +132,12 @@ sys.modules['homeassistant.helpers.typing'] = FakeHA.helpers.typing
 sys.modules['homeassistant.util.dt'] = FakeHA.util.dt
 import custom_components.alert2 as alert2
 
+def doConditionUpdate(aler, rez):
+    assert isinstance(rez, bool)
+    aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                               [ SimpleNamespace(template=aler._condition_template, result=rez) ])
+    
+
 class FooTest(unittest.IsolatedAsyncioTestCase):
     def setup(self):
         pass
@@ -162,10 +184,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         gad = alert2.Alert2Data(hass, cfg)
         await gad.init2()
         tal = gad.alerts['test']['t1']
-        tal.startWatchingEv() # normally called when EVENT_HOMEASSISTANT_STARTED happens
-        tal._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                               [ SimpleNamespace(template=
-
+        tal.startWatchingEv(None) # normally called when EVENT_HOMEASSISTANT_STARTED happens
+        doConditionUpdate(tal, True)
 
         
         await self.waitForAllBut(oldTasks)
