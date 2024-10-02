@@ -49,6 +49,7 @@ global_tasks = set()
 # will have finished loading. So wait a few seconds before throwing errors for missing notifiers
 moduleLoadTime = dt.now()
 kNotifierInitGraceSecs = 120
+kStartupWaitPollSecs = 10  # time between checks for notifiers to load while waiting kNotifierInitGraceSecs
 
 ##########################################################
 #
@@ -459,7 +460,7 @@ class AlertBase(RestoreEntity):
             graceRemainSecs = kNotifierInitGraceSecs - uptimeSecs
             if graceRemainSecs > 0:
                 # HA still may be initializing and hasn't gotten around to loading the notifiers yet.
-                startup_remaining_secs = 10
+                startup_remaining_secs = kStartupWaitPollSecs
             # Otherwise, do the notify, which will fail and fall back to persistent_notification
 
         if self.notified_max_on and max_limit_remaining_secs == 0:

@@ -131,6 +131,8 @@ sys.modules['homeassistant.helpers.trigger'] = FakeHA.helpers.trigger
 sys.modules['homeassistant.helpers.typing'] = FakeHA.helpers.typing
 sys.modules['homeassistant.util.dt'] = FakeHA.util.dt
 import custom_components.alert2 as alert2
+alert2.kNotifierInitGraceSecs = 3
+alert2.kStartupWaitPollSecs   = 1
 
 def doConditionUpdate(aler, rez):
     assert isinstance(rez, bool)
@@ -140,12 +142,14 @@ def doConditionUpdate(aler, rez):
 
 class FooTest(unittest.IsolatedAsyncioTestCase):
     async def waitForAllBut(self, oldTasks):
+        count = 0
         while True:
             newTasks = asyncio.all_tasks()
             sawOne = False
             for k in newTasks:
                 if not k in oldTasks:
                     sawOne = True
+                    count += 1
                     #print(f'about to wait_for {k}')
                     try:
                         await asyncio.wait_for(k, None)
@@ -153,6 +157,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
                         pass
             if not sawOne:
                 break
+        return count
     async def initCase(self, cfg):
         print('setting up')
         self.oldTasks = asyncio.all_tasks()
@@ -191,8 +196,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
         self.assertEqual(len(nn.await_args_list), 2)
-        self.assertIsNotNone(re.search('test_t1.*turned on', nn.await_args_list[0].args[0].data['message']))
-        self.assertIsNotNone(re.search('test_t1.*turned off', nn.await_args_list[1].args[0].data['message']))
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'test_t1.*turned on')
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'test_t1.*turned off')
 
         # Now let's try condition on, ack, off
         doConditionUpdate(tal, True)
@@ -201,7 +206,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
         self.assertEqual(len(nn.await_args_list), 3)
-        self.assertIsNotNone(re.search('test_t1.*turned on', nn.await_args_list[2].args[0].data['message']))
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'test_t1.*turned on')
 
         # and let's try ack_all
         doConditionUpdate(tal, True)
@@ -210,7 +215,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
         self.assertEqual(len(nn.await_args_list), 4)
-        self.assertIsNotNone(re.search('test_t1.*turned on', nn.await_args_list[3].args[0].data['message']))
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'test_t1.*turned on')
         
 
     async def test_reminder(self):
@@ -228,10 +233,10 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
         self.assertEqual(len(nn.await_args_list), 4)
-        self.assertIsNotNone(re.search('test_t2.*turned on', nn.await_args_list[0].args[0].data['message']))
-        self.assertIsNotNone(re.search('test_t2.* on for ', nn.await_args_list[1].args[0].data['message']))
-        self.assertIsNotNone(re.search('test_t2.* on for ', nn.await_args_list[2].args[0].data['message']))
-        self.assertIsNotNone(re.search('test_t2.*turned off', nn.await_args_list[3].args[0].data['message']))
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'test_t2.*turned on')
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'test_t2.* on for ')
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'test_t2.* on for ')
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'test_t2.*turned off')
 
         # And what about if ack'd before reminder time.  Should only see turn-on notification
         doConditionUpdate(tal, True)
@@ -241,7 +246,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
         self.assertEqual(len(nn.await_args_list), 5)
-        self.assertIsNotNone(re.search('test_t2.*turned on', nn.await_args_list[4].args[0].data['message']))
+        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'test_t2.*turned on')
 
         # and default remimder time is long, so no reminders
         tal = self.gad.alerts['test']['t5']
@@ -251,8 +256,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
         self.assertEqual(len(nn.await_args_list), 7)
-        self.assertIsNotNone(re.search('test_t5.*turned on', nn.await_args_list[5].args[0].data['message']))
-        self.assertIsNotNone(re.search('test_t5.*turned off', nn.await_args_list[6].args[0].data['message']))
+        self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'test_t5.*turned on')
+        self.assertRegex(nn.await_args_list[6].args[0].data['message'], 'test_t5.*turned off')
 
         
     async def test_reminder2(self):
@@ -271,9 +276,9 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
         self.assertEqual(len(nn.await_args_list), 3)
-        self.assertIsNotNone(re.search('test_t3.*turned on', nn.await_args_list[0].args[0].data['message']))
-        self.assertIsNotNone(re.search('test_t3.* on for ', nn.await_args_list[1].args[0].data['message']))
-        self.assertIsNotNone(re.search('test_t3.*turned off', nn.await_args_list[2].args[0].data['message']))
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'test_t3.*turned on')
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'test_t3.* on for ')
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'test_t3.*turned off')
 
         tal = self.gad.alerts['test']['t4']
         doConditionUpdate(tal, True)
@@ -282,8 +287,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
         self.assertEqual(len(nn.await_args_list), 5)
-        self.assertIsNotNone(re.search('test_t4.*turned on', nn.await_args_list[3].args[0].data['message']))
-        self.assertIsNotNone(re.search('test_t4.*turned off', nn.await_args_list[4].args[0].data['message']))
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'test_t4.*turned on')
+        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'test_t4.*turned off')
 
     async def test_reminder3(self):
         # Check that default value of reminder is used
@@ -300,11 +305,99 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
         self.assertEqual(len(nn.await_args_list), 3)
-        self.assertIsNotNone(re.search('test_t6.*turned on', nn.await_args_list[0].args[0].data['message']))
-        self.assertIsNotNone(re.search('test_t6.* on for ', nn.await_args_list[1].args[0].data['message']))
-        self.assertIsNotNone(re.search('test_t6.*turned off', nn.await_args_list[2].args[0].data['message']))
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'test_t6.*turned on')
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'test_t6.* on for ')
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'test_t6.*turned off')
 
+    async def test_notifiers(self):
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': 't7', 'condition': '{{ true }}', 'notifier': 'foo' },
+        ], } }
+        await self.initCase(cfg)
+        tal = self.gad.alerts['test']['t7']
         
+        doConditionUpdate(tal, True)
+        doConditionUpdate(tal, False)
+
+        await asyncio.sleep(1)
+        # We're in startup grace period, so notifications should have happened
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 0)
+        self.assertTrue('notify.foo' not in self.hass.servHandlers)
+        
+        await asyncio.sleep(5)
+        # We're out of grace period, so should see notification to default notifier
+        self.assertTrue('notify.foo' not in self.hass.servHandlers)
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'test_t7.*Notifier notify.foo not available. Falling back to notify.persistent_notification')
+
+        # There should be nothing more waiting around
+        self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
+
+        # Now register foo, and notifications should work
+        self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
+        nn2 = self.hass.servHandlers['notify.foo']
+        doConditionUpdate(tal, True)
+        doConditionUpdate(tal, False)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 1) # no new notifications
+        self.assertEqual(len(nn2.await_args_list), 2) # start + stop
+        self.assertRegex(nn2.await_args_list[0].args[0].data['message'], 'test_t7.*turned on')
+        self.assertRegex(nn2.await_args_list[1].args[0].data['message'], 'test_t7.*turned off')
+    async def test_notifiers2(self):
+        # Check that default notifier is used
+        cfg = { 'alert2' : { 'defaults': { 'notifier': 'foo' }, 'alerts' : [
+            { 'domain': 'test', 'name': 't8', 'condition': '{{ true }}' },
+        ], } }
+        await self.initCase(cfg)
+        self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
+        tal = self.gad.alerts['test']['t8']
+        
+        doConditionUpdate(tal, True)
+        doConditionUpdate(tal, False)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 0)
+        nn2 = self.hass.servHandlers['notify.foo']
+        self.assertEqual(len(nn2.await_args_list), 2) # start + stop
+        self.assertRegex(nn2.await_args_list[0].args[0].data['message'], 'test_t8.*turned on')
+        self.assertRegex(nn2.await_args_list[1].args[0].data['message'], 'test_t8.*turned off')
+    async def test_throttle(self):
+        # Check that default notifier is used
+        cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+            { 'domain': 'test', 'name': 't9', 'condition': '{{ true }}', 'throttle_fires_per_mins': [2, 0.05], 'reminder_frequency_mins':0.01 },
+        ], } }
+        await self.initCase(cfg)
+        self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
+        tal = self.gad.alerts['test']['t9']
+
+        # 2 fires are fine
+        doConditionUpdate(tal, True)
+        doConditionUpdate(tal, False)
+        doConditionUpdate(tal, True)
+        doConditionUpdate(tal, False)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'test_t9.*turned on')
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'test_t9.*turned off')
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'test_t9.*turned on')
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'test_t9.*turned off')
+
+        # 3rd fire should have throttle sign and no turn off or reminders
+        doConditionUpdate(tal, True)
+        await asyncio.sleep(2)
+        doConditionUpdate(tal, False)
+        self.assertEqual(len(nn.await_args_list), 5)
+        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'Throttling started.*test_t9.*turned on')
+        doConditionUpdate(tal, True)
+        doConditionUpdate(tal, False)
+        await asyncio.sleep(0.2)
+        self.assertEqual(len(nn.await_args_list), 5)
+        await asyncio.sleep(2)
+        # throttle window done
+        self.assertEqual(len(nn.await_args_list), 6)
+        self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'Throttling ending.*test_t9 fired 1x.*turned off.*after being on')
         
 if __name__ == '__main__':
     unittest.main()
