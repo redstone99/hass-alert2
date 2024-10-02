@@ -139,8 +139,6 @@ def doConditionUpdate(aler, rez):
     
 
 class FooTest(unittest.IsolatedAsyncioTestCase):
-    def setup(self):
-        pass
     async def waitForAllBut(self, oldTasks):
         while True:
             newTasks = asyncio.all_tasks()
@@ -148,52 +146,165 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             for k in newTasks:
                 if not k in oldTasks:
                     sawOne = True
-                    print(f'about to wait_for {k}')
-                    await asyncio.wait_for(k, None)
+                    #print(f'about to wait_for {k}')
+                    try:
+                        await asyncio.wait_for(k, None)
+                    except asyncio.CancelledError:
+                        pass
             if not sawOne:
                 break
-    async def test_first(self):
-        oldTasks = asyncio.all_tasks()
+    async def initCase(self, cfg):
+        print('setting up')
+        self.oldTasks = asyncio.all_tasks()
+        self.hass = FakeHass()
+        alert2.global_hass = self.hass
+        self.gad = alert2.Alert2Data(self.hass, cfg)
+        await self.gad.init2()
+        for dom in self.gad.alerts:
+            for name in self.gad.alerts[dom]:
+                self.gad.alerts[dom][name].startWatchingEv(None) # normally called when EVENT_HOMEASSISTANT_STARTED happens
+    #def setup(self):
+    #    pass
+    async def test_badarg1(self):
         cfg = { 'alert2' : {
             'defaults' : {
                 'notifierz' : 'foobar'
             },
         } }
-        hass = FakeHass()
-        alert2.global_hass = hass
-        gad = alert2.Alert2Data(hass, cfg)
-        await gad.init2()
-        await self.waitForAllBut(oldTasks)
-        nn = hass.servHandlers['notify.persistent_notification']
+        await self.initCase(cfg)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
         nn.assert_awaited_once()
         self.assertIsNotNone(re.search('defaults section.*extra keys', nn.await_args_list[0].args[0].data['message']))
-
-    async def test_ack(self):
-        oldTasks = asyncio.all_tasks()
-        cfg = { 'alert2' : {
-            'alerts' : [
-                {
-                    'domain': 'test',
-                    'name': 't1',
-                    'condition': '{{ true }}',
-                }
-            ],
-        } }
-        hass = FakeHass()
-        alert2.global_hass = hass
-        gad = alert2.Alert2Data(hass, cfg)
-        await gad.init2()
-        tal = gad.alerts['test']['t1']
-        tal.startWatchingEv(None) # normally called when EVENT_HOMEASSISTANT_STARTED happens
-        doConditionUpdate(tal, True)
 
         
-        await self.waitForAllBut(oldTasks)
-        nn = hass.servHandlers['notify.persistent_notification']
-        print(nn.await_args_list)
-        nn.assert_awaited_once()
-        self.assertIsNotNone(re.search('defaults section.*extra keys', nn.await_args_list[0].args[0].data['message']))
+    async def test_ack(self):
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': 't1', 'condition': '{{ true }}' },
+        ], } }
+        await self.initCase(cfg)
+        tal = self.gad.alerts['test']['t1']
+        
+        # First let's try condition on then off
+        doConditionUpdate(tal, True)
+        doConditionUpdate(tal, False)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertIsNotNone(re.search('test_t1.*turned on', nn.await_args_list[0].args[0].data['message']))
+        self.assertIsNotNone(re.search('test_t1.*turned off', nn.await_args_list[1].args[0].data['message']))
 
+        # Now let's try condition on, ack, off
+        doConditionUpdate(tal, True)
+        await tal.async_ack()
+        doConditionUpdate(tal, False)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertIsNotNone(re.search('test_t1.*turned on', nn.await_args_list[2].args[0].data['message']))
+
+        # and let's try ack_all
+        doConditionUpdate(tal, True)
+        await self.hass.services.async_call('alert2','ack_all', {})
+        doConditionUpdate(tal, False)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertIsNotNone(re.search('test_t1.*turned on', nn.await_args_list[3].args[0].data['message']))
+        
+
+    async def test_reminder(self):
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': 't2', 'condition': '{{ true }}', 'reminder_frequency_mins': [0.01, 0.05] },
+            { 'domain': 'test', 'name': 't5', 'condition': '{{ true }}' },
+        ], } }
+        await self.initCase(cfg)
+
+        # And how about a reminder, checking successive values. so should only see two reminders, not more
+        tal = self.gad.alerts['test']['t2']
+        doConditionUpdate(tal, True)
+        await asyncio.sleep(6) # reminder interval is 1 + specified interval
+        doConditionUpdate(tal, False)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertIsNotNone(re.search('test_t2.*turned on', nn.await_args_list[0].args[0].data['message']))
+        self.assertIsNotNone(re.search('test_t2.* on for ', nn.await_args_list[1].args[0].data['message']))
+        self.assertIsNotNone(re.search('test_t2.* on for ', nn.await_args_list[2].args[0].data['message']))
+        self.assertIsNotNone(re.search('test_t2.*turned off', nn.await_args_list[3].args[0].data['message']))
+
+        # And what about if ack'd before reminder time.  Should only see turn-on notification
+        doConditionUpdate(tal, True)
+        await tal.async_ack()
+        await asyncio.sleep(2) # reminder interval is 1 + specified interval
+        doConditionUpdate(tal, False)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 5)
+        self.assertIsNotNone(re.search('test_t2.*turned on', nn.await_args_list[4].args[0].data['message']))
+
+        # and default remimder time is long, so no reminders
+        tal = self.gad.alerts['test']['t5']
+        doConditionUpdate(tal, True)
+        await asyncio.sleep(2) # reminder interval is 1 + specified interval
+        doConditionUpdate(tal, False)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 7)
+        self.assertIsNotNone(re.search('test_t5.*turned on', nn.await_args_list[5].args[0].data['message']))
+        self.assertIsNotNone(re.search('test_t5.*turned off', nn.await_args_list[6].args[0].data['message']))
+
+        
+    async def test_reminder2(self):
+        # Check that default value of reminder is overridden and is used
+        cfg = { 'alert2' : { 'defaults': { 'reminder_frequency_mins': 10 },
+                             'alerts' : [
+            { 'domain': 'test', 'name': 't3', 'condition': '{{ true }}', 'reminder_frequency_mins': [0.01, 0.05] },
+            { 'domain': 'test', 'name': 't4', 'condition': '{{ true }}' },
+        ], } }
+        await self.initCase(cfg)
+
+        tal = self.gad.alerts['test']['t3']
+        doConditionUpdate(tal, True)
+        await asyncio.sleep(2) # reminder interval is 1 + specified interval
+        doConditionUpdate(tal, False)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertIsNotNone(re.search('test_t3.*turned on', nn.await_args_list[0].args[0].data['message']))
+        self.assertIsNotNone(re.search('test_t3.* on for ', nn.await_args_list[1].args[0].data['message']))
+        self.assertIsNotNone(re.search('test_t3.*turned off', nn.await_args_list[2].args[0].data['message']))
+
+        tal = self.gad.alerts['test']['t4']
+        doConditionUpdate(tal, True)
+        await asyncio.sleep(2) # reminder interval is 1 + specified interval
+        doConditionUpdate(tal, False)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 5)
+        self.assertIsNotNone(re.search('test_t4.*turned on', nn.await_args_list[3].args[0].data['message']))
+        self.assertIsNotNone(re.search('test_t4.*turned off', nn.await_args_list[4].args[0].data['message']))
+
+    async def test_reminder3(self):
+        # Check that default value of reminder is used
+        cfg = { 'alert2' : { 'defaults': { 'reminder_frequency_mins': 0.01 },
+                             'alerts' : [
+            { 'domain': 'test', 'name': 't6', 'condition': '{{ true }}' },
+        ], } }
+        await self.initCase(cfg)
+        tal = self.gad.alerts['test']['t6']
+
+        doConditionUpdate(tal, True)
+        await asyncio.sleep(2) # reminder interval is 1 + specified interval
+        doConditionUpdate(tal, False)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertIsNotNone(re.search('test_t6.*turned on', nn.await_args_list[0].args[0].data['message']))
+        self.assertIsNotNone(re.search('test_t6.* on for ', nn.await_args_list[1].args[0].data['message']))
+        self.assertIsNotNone(re.search('test_t6.*turned off', nn.await_args_list[2].args[0].data['message']))
+
+        
         
 if __name__ == '__main__':
     unittest.main()
