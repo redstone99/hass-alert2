@@ -153,13 +153,18 @@ def doConditionUpdate(aler, rez):
     #assert isinstance(rez, bool)
     aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                [ SimpleNamespace(template=aler._condition_template, result=rez) ])
+    setCondition(aler, rez)
 def doValueUpdate(aler, rez):
     aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                [ SimpleNamespace(template=aler._threshold_value_template, result=rez) ])
+    setValue(aler, rez)
 def doCondValueUpdate(aler, condRez, valRez):
     aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                [ SimpleNamespace(template=aler._threshold_value_template, result=valRez),
                                  SimpleNamespace(template=aler._condition_template, result=condRez) ])
+    setCondition(aler, condRez)
+    setValue(aler, valRez)
+    
 def setValue(aler, rez):
     aler._threshold_value_template.set_value(rez)
 def setCondition(aler, rez):
@@ -696,7 +701,6 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), 10)
         self.assertRegex(nn.await_args_list[9].args[0].data['message'], 'test_t18: turned on')
         self.assertEqual(t18.state, 'on')
-        setCondition(t18, True)
         # going positive but still less than 3
         doValueUpdate(t18, '1')
         await asyncio.sleep(0.1)
@@ -709,7 +713,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(t18.state, 'on')
         # now turns off
         doValueUpdate(t18, '3')
-        await asyncio.sleep(0.1)
+        await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 11)
         self.assertRegex(nn.await_args_list[10].args[0].data['message'], 'test_t18: turned off')
         self.assertEqual(t18.state, 'off')
@@ -722,7 +726,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[11].args[0].data['message'], 'test_t18: turned on')
         self.assertEqual(t18.state, 'on')
         doConditionUpdate(t18, False)
-        await asyncio.sleep(0.1)
+        await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 13)
         self.assertRegex(nn.await_args_list[12].args[0].data['message'], 'test_t18: turned off')
         self.assertEqual(t18.state, 'off')
@@ -751,7 +755,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), 14)
         self.assertEqual(t19.state, 'on')
         doValueUpdate(t19, '7')
-        await asyncio.sleep(0.1)
+        await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 15)
         self.assertRegex(nn.await_args_list[14].args[0].data['message'], 'test_t19: turned off')
         self.assertEqual(t19.state, 'off')
@@ -771,7 +775,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), 16)
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '7')
-        await asyncio.sleep(0.1)
+        await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 17)
         self.assertRegex(nn.await_args_list[16].args[0].data['message'], 'test_t20: turned off')
         self.assertEqual(t20.state, 'off')
@@ -789,7 +793,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), 18)
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '3')
-        await asyncio.sleep(0.1)
+        await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 19)
         self.assertRegex(nn.await_args_list[18].args[0].data['message'], 'test_t20: turned off')
         self.assertEqual(t20.state, 'off')
@@ -801,7 +805,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[19].args[0].data['message'], 'test_t20: turned on')
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '9')
-        await asyncio.sleep(0.1)
+        await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 21)
         self.assertRegex(nn.await_args_list[20].args[0].data['message'], 'test_t20: turned off')
         self.assertEqual(t20.state, 'off')
@@ -812,9 +816,9 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[21].args[0].data['message'], 'test_t20: turned on')
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '1')
-        await asyncio.sleep(0.1)
+        await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 23)
-        self.assertRegex(nn.await_args_list[23].args[0].data['message'], 'test_t20: turned off')
+        self.assertRegex(nn.await_args_list[22].args[0].data['message'], 'test_t20: turned off')
         self.assertEqual(t20.state, 'off')
 
         # And test if jump from pole to pole
@@ -836,13 +840,187 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), 24)
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '5')
-        await asyncio.sleep(0.1)
+        await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 25)
         self.assertRegex(nn.await_args_list[24].args[0].data['message'], 'test_t20: turned off')
         self.assertEqual(t20.state, 'off')
 
-        and test threshold tracking even if condition is false for part of it
+        # check threshold tracking even when condition is false
+        setCondition(t20, False)
+        doValueUpdate(t20, '-1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 25)
+        self.assertEqual(t20.state, 'off')
+        doValueUpdate(t20, '1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 25)
+        self.assertEqual(t20.state, 'off')
 
+        doConditionUpdate(t20, True)
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 26)
+        self.assertRegex(nn.await_args_list[25].args[0].data['message'], 'test_t20: turned on')
+        self.assertEqual(t20.state, 'on')
+
+        doCondValueUpdate(t20, False, '11')
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 27)
+        self.assertRegex(nn.await_args_list[26].args[0].data['message'], 'test_t20: turned off')
+        self.assertEqual(t20.state, 'off')
+
+        doCondValueUpdate(t20, False, '9')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 27)
+        self.assertEqual(t20.state, 'off')
+
+        doConditionUpdate(t20, True)
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 28)
+        self.assertRegex(nn.await_args_list[27].args[0].data['message'], 'test_t20: turned on')
+        self.assertEqual(t20.state, 'on')
+
+        # Lastly a temlate error
+        doConditionUpdate(t20, FakeExceptions.TemplateError('foobar error'))
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 29)
+        self.assertRegex(nn.await_args_list[28].args[0].data['message'], 'err')
+        self.assertEqual(t20.state, 'on')
+
+        doConditionUpdate(t20, False)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 30)
+        self.assertRegex(nn.await_args_list[29].args[0].data['message'], 'test_t20: turned off')
+        self.assertEqual(t20.state, 'off')
+        
+    async def test_threshold2(self):
+        # Check that default notifier is used
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': 't21', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'minimum': 0 } },
+        ], } }
+        await self.initCase(cfg)
+        t21 = self.gad.alerts['test']['t21']
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(t21.state, 'off')
+
+        # Test hysteresis without a condition
+        doValueUpdate(t21, '1')
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 0)
+        self.assertEqual(t21.state, 'off')
+
+        doValueUpdate(t21, '-1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'test_t21: turned on')
+        self.assertEqual(t21.state, 'on')
+
+        doValueUpdate(t21, '1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertEqual(t21.state, 'on')
+
+        doValueUpdate(t21, '3')
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'test_t21: turned off')
+        self.assertEqual(t21.state, 'off')
+
+    async def test_event(self):
+        # Check that default notifier is used
+        cfg = { 'alert2' : { 'tracked' : [
+            { 'domain': 'test', 'name': 't22' },
+            { 'domain': 'test', 'name': 't23', 'friendly_name': 'friendlyt23' },
+            { 'domain': 'test', 'name': 't24', 'title': 'title24' },
+            { 'domain': 'test', 'name': 't25', 'target': 'targett25' },
+            { 'domain': 'test', 'name': 't26', 'data': { 'd1': 'data-d1' } },
+        ], } }
+        await self.initCase(cfg)
+        t22 = self.gad.tracked['test']['t22']
+        t23 = self.gad.tracked['test']['t23']
+        t24 = self.gad.tracked['test']['t24']
+        t25 = self.gad.tracked['test']['t25']
+        t26 = self.gad.tracked['test']['t26']
+        nn = self.hass.servHandlers['notify.persistent_notification']
+
+        await self.hass.services.async_call('alert2','report', {})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'alert2_error.*malformed')
+
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t22'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'Alert2 test_t22')
+
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t22', 'message': 'foo'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Alert2 test_t22: foo')
+
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t23', 'message': 'foo'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'friendlyt23: foo')
+
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t24', 'message': 'foo'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 5)
+        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'test_t24.*foo')
+        self.assertRegex(nn.await_args_list[4].args[0].data['title'],   'title24')
+
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t25', 'message': 'foo'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 6)
+        self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'test_t25.*foo')
+        self.assertRegex(nn.await_args_list[5].args[0].data['target'],   'targett25')
+
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t26', 'message': 'foo'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 7)
+        print(nn.await_args_list[6].args[0])
+        self.assertRegex(nn.await_args_list[6].args[0].data['message'], 'test_t26.*foo')
+        self.assertDictEqual(nn.await_args_list[6].args[0].data['data'], { 'd1': 'data-d1' })
+
+    async def test_event2(self):
+        # Check throttling
+        cfg = { 'alert2' : { 'tracked' : [
+            { 'domain': 'test', 'name': 't27', 'throttle_fires_per_mins': [2, 0.01] },
+        ], } }
+        await self.initCase(cfg)
+        t27 = self.gad.tracked['test']['t27']
+        nn = self.hass.servHandlers['notify.persistent_notification']
+
+        # First two should notify fine
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'Alert2 test_t27')
+        #
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'Alert2 test_t27')
+
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Throttling started.*test_t27')
+
+        # Two more fires shouldn't notify
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27'})
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 3)
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27'})
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 3)
+
+        await asyncio.sleep(2)
+        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'Throttling ending.*test_t27')
+        
+        
+        
+        fuck# and test trigger
         
 if __name__ == '__main__':
     unittest.main()
