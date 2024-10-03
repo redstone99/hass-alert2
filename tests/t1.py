@@ -45,7 +45,7 @@ def fake_template(value):
         def __init__(self, value):
             self.hass = None
             self.rawStr = value
-        def async_render(self, parse_result=False):
+        def async_render(self, vvars=None, parse_result=False):
             return self.rawStr
         def set_value(self, new):
             self.rawStr = new
@@ -101,8 +101,8 @@ class FakeHA:
                     return None
         class trigger:
             @staticmethod
-            def async_initialize_triggers():
-                pass
+            async def async_initialize_triggers(*args):
+                return None
         class typing:
             class ConfigType:
                 pass
@@ -125,6 +125,7 @@ class FakeHass:
         self.evHandlers = {  }
         self.servHandlers = { 'notify.persistent_notification': AsyncMock(name='persist', spec_set=[]) }
         self.loop = asyncio.get_running_loop()
+        self.states = {}
     def verify_event_loop_thread(self, msg):
         return True
     def service_async_register(self, dom, nm, fun):
@@ -977,7 +978,6 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t26', 'message': 'foo'})
         await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 7)
-        print(nn.await_args_list[6].args[0])
         self.assertRegex(nn.await_args_list[6].args[0].data['message'], 'test_t26.*foo')
         self.assertDictEqual(nn.await_args_list[6].args[0].data['data'], { 'd1': 'data-d1' })
 
@@ -1016,11 +1016,40 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
 
         await asyncio.sleep(2)
         self.assertEqual(len(nn.await_args_list), 4)
-        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'Throttling ending.*test_t27')
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'Throttling ending.*test_t27 fired 2x')
         
+    async def test_event3(self):
+        # Check throttling
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': 't28',  'trigger': 'foo', 'condition': '{{ zzz }}' },
+            { 'domain': 'test', 'name': 't29',  'trigger': 'foo', 'condition': '{{ zzz }}', 'friendly_name': 'friendly-t29'  },
+        ], } }
+        await self.initCase(cfg)
+        t28 = self.gad.tracked['test']['t28']
+        t29 = self.gad.tracked['test']['t29']
+        nn = self.hass.servHandlers['notify.persistent_notification']
+
+        # condition is false, so no alert
+        setCondition(t28, False)
+        await t28.async_trigger({'trigger': {}}, None, skip_condition=False)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 0)
+
+        # condition is now true
+        setCondition(t28, True)
+        await t28.async_trigger({'trigger': {}}, None, skip_condition=False)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'Alert2 test_t28')
+
+        setCondition(t29, True)
+        await t29.async_trigger({'trigger': {}}, None, skip_condition=False)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'friendly-t29')
+
+
         
-        
-        fuck# and test trigger
         
 if __name__ == '__main__':
     unittest.main()
