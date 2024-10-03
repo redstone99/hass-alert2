@@ -150,15 +150,20 @@ alert2.kNotifierInitGraceSecs = 3
 alert2.kStartupWaitPollSecs   = 1
 
 def doConditionUpdate(aler, rez):
-    assert isinstance(rez, bool)
+    #assert isinstance(rez, bool)
     aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                [ SimpleNamespace(template=aler._condition_template, result=rez) ])
 def doValueUpdate(aler, rez):
-    assert float(rez) == rez
     aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                [ SimpleNamespace(template=aler._threshold_value_template, result=rez) ])
+def doCondValueUpdate(aler, condRez, valRez):
+    aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                               [ SimpleNamespace(template=aler._threshold_value_template, result=valRez),
+                                 SimpleNamespace(template=aler._condition_template, result=condRez) ])
 def setValue(aler, rez):
     aler._threshold_value_template.set_value(rez)
+def setCondition(aler, rez):
+    aler._condition_template.set_value(rez)
 
 class FooTest(unittest.IsolatedAsyncioTestCase):
     async def waitForAllBut(self, oldTasks):
@@ -553,21 +558,291 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         # Check that default notifier is used
         cfg = { 'alert2' : { 'alerts' : [
             { 'domain': 'test', 'name': 't18', 'condition': '{{ xxx }}', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'minimum': 0 } },
+            { 'domain': 'test', 'name': 't19', 'condition': '{{ xxx }}', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'maximum': 10 } },
+            { 'domain': 'test', 'name': 't20', 'condition': '{{ xxx }}', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'minimum': 0, 'maximum': 10 } },
         ], } }
         await self.initCase(cfg)
         t18 = self.gad.alerts['test']['t18']
+        t19 = self.gad.alerts['test']['t19']
+        t20 = self.gad.alerts['test']['t20']
         nn = self.hass.servHandlers['notify.persistent_notification']
-
-        hrm, what is value during startup?
         self.assertEqual(t18.state, 'off')
-        doConditionUpdate(t18, True)  # condition true by itself not enough
-        self.assertEqual(t18.state, 'off')
+        self.assertEqual(t19.state, 'off')
+        self.assertEqual(t20.state, 'off')
 
+        doConditionUpdate(t18, True)  # cond updating causes value to be evaluated, which returns zzz:
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 0)
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'Threshold.*zzz.*rather than a float')
+        self.assertEqual(t18.state, 'off')
 
+        doConditionUpdate(t18, True)  # cond updating causes value to be evaluated, which returns zzz:
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'Threshold.*zzz.*rather than a float')
+        self.assertEqual(t18.state, 'off')
+
+        # condition updates can never fail - i.e., helpers.result_as_boolean never fails
         setValue(t18, '3')
+        doConditionUpdate(t18, True)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertEqual(t18.state, 'off')
+
+        # Now try value update with false condition
+        setCondition(t18, False)
+        doValueUpdate(t18, 'zz2')
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Threshold.*zz2.*rather than a float')
+        self.assertEqual(t18.state, 'off')
         
+        # Now try false, false in various combinations
+        #
+        setCondition(t18, False)
+        doValueUpdate(t18, '1')
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(t18.state, 'off')
+        #
+        setValue(t18, '3')
+        doConditionUpdate(t18, False)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(t18.state, 'off')
+        #
+        doCondValueUpdate(t18, False, '3')
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(t18.state, 'off')
+
+        # Now try cond true, val false
+        #
+        setCondition(t18, True)
+        doValueUpdate(t18, '1')
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(t18.state, 'off')
+        #
+        setValue(t18, '3')
+        doConditionUpdate(t18, True)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(t18.state, 'off')
+        #
+        doCondValueUpdate(t18, True, '3')
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(t18.state, 'off')
+
+        # Now try false, True in various combinations
+        #
+        setCondition(t18, False)
+        doValueUpdate(t18, '-1')
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(t18.state, 'off')
+        #
+        setValue(t18, '-1')
+        doConditionUpdate(t18, False)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(t18.state, 'off')
+        #
+        doCondValueUpdate(t18, False, '-1')
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(t18.state, 'off')
+
+        # Now try with both true
+        setCondition(t18, True)
+        doValueUpdate(t18, '-1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'test_t18: turned on')
+        self.assertEqual(t18.state, 'on')
+        doConditionUpdate(t18, False)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 5)
+        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'test_t18: turned off')
+        self.assertEqual(t18.state, 'off')
+        #
+        setValue(t18, '-1')
+        doConditionUpdate(t18, True)
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 6)
+        self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'test_t18: turned on')
+        self.assertEqual(t18.state, 'on')
+        doConditionUpdate(t18, False)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 7)
+        self.assertRegex(nn.await_args_list[6].args[0].data['message'], 'test_t18: turned off')
+        self.assertEqual(t18.state, 'off')
+        #
+        doCondValueUpdate(t18, True, '-1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 8)
+        self.assertRegex(nn.await_args_list[7].args[0].data['message'], 'test_t18: turned on')
+        self.assertEqual(t18.state, 'on')
+        doConditionUpdate(t18, False)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 9)
+        self.assertRegex(nn.await_args_list[8].args[0].data['message'], 'test_t18: turned off')
+        self.assertEqual(t18.state, 'off')
+        
+        # Now check hysteresis
+        doCondValueUpdate(t18, True, '-1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 10)
+        self.assertRegex(nn.await_args_list[9].args[0].data['message'], 'test_t18: turned on')
+        self.assertEqual(t18.state, 'on')
+        setCondition(t18, True)
+        # going positive but still less than 3
+        doValueUpdate(t18, '1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 10)
+        self.assertEqual(t18.state, 'on')
+        # 3 counts from 0, not -1
+        doValueUpdate(t18, '2.5')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 10)
+        self.assertEqual(t18.state, 'on')
+        # now turns off
+        doValueUpdate(t18, '3')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 11)
+        self.assertRegex(nn.await_args_list[10].args[0].data['message'], 'test_t18: turned off')
+        self.assertEqual(t18.state, 'off')
+
+        # Check turning off due to condition going false
+        setValue(t18, '-2')
+        doCondValueUpdate(t18, True, '-1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 12)
+        self.assertRegex(nn.await_args_list[11].args[0].data['message'], 'test_t18: turned on')
+        self.assertEqual(t18.state, 'on')
+        doConditionUpdate(t18, False)
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 13)
+        self.assertRegex(nn.await_args_list[12].args[0].data['message'], 'test_t18: turned off')
+        self.assertEqual(t18.state, 'off')
+        
+        # Check max hysteresis
+        doCondValueUpdate(t19, True, '9')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 13)
+        self.assertEqual(t19.state, 'off')
+        doCondValueUpdate(t19, True, '10')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 13)
+        self.assertEqual(t19.state, 'off')
+        # turn on
+        doCondValueUpdate(t19, True, '11')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 14)
+        self.assertRegex(nn.await_args_list[13].args[0].data['message'], 'test_t19: turned on')
+        self.assertEqual(t19.state, 'on')
+        doValueUpdate(t19, '10')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 14)
+        self.assertEqual(t19.state, 'on')
+        doValueUpdate(t19, '8')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 14)
+        self.assertEqual(t19.state, 'on')
+        doValueUpdate(t19, '7')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 15)
+        self.assertRegex(nn.await_args_list[14].args[0].data['message'], 'test_t19: turned off')
+        self.assertEqual(t19.state, 'off')
+        
+        # Check min,max hysteresis
+        doCondValueUpdate(t20, True, '10')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 15)
+        self.assertEqual(t20.state, 'off')
+        doValueUpdate(t20, '11')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 16)
+        self.assertRegex(nn.await_args_list[15].args[0].data['message'], 'test_t20: turned on')
+        self.assertEqual(t20.state, 'on')
+        doValueUpdate(t20, '8')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 16)
+        self.assertEqual(t20.state, 'on')
+        doValueUpdate(t20, '7')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 17)
+        self.assertRegex(nn.await_args_list[16].args[0].data['message'], 'test_t20: turned off')
+        self.assertEqual(t20.state, 'off')
+        doValueUpdate(t20, '0')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 17)
+        self.assertEqual(t20.state, 'off')
+        doValueUpdate(t20, '-1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 18)
+        self.assertRegex(nn.await_args_list[17].args[0].data['message'], 'test_t20: turned on')
+        self.assertEqual(t20.state, 'on')
+        doValueUpdate(t20, '2')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 18)
+        self.assertEqual(t20.state, 'on')
+        doValueUpdate(t20, '3')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 19)
+        self.assertRegex(nn.await_args_list[18].args[0].data['message'], 'test_t20: turned off')
+        self.assertEqual(t20.state, 'off')
+
+        # Check if turn off by going into hysteresis region of opposite side
+        doValueUpdate(t20, '-1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 20)
+        self.assertRegex(nn.await_args_list[19].args[0].data['message'], 'test_t20: turned on')
+        self.assertEqual(t20.state, 'on')
+        doValueUpdate(t20, '9')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 21)
+        self.assertRegex(nn.await_args_list[20].args[0].data['message'], 'test_t20: turned off')
+        self.assertEqual(t20.state, 'off')
+        # and in other direction
+        doValueUpdate(t20, '11')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 22)
+        self.assertRegex(nn.await_args_list[21].args[0].data['message'], 'test_t20: turned on')
+        self.assertEqual(t20.state, 'on')
+        doValueUpdate(t20, '1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 23)
+        self.assertRegex(nn.await_args_list[23].args[0].data['message'], 'test_t20: turned off')
+        self.assertEqual(t20.state, 'off')
+
+        # And test if jump from pole to pole
+        doValueUpdate(t20, '-1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 24)
+        self.assertRegex(nn.await_args_list[23].args[0].data['message'], 'test_t20: turned on')
+        self.assertEqual(t20.state, 'on')
+        doValueUpdate(t20, '11')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 24)
+        self.assertEqual(t20.state, 'on')
+        doValueUpdate(t20, '9')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 24)
+        self.assertEqual(t20.state, 'on')
+        doValueUpdate(t20, '-1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 24)
+        self.assertEqual(t20.state, 'on')
+        doValueUpdate(t20, '5')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 25)
+        self.assertRegex(nn.await_args_list[24].args[0].data['message'], 'test_t20: turned off')
+        self.assertEqual(t20.state, 'off')
+
+        and test threshold tracking even if condition is false for part of it
+
         
 if __name__ == '__main__':
     unittest.main()
