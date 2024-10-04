@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, Mock
 import sys
 import asyncio
 import datetime as dt
+import voluptuous as vol
 import logging
 _LOGGER = logging.getLogger(None) # get root logger
 _LOGGER.setLevel(logging.DEBUG)
@@ -52,12 +53,28 @@ def fake_template(value):
     if not isinstance(value, str):
         raise vol.Invalid(f'{value} is not a string for template')
     return FakeTemplate(value)
-    
+
+# Copied from homeassistant/helpers/config_validation.py
+def vboolean(value):
+    """Validate and coerce a boolean value."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        value = value.lower().strip()
+        if value in ("1", "true", "yes", "on", "enable"):
+            return True
+        if value in ("0", "false", "no", "off", "disable"):
+            return False
+    elif isinstance(value, Number):
+        # type ignore: https://github.com/python/mypy/issues/3186
+        return value != 0  # type: ignore[comparison-overlap]
+    raise vol.Invalid(f"invalid boolean value {value}")
+
 class FakeHA:
     class helpers:
         class config_validation:
             string = str
-            boolean = bool
+            boolean = vboolean
             ensure_list = lambda value: value if isinstance(value, list) else [value]
             make_entity_service_schema = lambda f: f
             template = fake_template
@@ -1048,8 +1065,37 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), 2)
         self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'friendly-t29')
 
+        # and let's try reporting.  Reporting bypasses any conditions
+        setCondition(t28, False)
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t28'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Alert2 test_t28')
+
+        # and report a non-existent alert
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t28-no'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 5)
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'Alert2 test_t28-no')
+        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'Alert2 alert2_error: undeclared event')
 
         
+
+    async def test_condition(self):
+        #fuck2 # test if cond is 3 (ie not a string), adjustCond() probably dies
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': 't30', 'condition': 3 },
+            { 'domain': 'test', 'name': 't31', 'condition': 'foo.bar' },
+        ], } }
+        await self.initCase(cfg)
+        await self.waitForAllBut(self.oldTasks)
+        assert 't30' not in self.gad.alerts['test']
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], '3 is not a string')
+
+        t31 = self.gad.alerts['test']['t31']
+        self.assertRegex(t31._condition_template.rawStr, '{{ states')
         
 if __name__ == '__main__':
     unittest.main()
