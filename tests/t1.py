@@ -1,4 +1,6 @@
 #!/usr/bin/python3
+#
+# run from repository root directory
 import unittest
 import re
 from unittest.mock import AsyncMock, Mock
@@ -10,7 +12,8 @@ import logging
 _LOGGER = logging.getLogger(None) # get root logger
 _LOGGER.setLevel(logging.DEBUG)
 from types import SimpleNamespace
-sys.path.append('/home/redstone/home-monitoring/homeassistant')
+#sys.path.append('/home/redstone/home-monitoring/homeassistant')
+sys.path.append('..')
 class FakeConst:
     EVENT_HOMEASSISTANT_STOP = 3
     EVENT_HOMEASSISTANT_STARTED = 4
@@ -50,9 +53,9 @@ def fake_template(value):
             return self.rawStr
         def set_value(self, new):
             self.rawStr = new
-    if not isinstance(value, str):
+    if value is None or isinstance(value, (list, dict, FakeTemplate)):
         raise vol.Invalid(f'{value} is not a string for template')
-    return FakeTemplate(value)
+    return FakeTemplate(str(value))
 
 # Copied from homeassistant/helpers/config_validation.py
 def vboolean(value):
@@ -87,6 +90,7 @@ class FakeHA:
                     pass
                 async def async_add_entities(self, ents):
                     for ent in ents: # usualy done by Entity::_async_process_registry_update_or_remove
+                        assert ent is not None
                         ent.entity_id = f'alert2.{ent.name}'
                         await ent.async_added_to_hass()
                     pass
@@ -155,6 +159,11 @@ class FakeHass:
     async def service_async_call(self, dom, nm, args):
         call = SimpleNamespace(data = args)
         await self.servHandlers[f'{dom}.{nm}'](call)
+    def async_create_task(self, afut, eager_start=False ):
+        return asyncio.get_running_loop().create_task(afut)
+    def async_create_background_task(self, afut, name, eager_start=False ):
+        return asyncio.get_running_loop().create_task(afut)
+        
 sys.modules['homeassistant'] = FakeHA
 sys.modules['homeassistant.helpers.config_validation'] = FakeHA.helpers.config_validation
 sys.modules['homeassistant.helpers.entity_component'] = FakeHA.helpers.entity_component
@@ -1078,24 +1087,43 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), 5)
         self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'Alert2 test_t28-no')
         self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'Alert2 alert2_error: undeclared event')
-
         
 
     async def test_condition(self):
-        #fuck2 # test if cond is 3 (ie not a string), adjustCond() probably dies
-        cfg = { 'alert2' : { 'alerts' : [
-            { 'domain': 'test', 'name': 't30', 'condition': 3 },
-            { 'domain': 'test', 'name': 't31', 'condition': 'foo.bar' },
+        # test pssing entity name instead of template for condition or threshold value
+        cfg = { 'alert2' : { 'tracked': [
+            { 'domain': 'test', 'name': 't30', 'friendly_name': 'happyt30' },
+            { 'domain': 'test', 'name': 't30' }, # duplicate
+        ], 'alerts' : [
+            { 'domain': 'test', 'name': 't31', 'condition': 3 },
+            { 'domain': 'test', 'name': 't31', 'condition': 3.1 }, # duplicate declaration
+            { 'domain': 'test', 'name': 't32', 'condition': 3.2, 'trigger': 'fff' }, 
+            { 'domain': 'test', 'name': 't32', 'condition': 3.3, 'trigger': 'fff2' },  # duplicate
+            { 'domain': 'test', 'name': 't33', 'condition': 'foo.bar' },
+            { 'domain': 'test', 'name': 't34', 'condition': '{{ ick }}' },
+            { 'domain': 'test', 'name': 't35', 'threshold': 4 },
+            { 'domain': 'test', 'name': 't36', 'threshold': { 'value': 5, 'hysteresis': 6, 'minimum':7 } },
+            { 'domain': 'test', 'name': 't37', 'threshold': { 'value': 'foo.bar2', 'hysteresis': 8, 'minimum':9 } },
+            { 'domain': 'test', 'name': 't38', 'threshold': { 'value': '{{ ick2 }}', 'hysteresis': 10, 'minimum':11 } },
         ], } }
         await self.initCase(cfg)
         await self.waitForAllBut(self.oldTasks)
-        assert 't30' not in self.gad.alerts['test']
         nn = self.hass.servHandlers['notify.persistent_notification']
-        self.assertEqual(len(nn.await_args_list), 1)
-        self.assertRegex(nn.await_args_list[0].args[0].data['message'], '3 is not a string')
+        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'Duplicate.*t30')
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'Duplicate.*t31')
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Duplicate.*t32')
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'expected dictionary.*t35')
 
-        t31 = self.gad.alerts['test']['t31']
-        self.assertRegex(t31._condition_template.rawStr, '{{ states')
+        self.assertEqual(self.gad.tracked['test']['t30']._friendly_name, 'happyt30')
+        self.assertEqual(self.gad.alerts['test']['t31']._condition_template.rawStr, '3')
+        self.assertEqual(self.gad.tracked['test']['t32']._condition_template.rawStr, '3.2')
+        self.assertEqual(self.gad.alerts['test']['t33']._condition_template.rawStr, '{{ states("foo.bar") }}')
+        self.assertEqual(self.gad.alerts['test']['t34']._condition_template.rawStr, '{{ ick }}')
+        self.assertNotIn('35', self.gad.alerts['test'])
+        self.assertEqual(self.gad.alerts['test']['t36']._threshold_value_template.rawStr, '5')
+        self.assertEqual(self.gad.alerts['test']['t37']._threshold_value_template.rawStr, '{{ states("foo.bar2") }}')
+        self.assertEqual(self.gad.alerts['test']['t38']._threshold_value_template.rawStr, '{{ ick2 }}')
         
 if __name__ == '__main__':
     unittest.main()

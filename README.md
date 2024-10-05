@@ -109,7 +109,7 @@ Configuration details and examples are in the [Configuration section]((#configur
 
 ### Condition alerts
 
-Condition alerts can specify a `condition` template. The alert is firing when the condition evaluates to true.
+Condition alerts can specify a `condition` as a template or entity name. The alert is firing when the condition evaluates to true.
 
 An alert can also specify a `threshold` dict that includes min/max limits and optional hysteresis.  If a threshold is specified, the alert is firing if the threshold is exceeded AND any `condition` specified is true.
 
@@ -118,7 +118,7 @@ Hysteresis is also available via the `delay_on_secs` parameter. If specified, th
 ### Event alerts
 
 Event alerts may be triggered either by an explicit `trigger` option in the config, or by a service call to `alert2.report`.
-An event alert can also specify a `condition` template. The alert fires if it is triggered AND the condition evaluates to true.
+An event alert can also specify a `condition` as a template or entity name. The alert fires if it is triggered AND the condition evaluates to true.
 
 ### Common alert features
 
@@ -221,10 +221,10 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 |`domain` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `domain` is typically the object causing the alert (e.g., garage door). |
 | `name` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `name` is typically the particular fault occurring (e.g., open_too_long)  |
 | `friendly_name` | string | optional | Name to display instead of the entity name. Surfaces in the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) overview card |
-| `condition` | template | optional | Template string. Alert is firing if the template evaluates to truthy AND any other alert options specified below are also true.  |
+| `condition` | string | optional | Template string or entity name. Alert is firing if the template or entity state evaluates to truthy AND any other alert options specified below are also true.  |
 | `trigger` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Indicates an event-based alert. Alert fires when the trigger does, if also any `condition` specified is truthy. |
 | `threshold:` | dict | optional | Subsection specifying a threshold criteria with hysteresis. Alert is firing if the threshold value exceeds bounds AND any `condition` specified is truthy. Not available for event-based alerts. |
-| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`value` | template | required | A template evaluating to a float to be compared to threshold limits. |
+| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`value` | string | required | A template or entity name that evaluates to a float to be compared to threshold limits. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`hysteresis` | float | required | Compare `value` to limits using hysteresis. threshold is considered exceeded if value exceeds min/max, but does not reset until value increases past min+hysteresis or decreases past max-hysteresis. (see description below) |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`maximum` | float | optional | Maximum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`minimum` | float | optional | Minimum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
@@ -254,11 +254,13 @@ An event-based alert specifies a `trigger`, and fires when the trigger fires, as
            - platform: state
              entity_id: sensor.boiler_failed_ignition_count
           condition: "{{ (trigger.from_state is not none) and (trigger.to_state is not none) and (trigger.from_state.state|int(-1) > 0) and (trigger.to_state.state|int(-1) > 0) and (trigger.to_state.state|int > trigger.from_state.state|int) }}"
+          #   can be an entity name, e.g.:
+          # condition: binary_sensor.boiler_enabled
           message: "{{ trigger.from_state.state }} -> {{ trigger.to_state.state }}"
 
 #### Condition-based alert
 
-There are a few different forms of condition-based alerts.  The simplest is an alert that just specifies a `condition`. It is firing when the condition is true. Example of an alert to detect when the temperature is too low:
+There are a few different forms of condition-based alerts.  The simplest is an alert that just specifies a `condition`. It is firing when the condition is true. The condition can be either a template or an entity name. Example of an alert to detect when the temperature is too low:
 
     alert2:
       alerts:
@@ -266,6 +268,11 @@ There are a few different forms of condition-based alerts.  The simplest is an a
           name: temperature_low
           condition: "{{ states('sensor.nest_therm_fl2_temperature')|float <= 50 }}"
           message: "Temp: {{ states('sensor.nest_therm_fl2_temperature') }}"
+          
+        - domain: thermostat_fl1
+          name: temperature_low
+          condition: binary_sensor.nest_therm_fl1_temperature_too_low
+          message: ...
 
 Notifications include by default context information, so the resulting text might be:
 
@@ -278,7 +285,9 @@ An alert can alternatively specify a threshold with hysteresis.  So the previous
         - domain: thermostat_fl2
           name: temperature_low
           threshold:
-            value: "{{ states('sensor.nest_therm_fl2_temperature') }}"
+            value: sensor.nest_therm_fl2_temperature
+            #  can be a template. e.g.
+            # value: "{{ states('sensor.nest_therm_fl2_temperature') }}"
             minimum: 50
             hysteresis: 5
           message: "Temp: {{ states('sensor.nest_therm_fl2_temperature') }}"
@@ -415,7 +424,7 @@ If you're developing python components, Alert2 is handy for alerting on unexpect
         if unexpected_thing_happens:
             alert2.report(DOMAIN, 'some err 1', 'optional message string')
 
-The alert2 module also offers a `create_task()` method to create tasks. It's similar to `hass.async_create_task` except it also `report()`s uncaught exceptions - so your task doesn't die silently.  Example usage:
+The alert2 module also offers a `create_task()` and `create_background_task()` method to create tasks. It's similar to `hass.async_create_task` except it also `report()`s uncaught exceptions - so your task doesn't die silently.  Example usage:
 
 ```
 async def testTask():

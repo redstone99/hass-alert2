@@ -89,8 +89,15 @@ async def declareEventMulti(arr):
 # returns a task object.
 #
 def create_task(hass, domain, afut):
+    atask = hass.async_create_task( afut, eager_start=False )
+    return create_task_int(domain, atask)
+
+def create_background_task(hass, domain, afut):
+    atask = hass.async_create_background_task( afut, None, eager_start=False )
+    return create_task_int(domain, atask)
+
+def create_task_int(domain, atask):
     global global_tasks
-    atask = hass.loop.create_task( afut )
     cb = lambda ttask: taskDone(domain, ttask)
     atask.add_done_callback(cb)
     _LOGGER.debug(f'create_task called for domain {domain}, {atask}')
@@ -101,7 +108,6 @@ def create_task(hass, domain, afut):
 # cancel_task - cancel a task created with create_task().  atask is the task returned by create_task()
 #
 def cancel_task(domain, atask):
-    global global_tasks
     _LOGGER.debug(f'Calling cancel_task for {domain} and {atask}')
     # Cancelling a task means its done handler is called, so no need to remove task from global_tasks
     atask.cancel()
@@ -508,7 +514,7 @@ class AlertBase(RestoreEntity):
         if self.future_notification_info is not None:
             report(DOMAIN, 'error', f'{gAssertMsg} schedule_reminder, ignoring since an outstanding reminder already exists: {self.future_notification_info} for {self.name}')
             return
-        atask = create_task(self.hass, DOMAIN, foo())
+        atask = create_background_task(self.hass, DOMAIN, foo())
         self.future_notification_info = { 'task': atask }
         
     # Assuming we want to notify
@@ -694,7 +700,12 @@ class EventAlert(AlertBase):
             def log_cb(level: int, msg: str, **kwargs: Any) -> None:
                 _LOGGER.log(level, "%s %s", msg, self.name, **kwargs)
             # TODO - support triggering on HA start, like components/automation/__init__.py:async_enable does
+            #
+            # I think home_assistant_start is something about the event when HA starts. I think it's just
+            # used by triggers on the homeassistant itself, like when it starts up or shuts down.  I'm a bit fuzzy on this,
+            # but it seems not applicable to our use case.
             home_assistant_start = False # TODO - supp
+            # A chunk of this is based on homeassistant/components/automation/__init__.py::_async_attach_triggers
             this = None
             self.async_write_ha_state()
             if state := self.hass.states.get(self.entity_id):
@@ -711,6 +722,14 @@ class EventAlert(AlertBase):
                 variables,
             )
 
+    # I think skip_condition is from triggers in automations, where, when you forcibly invoke the automation via the
+    # front-end, you may want to bypass any condition logic that gates the automation.
+    # In our context, we never want to skip the condition, so we ignore it.
+    # see also homeassistant/components/automation/__init__.py
+    #
+    # EventAlert is used both for event alerts with a condition&trigger, as well as
+    # declared alerts that only fire in response to a report()
+    # async_trigger is only called by EventAlerts triggering
     async def async_trigger(
         self,
         run_variables: dict[str, Any],
@@ -867,7 +886,7 @@ class ConditionAlertBase(AlertBase):
                 if self.cond_true_time == None:
                     _LOGGER.debug(f'{self.name}, starting delay of {self.delay_on_secs} until turning on')
                     self.cond_true_time = dt.now()
-                    self.cond_true_task = create_task(self.hass, DOMAIN, dodelay())
+                    self.cond_true_task = create_background_task(self.hass, DOMAIN, dodelay())
                 else:
                     report(DOMAIN, 'error', f'{gAssertMsg} {self.name} turning on but already have delayed wait set')
                 return True
@@ -1004,7 +1023,13 @@ class ConditionAlertBase(AlertBase):
         #        return self.reminder_frequency_mins[reminderIdx]
         #return self.reminder_frequency_mins[-1]
 
-    
+
+
+class ThresholdExeeded(Enum):
+    Init = 1
+    Max = 2
+    Min = 3
+
 # From BinarySensorTemplate
 class ConditionAlert(ConditionAlertBase):
     def __init__(
@@ -1021,6 +1046,7 @@ class ConditionAlert(ConditionAlertBase):
             self.threshold_max = config['threshold']['maximum'] if 'maximum' in config['threshold'] else None
             self.threshold_min = config['threshold']['minimum'] if 'minimum' in config['threshold'] else None
             self.threshold_hysteresis = config['threshold']['hysteresis'] if 'hysteresis' in config['threshold'] else None
+            self.threshold_exceeded = ThresholdExeeded.Init # to record if we crossed min or max
         self.earlyStart = config['early_start'] if 'early_start' in config else False
         self.templateTrackerInfo = None
         self._self_ref_update_count = 0  # To detect template self-referencing loops
@@ -1131,32 +1157,42 @@ class ConditionAlert(ConditionAlertBase):
         # Figure out new state
         #
         self._attr_available = True
-        if condition_bool in [ None, True ]:
-            if thresh_val is None:
-                if condition_bool is not True:
-                    # Config valudation should prevent this
-                    report(DOMAIN, 'error', f'{gAssertMsg} template for {self.name} appears to have neither condition nor threshold test specified')
-                newState = True
+        if thresh_val is None:
+            if condition_bool is None:
+                # Config valudation should prevent this
+                report(DOMAIN, 'error', f'{gAssertMsg} template for {self.name} appears to have neither condition nor threshold test specified')
+                newState = False
             else:
-                aboveMax = self.threshold_max is not None and thresh_val > self.threshold_max
-                belowMin = self.threshold_min is not None and thresh_val < self.threshold_min
-                if aboveMax or belowMin:
-                    newState = True
-                else:
-                    if self.threshold_hysteresis is None:
-                        newState = False
-                    else:
-                        if self.state == 'on':
-                            # >=, <= so that if hysteresis is 0, it behaves as if hysteresis wasn't specified
-                            aboveMaxHyst = self.threshold_max is not None and thresh_val > (self.threshold_max - self.threshold_hysteresis)
-                            belowMinHyst = self.threshold_min is not None and thresh_val < (self.threshold_min + self.threshold_hysteresis)
-                            newState = aboveMaxHyst or belowMinHyst
-                        else:
-                            newState = False
+                newState = condition_bool
         else:
-            if condition_bool is not False:
+            # Update threshold_exceeded
+            aboveMax = self.threshold_max is not None and thresh_val > self.threshold_max
+            belowMin = self.threshold_min is not None and thresh_val < self.threshold_min
+            if aboveMax:
+                self.threshold_exceeded = ThresholdExeeded.Max
+            elif belowMin:
+                self.threshold_exceeded = ThresholdExeeded.Min
+            elif self.state == 'on':
+                # >=, <= so that if hysteresis is 0, it behaves as if hysteresis wasn't specified
+                aboveMaxHyst = self.threshold_max is not None and \
+                    self.threshold_exceeded == ThresholdExeeded.Max and \
+                    thresh_val > (self.threshold_max - self.threshold_hysteresis)
+                belowMinHyst = self.threshold_min is not None and \
+                    self.threshold_exceeded == ThresholdExeeded.Min and \
+                    thresh_val < (self.threshold_min + self.threshold_hysteresis)
+                if aboveMaxHyst or belowMinHyst:
+                    pass # threshold_exceeded is unchanged
+                else:
+                    self.threshold_exceeded = ThresholdExeeded.Init
+                    
+            # Now update newState
+            if condition_bool is False:
+                newState = False
+            elif condition_bool is None or condition_bool is True:
+                newState = self.threshold_exceeded in [ ThresholdExeeded.Max, ThresholdExeeded.Min ]
+            else:
                 report(DOMAIN, 'error', f'{gAssertMsg} template for {self.name}: condition_bool is neither None or bool. Is {condition_bool} {type(condition_bool)}')
-            newState = False
+                newState = False
         return self.update_state_internal(newState)
 
 class ConditionAlertManual(ConditionAlertBase):
@@ -1222,7 +1258,7 @@ async def async_setup(hass, config: ConfigType):
 
     # Note, sensor/binary_sensor init may happen later, so init2() may create templates before sensor entities exist for early_start ones.
     await data.init2()
-    create_task(hass, DOMAIN, data.slowStartup())
+    create_background_task(hass, DOMAIN, data.slowStartup())
     return True
 
 # NOTE - this must be a single-level Schema.  If nest anything, then fix up copy.copy() shallow copy logic down in
@@ -1337,25 +1373,54 @@ class Alert2Data:
         # We already tried processing the defaults section once. Report errors encountered.
         if self.defaultsError is not None:
             report(DOMAIN, 'error', f'defaults section of config: {self.defaultsError}')
+
+        def adjustTemplateField(obj, name):
+            # the alert may not have a condition if either it is a condition alert, or
+            # it is a tracked alert specified without a trigger
+            if not isinstance(obj, dict) or name not in obj:
+                return
+            cond = obj[name]
+            # we haven't done a voluptuous validation yet, so don't know what type cond is
+            if not isinstance(cond, str) or '{{' in cond or '{%' in cond:
+                return
+            try:
+                x = cv.boolean(cond)
+            except vol.Invalid:
+                # it's not a template and not a truthy, so assume it's an entity
+                if '\'' in cond or '"' in cond:
+                    report(DOMAIN, 'error', f'config has condition that is neither a template nor an entity: {obj}')
+                    return
+                # TODO - Not sure if strip() is necessary. Can yaml return extra whitespace?
+                obj[name] = '{{ states("' + cond.strip() + '") }}'
             
         entities = []
         if 'tracked' in self._rawConfig and isinstance(self._rawConfig['tracked'], list):
             for obj in self._rawConfig['tracked']:
+                adjustTemplateField(obj, 'condition')
                 try:
-                    trackedCfg = SINGLE_TRACKED_SCHEMA(obj)
-                    entities.append(self.declareEventInt(obj))
+                    aCfg = SINGLE_TRACKED_SCHEMA(obj)
+                    newEnt = self.declareEventInt(aCfg)
+                    if newEnt is not None:
+                        entities.append(newEnt)
                 except vol.Invalid as v:
                     report(DOMAIN, 'error', f'tracked section of config: {v}. Relevant section: {obj}')
 
         if 'alerts' in self._rawConfig and isinstance(self._rawConfig['alerts'], list):
             for obj in self._rawConfig['alerts']:
+                adjustTemplateField(obj, 'condition')
+                if isinstance(obj, dict) and 'threshold' in obj:
+                    adjustTemplateField(obj['threshold'], 'value')
                 try:
                     if 'trigger' in obj:
                         aCfg = SINGLE_ALERT_SCHEMA_EVENT(obj)
-                        entities.append(self.declareEventInt(aCfg))
+                        newEnt = self.declareEventInt(aCfg)
+                        if newEnt is not None:
+                            entities.append(newEnt)
                     else:
                         aCfg = SINGLE_ALERT_SCHEMA_CONDITION(obj)
-                        entities.append(self.declareCondition(aCfg, False))
+                        newEnt = self.declareCondition(aCfg, False)
+                        if newEnt is not None:
+                            entities.append(newEnt)
                 except vol.Invalid as v:
                     report(DOMAIN, 'error', f'alerts section of config: {v}. Relevant section: {obj}')
                     
@@ -1422,7 +1487,7 @@ class Alert2Data:
             self.tracked[domain] = {}
         if name in self.tracked[domain]:
             report(DOMAIN, 'error', f'Duplicate declaration of event for domain={domain} name={name}')
-            return
+            return None
         entity = EventAlert(self._hass, self, config, self.defaults)
         self.tracked[domain][name] = entity
         self.notifiers.add(entity.notifier)
@@ -1435,7 +1500,7 @@ class Alert2Data:
             self.alerts[domain] = {}
         if name in self.alerts[domain]:
             report(DOMAIN, 'error', f'Duplicate declaration of condition for domain={domain} name={name}')
-            return
+            return None
         if isManual:
             entity = ConditionAlertManual(self._hass, self, config, self.defaults)
         else:
@@ -1498,8 +1563,8 @@ class Alert2Data:
                 return
         
         if not domain in self.tracked or not name in self.tracked[domain]:
-            errmsg = f'{tmsg} for {domain} and {name}'
-            report(DOMAIN, 'error', f'undeclared event {errmsg}')
+            errmsg = f'{tmsg} for domain={domain} name={name}'
+            report(DOMAIN, 'error', f'undeclared event {errmsg}. Creating event alert')
             alertObj = self.declareEvent(domain, name)
             await self.component.async_add_entities([alertObj])
         else:
