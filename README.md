@@ -372,7 +372,7 @@ Without [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) you can still 
 
 Alert2 defines a few new service calls.
 
-`alert2.report` notifies the system that an event-based alert has fired. It takes two parameters, the "domain" and "name" of the alert that fired.  You can also pass an optional `message` argument specifying a template for a message to include with the firing notification. That domain/name should be declared in the `tracked` section of your config (described above).
+`alert2.report` notifies the system that an event-based alert has fired. It takes two parameters, the "domain" and "name" of the alert that fired.  You can also pass an optional `message` argument specifying a template for a message to include with the firing notification. That domain/name should be declared in either the `tracked` or `alerts` section of your config (described above).  `alert2.report` overrides any `condition` and `trigger` specified in the event alert declaration.
 
 An example of using alert2.report in the action section of an automation:
 
