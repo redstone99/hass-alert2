@@ -429,7 +429,7 @@ The alert2 module also offers a `create_task()` and `create_background_task()` m
 ```
 async def testTask():
     pass
-taskHandle = alert2.createTask(hass, 'mydomain', testTask())
+taskHandle = alert2.create_task(hass, 'mydomain', testTask())
 #
 # Later on, cancel task if you want
 taskHandle.cancel()
