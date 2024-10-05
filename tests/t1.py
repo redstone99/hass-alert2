@@ -12,8 +12,7 @@ import logging
 _LOGGER = logging.getLogger(None) # get root logger
 _LOGGER.setLevel(logging.DEBUG)
 from types import SimpleNamespace
-#sys.path.append('/home/redstone/home-monitoring/homeassistant')
-sys.path.append('..')
+
 class FakeConst:
     EVENT_HOMEASSISTANT_STOP = 3
     EVENT_HOMEASSISTANT_STARTED = 4
@@ -172,9 +171,16 @@ sys.modules['homeassistant.helpers.restore_state'] = FakeHA.helpers.restore_stat
 sys.modules['homeassistant.helpers.trigger'] = FakeHA.helpers.trigger
 sys.modules['homeassistant.helpers.typing'] = FakeHA.helpers.typing
 sys.modules['homeassistant.util.dt'] = FakeHA.util.dt
+
+import inspect
+import os.path
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+sys.path.insert(0, parentdir) 
 import custom_components.alert2 as alert2
 alert2.kNotifierInitGraceSecs = 3
 alert2.kStartupWaitPollSecs   = 1
+
 
 def doConditionUpdate(aler, rez):
     #assert isinstance(rez, bool)
