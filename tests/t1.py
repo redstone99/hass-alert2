@@ -14,6 +14,7 @@ _LOGGER.setLevel(logging.DEBUG)
 from types import SimpleNamespace
 
 class FakeConst:
+    __short_version__ = '2024.10'
     EVENT_HOMEASSISTANT_STOP = 3
     EVENT_HOMEASSISTANT_STARTED = 4
 sys.modules['homeassistant.const'] = FakeConst
@@ -73,6 +74,7 @@ def vboolean(value):
     raise vol.Invalid(f"invalid boolean value {value}")
 
 class FakeHA:
+    const = FakeConst
     class helpers:
         class config_validation:
             string = str
@@ -180,7 +182,6 @@ sys.path.insert(0, parentdir)
 import custom_components.alert2 as alert2
 alert2.kNotifierInitGraceSecs = 3
 alert2.kStartupWaitPollSecs   = 1
-
 
 def doConditionUpdate(aler, rez):
     #assert isinstance(rez, bool)
@@ -512,7 +513,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             { 'domain': 'test', 'name': 't14', 'condition': '{{ true }}', 'message': 'ick-t14', 'annotate_messages': False, 'done_message': 'ick-t14 done' },
             { 'domain': 'test', 'name': 't15', 'condition': '{{ true }}', 'friendly_name': 'friend_t15' },
             { 'domain': 'test', 'name': 't16', 'condition': '{{ true }}', 'message': 'ick-t16', 'annotate_messages': False, 'friendly_name': 'friend_t16' },
-        ], } }
+        ], 'tracked': [ { 'domain': 'test', 'name': 't16a' } ] } }
         await self.initCase(cfg)
         t10 = self.gad.alerts['test']['t10']
         t11 = self.gad.alerts['test']['t11']
@@ -521,13 +522,15 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         t14 = self.gad.alerts['test']['t14']
         t15 = self.gad.alerts['test']['t15']
         t16 = self.gad.alerts['test']['t16']
+        t16a = self.gad.tracked['test']['t16a']
         allt = [ t10, t11, t12, t13, t14, t15, t16 ]
+        alert2.haConst.__short_version__ = '2024.09'
         for at in allt:
             doConditionUpdate(at, True)
             await asyncio.sleep(0.05) # so reminders are ordered
         nn = self.hass.servHandlers['notify.persistent_notification']
         self.assertEqual(len(nn.await_args_list), 7)
-        self.assertRegex(nn.await_args_list[0].args[0].data['message'], '^{% raw %}Alert2 test_t10: turned on{% endraw %}$')
+        self.assertEqual(nn.await_args_list[0].args[0].data['message'], '{% raw %}Alert2 test_t10: turned on{% endraw %}')
         self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'Alert2 test_t11: ick-t11')
         self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Alert2 test_t12: ick-t12')
         self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'ick-t13')
@@ -559,6 +562,18 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[18].args[0].data['message'], 'ick-t14 done')
         self.assertRegex(nn.await_args_list[19].args[0].data['message'], 'friend_t15: turned off after')
         self.assertRegex(nn.await_args_list[20].args[0].data['message'], 'turned off after')
+
+        # As of 2024.10, HA no longer does template interpretation of message arg to notify
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t16a'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 22)
+        self.assertEqual(nn.await_args_list[21].args[0].data['message'], '{% raw %}Alert2 test_t16a{% endraw %}')
+        alert2.haConst.__short_version__ = '2024.10'
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t16a'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 23)
+        self.assertEqual(nn.await_args_list[22].args[0].data['message'], 'Alert2 test_t16a')
+
         
     async def test_delay_on(self):
         # Check that default notifier is used

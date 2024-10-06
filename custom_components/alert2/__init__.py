@@ -18,6 +18,7 @@ from   homeassistant.const import (
     EVENT_HOMEASSISTANT_STARTED
 )
 from   homeassistant.core import HomeAssistant, callback, Context, Event, EventStateChangedData
+import homeassistant.const as haConst
 from   homeassistant.exceptions import TemplateError
 from   homeassistant.helpers import template as template_helper, discovery
 import homeassistant.helpers.config_validation as cv
@@ -614,8 +615,11 @@ class AlertBase(RestoreEntity):
             if len(tmsg) > 600:
                 tmsg = tmsg[:600] + '...'
             _LOGGER.warning(f'Notifying {notifier}: {tmsg}')
-            # message field in components/notify/const.py:NOTIFY_SERVICE_SCHEMA is a template and will be rendered
-            args = {'message': jinja2Escape(tmsg) }
+            if haConst.__short_version__ >= '2024.10':
+                args = {'message': tmsg }
+            else:
+                # message field in components/notify/const.py:NOTIFY_SERVICE_SCHEMA is a template and will be rendered
+                args = {'message': jinja2Escape(tmsg) }
             if self._data is not None:
                 args['data'] = self._data
             if self._target is not None:
