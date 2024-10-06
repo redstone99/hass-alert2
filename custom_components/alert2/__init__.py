@@ -615,7 +615,7 @@ class AlertBase(RestoreEntity):
             if len(tmsg) > 600:
                 tmsg = tmsg[:600] + '...'
             _LOGGER.warning(f'Notifying {notifier}: {tmsg}')
-            if haConst.__short_version__ >= '2024.10':
+            if haConst.MAJOR_VERSION > 2024 or (haConst.MAJOR_VERSION == 2024 and haConst.MINOR_VERSION >= 10):
                 args = {'message': tmsg }
             else:
                 # message field in components/notify/const.py:NOTIFY_SERVICE_SCHEMA is a template and will be rendered

@@ -14,7 +14,8 @@ _LOGGER.setLevel(logging.DEBUG)
 from types import SimpleNamespace
 
 class FakeConst:
-    __short_version__ = '2024.10'
+    MAJOR_VERSION = 2024
+    MINOR_VERSION = 9
     EVENT_HOMEASSISTANT_STOP = 3
     EVENT_HOMEASSISTANT_STARTED = 4
 sys.modules['homeassistant.const'] = FakeConst
@@ -524,7 +525,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         t16 = self.gad.alerts['test']['t16']
         t16a = self.gad.tracked['test']['t16a']
         allt = [ t10, t11, t12, t13, t14, t15, t16 ]
-        alert2.haConst.__short_version__ = '2024.09'
+        alert2.haConst.MAJOR_VERSION = 2024
+        alert2.haConst.MINOR_VERSION = 9
         for at in allt:
             doConditionUpdate(at, True)
             await asyncio.sleep(0.05) # so reminders are ordered
@@ -564,15 +566,30 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[20].args[0].data['message'], 'turned off after')
 
         # As of 2024.10, HA no longer does template interpretation of message arg to notify
-        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t16a'})
+        alert2.haConst.MAJOR_VERSION = 2024
+        alert2.haConst.MINOR_VERSION = 9
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t16a', 'message': 'm1'})
         await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 22)
-        self.assertEqual(nn.await_args_list[21].args[0].data['message'], '{% raw %}Alert2 test_t16a{% endraw %}')
-        alert2.haConst.__short_version__ = '2024.10'
-        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t16a'})
+        self.assertEqual(nn.await_args_list[21].args[0].data['message'], '{% raw %}Alert2 test_t16a: m1{% endraw %}')
+        alert2.haConst.MAJOR_VERSION = 2023
+        alert2.haConst.MINOR_VERSION = 11
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t16a', 'message': 'm2'})
         await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 23)
-        self.assertEqual(nn.await_args_list[22].args[0].data['message'], 'Alert2 test_t16a')
+        self.assertEqual(nn.await_args_list[22].args[0].data['message'], '{% raw %}Alert2 test_t16a: m2{% endraw %}')
+        alert2.haConst.MAJOR_VERSION = 2024
+        alert2.haConst.MINOR_VERSION = 10
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t16a', 'message': 'm3'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 24)
+        self.assertEqual(nn.await_args_list[23].args[0].data['message'], 'Alert2 test_t16a: m3')
+        alert2.haConst.MAJOR_VERSION = 2025
+        alert2.haConst.MINOR_VERSION = 5
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t16a', 'message': 'm4'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 25)
+        self.assertEqual(nn.await_args_list[24].args[0].data['message'], 'Alert2 test_t16a: m4')
 
         
     async def test_delay_on(self):

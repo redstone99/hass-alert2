@@ -3,6 +3,6 @@
     "name": "Alert2",
     "documentation": "https://github.com/redstone99/hass-alert2",
     "codeowners": [],
-    "version": "1.3.7",
+    "version": "1.3.7.1",
     "dependencies": [ ]
 }
