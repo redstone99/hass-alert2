@@ -61,9 +61,11 @@ kStartupWaitPollSecs = 10  # time between checks for notifiers to load while wai
 #
 # report() - report that an event alert has fired
 # 
-def report(domain: str, name: str, message: str | None = None, isException: bool = False) -> None:
+def report(domain: str, name: str, message: str | None = None, isException: bool = False, escapeHtml: bool = True) -> None:
     data = { 'domain' : domain, 'name' : name }
     if message is not None:
+        if escapeHtml:
+            message = message.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
         data['message'] = message
     if isException:
         _LOGGER.exception(f'Err reported: {data}')
@@ -269,14 +271,15 @@ class AlertBase(RestoreEntity):
         self._attr_name = f'{self.alDomain}_{self.alName}'
 
         # config stuff
-        self.notifier = getField('notifier', config, defaults)
+        self.notifier = getField('notifier', config, defaults) # TODO - remove me once _notifier_template is working
+        self._notifier_template = None #getField('notifier', config, defaults)
         self.alertData = alertData
         self._condition_template = config['condition'] if 'condition' in config else None
         self._message_template = config['message'] if 'message' in config else None
         self._done_message_template = config['done_message'] if 'done_message' in config else None
         self._title_template = config['title'] if 'title' in config else None
+        self._target_template = config['target'] if 'target' in config else None
         self._data = config['data'] if 'data' in config else None
-        self._target = config['target'] if 'target' in config else None
         self._friendly_name = config['friendly_name'] if 'friendly_name' in config else None
         if self._message_template is not None:
             self._message_template.hass = hass
@@ -284,6 +287,10 @@ class AlertBase(RestoreEntity):
             self._done_message_template.hass = hass
         if self._title_template is not None:
             self._title_template.hass = hass
+        if self._target_template is not None:
+            self._target_template.hass = hass
+        if self._notifier_template is not None:
+            self._notifier_template.hass = hass
         self.annotate_messages = getField('annotate_messages', config, defaults)
         throttle_fires_per_mins = getField('throttle_fires_per_mins', config, defaults, requireDefault=False)
         self.movingSum = None
@@ -622,8 +629,12 @@ class AlertBase(RestoreEntity):
                 args = {'message': jinja2Escape(tmsg) }
             if self._data is not None:
                 args['data'] = self._data
-            if self._target is not None:
-                args['target'] = self._target
+            if self._target_template is not None:
+                try:
+                    args['target'] = self._target_template.async_render(parse_result=False)
+                except TemplateError as err:
+                    report(DOMAIN, 'error', f'{self.name} Target template: {err}')
+                    # Continue and notify anyways
             if self._title_template is not None:
                 try:
                     args['title'] = self._title_template.async_render(parse_result=False)
@@ -780,13 +791,18 @@ class EventAlert(AlertBase):
         now = dt.now()
         msg = message
         didNotify = self._notify(now, NotificationReason.Fire, message)
+        if didNotify:
+            self.reminder_check(now) # To schedule reminder - the only reminder I think that could be needed is if throttled, a notificaiton that throttling has turned off
         self.async_write_ha_state()
         self.alertData.noteChange()
     
     def notify_timer_cb(self, now):
-        if self.fires_since_last_notify <= 0:
-            report(DOMAIN, 'error', f'{gAssertMsg} notify_timer_cb, fires_since_last_notify is not positive, is {self.fires_since_last_notify} for {self.name}')
-        msg = f'Last msg: {self.last_fired_message}'
+        if self.fires_since_last_notify > 0:
+            msg = f'Last msg: {self.last_fired_message}'
+        else:
+            # could be that we were throttled, and throttling is expiring. that's why we're getting the notify reminder cb
+            msg = 'Did not fire during throttled interval'
+            #report(DOMAIN, 'error', f'{gAssertMsg} notify_timer_cb, fires_since_last_notify is not positive, is {self.fires_since_last_notify} for {self.name}')
         didNotify = self._notify(now, NotificationReason.Reminder, msg)
         if not didNotify:
             report(DOMAIN, 'error', f'{gAssertMsg} notify_timer_cb, didNotify was false for {self.name}')
@@ -1295,6 +1311,7 @@ class Alert2Data:
     async def init2(self):
         # First, initialize enough so that report() will work for internal errors
         #
+        self.skip_internal_errors = False
 
         # Try processing just the defaults part of the config, so they'll apply to the internal events we declare, below.
         # report() isn't available yet, so defer error reporting until later in init
@@ -1306,30 +1323,30 @@ class Alert2Data:
             except vol.Invalid as v:
                 # Error will be reported later in init.
                 self.defaultsError = v
-
-        self.skip_internal_errors = False
         if 'skip_internal_errors' in self._rawConfig:
             try:
                 self.skip_internal_errors = cv.boolean(self._rawConfig['skip_internal_errors'])
             except vol.Invalid as v:
                 # Will be handled when we validate the TOP_LEVEL_SCHEMA
-                pass
+                pass            
             
         if not self.skip_internal_errors:
-            entities = []
-            entities.append(self.declareEvent(DOMAIN, 'error'))
-            #entities.append(self.declareEvent(DOMAIN, 'undeclared_event'))
-            #entities.append(self.declareEvent(DOMAIN, 'unhandled_exception'))
-            # the notifier choice for notify_failed is special logic. The value for notifier specified here is ignored, but
-            # put persistent_notification here since it should always be available (once HA starts), in case
-            # the config specifies a default notifier that is not available
-            #entities.append(self.declareEvent(DOMAIN, 'notify_failed', 'persistent_notification'))
-            #entities.append(self.declareEvent(DOMAIN, 'template_error'))
-            #entities.append(self.declareEvent(DOMAIN, 'config_error'))
-            #entities.append(self.declareEvent(DOMAIN, 'malformed_call'))
-            #entities.append(self.declareEvent(DOMAIN, 'exception'))
-            #entities.append(self.declareEvent(DOMAIN, 'assert'))
-            await self.component.async_add_entities(entities)
+            errCfg = None
+            try:
+                if 'tracked' in self._rawConfig:
+                    for obj in self._rawConfig['tracked']:
+                        if obj['domain'] == DOMAIN and obj['name'] == 'error':
+                            errCfg = SINGLE_TRACKED_SCHEMA(obj)
+                            break
+            except (vol.Invalid, TypeError, KeyError):
+                pass
+            
+            if errCfg:
+                errorEnt = self.declareEventInt(errCfg)
+            else:
+                errorEnt = self.declareEvent(DOMAIN, 'error')
+
+            await self.component.async_add_entities([ errorEnt ])
 
         # Now that report() is available, continue init that might use it
         
@@ -1400,33 +1417,35 @@ class Alert2Data:
         entities = []
         if 'tracked' in self._rawConfig and isinstance(self._rawConfig['tracked'], list):
             for obj in self._rawConfig['tracked']:
-                adjustTemplateField(obj, 'condition')
+                newEnt = None
                 try:
                     aCfg = SINGLE_TRACKED_SCHEMA(obj)
-                    newEnt = self.declareEventInt(aCfg)
-                    if newEnt is not None:
-                        entities.append(newEnt)
+                    if aCfg['domain'] == DOMAIN and aCfg['name'] == 'error':
+                        pass # already handled above
+                    else:
+                        newEnt = self.declareEventInt(aCfg)
                 except vol.Invalid as v:
                     report(DOMAIN, 'error', f'tracked section of config: {v}. Relevant section: {obj}')
+                if newEnt is not None:
+                    entities.append(newEnt)
 
         if 'alerts' in self._rawConfig and isinstance(self._rawConfig['alerts'], list):
             for obj in self._rawConfig['alerts']:
                 adjustTemplateField(obj, 'condition')
                 if isinstance(obj, dict) and 'threshold' in obj:
                     adjustTemplateField(obj['threshold'], 'value')
+                newEnt = None
                 try:
                     if 'trigger' in obj:
                         aCfg = SINGLE_ALERT_SCHEMA_EVENT(obj)
                         newEnt = self.declareEventInt(aCfg)
-                        if newEnt is not None:
-                            entities.append(newEnt)
                     else:
                         aCfg = SINGLE_ALERT_SCHEMA_CONDITION(obj)
                         newEnt = self.declareCondition(aCfg, False)
-                        if newEnt is not None:
-                            entities.append(newEnt)
                 except vol.Invalid as v:
                     report(DOMAIN, 'error', f'alerts section of config: {v}. Relevant section: {obj}')
+                if newEnt is not None:
+                    entities.append(newEnt)
                     
         await self.component.async_add_entities(entities)
 

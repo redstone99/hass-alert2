@@ -29,9 +29,9 @@ SINGLE_TRACKED_SCHEMA = vol.Schema({
     vol.Required('domain'): cv.string,
     vol.Required('name'): cv.string,
     vol.Optional('friendly_name'): cv.string,
-    vol.Optional('notifier'): cv.string,
+    vol.Optional('notifier'): cv.string, #cv.template,
     vol.Optional('title'): cv.template,
-    vol.Optional('target'): cv.string,
+    vol.Optional('target'): cv.template,
     vol.Optional('data'): dict,
     vol.Optional('throttle_fires_per_mins'): vol.Schema(vol.All(vol.ExactSequence([int, vol.Coerce(float)]),
                                                                  # 0.001 hours is 3.6 seconds

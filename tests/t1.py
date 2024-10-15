@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 class FakeConst:
     MAJOR_VERSION = 2024
-    MINOR_VERSION = 9
+    MINOR_VERSION = 10
     EVENT_HOMEASSISTANT_STOP = 3
     EVENT_HOMEASSISTANT_STARTED = 4
 sys.modules['homeassistant.const'] = FakeConst
@@ -179,7 +179,8 @@ import inspect
 import os.path
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(currentdir)
-sys.path.insert(0, parentdir) 
+#sys.path.insert(0, parentdir)
+sys.path.append('/home/redstone/home-monitoring/homeassistant')
 import custom_components.alert2 as alert2
 alert2.kNotifierInitGraceSecs = 3
 alert2.kStartupWaitPollSecs   = 1
@@ -1049,9 +1050,11 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         # Check throttling
         cfg = { 'alert2' : { 'tracked' : [
             { 'domain': 'test', 'name': 't27', 'throttle_fires_per_mins': [2, 0.01] },
+            { 'domain': 'test', 'name': 't27a', 'throttle_fires_per_mins': [2, 0.01] },
         ], } }
         await self.initCase(cfg)
         t27 = self.gad.tracked['test']['t27']
+        t27a = self.gad.tracked['test']['t27a']
         nn = self.hass.servHandlers['notify.persistent_notification']
 
         # First two should notify fine
@@ -1066,7 +1069,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'Alert2 test_t27')
 
         await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27'})
-        await self.waitForAllBut(self.oldTasks)
+        await asyncio.sleep(0.1)
+        #await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 3)
         self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Throttling started.*test_t27')
 
@@ -1081,6 +1085,29 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(2)
         self.assertEqual(len(nn.await_args_list), 4)
         self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'Throttling ending.*test_t27 fired 2x')
+
+
+        # Try again, now with no extra firings beyond necessary to start throttling
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27a'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 5)
+        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'Alert2 test_t27a')
+        #
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27a'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 6)
+        self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'Alert2 test_t27a')
+
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27a'})
+        await asyncio.sleep(0.1)
+        #await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 7)
+        self.assertRegex(nn.await_args_list[6].args[0].data['message'], 'Throttling started.*test_t27a')
+
+        await asyncio.sleep(2)
+        self.assertEqual(len(nn.await_args_list), 8)
+        self.assertRegex(nn.await_args_list[7].args[0].data['message'], 'Throttling ending.*test_t27a: Did not fire')
+
         
     async def test_event3(self):
         # Check throttling
@@ -1124,8 +1151,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 5)
         self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'Alert2 test_t28-no')
-        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'Alert2 alert2_error: undeclared event')
-        
+        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'Alert2 alert2_error: undeclared event.*t28-no')
 
     async def test_condition(self):
         # test pssing entity name instead of template for condition or threshold value
@@ -1162,6 +1188,62 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.gad.alerts['test']['t36']._threshold_value_template.rawStr, '5')
         self.assertEqual(self.gad.alerts['test']['t37']._threshold_value_template.rawStr, '{{ states("foo.bar2") }}')
         self.assertEqual(self.gad.alerts['test']['t38']._threshold_value_template.rawStr, '{{ ick2 }}')
+
+    async def test_err_args(self):
+        # test pssing entity name instead of template for condition or threshold value
+        cfg = { 'alert2' : { 'tracked': [
+            { 'domain': 'alert2', 'name': 'error', 'friendly_name': 'happy-terr' },
+            ] } }
+        await self.initCase(cfg)
+        terr = self.gad.tracked['alert2']['error']
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        await self.waitForAllBut(self.oldTasks)
+        
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t39'})
+        #await asyncio.sleep(0.1)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertEqual(nn.await_args_list[0].args[0].data['message'], 'Alert2 test_t39')
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], '^happy-terr: undeclared event.*t39')
+
+        cfg = { 'alert2' : { 'tracked': [
+            { 'domain': 'alert2', 'nname': 'error', 'friendly_name': 'happy-terr' },
+            ] } }
+        await self.initCase(cfg)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'extra keys.*nname')
+        
+        cfg = { 'alert2' : { 'tracked': [
+            'ffstr'
+            ] } }
+        await self.initCase(cfg)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'expected a dictionary')
+
+        cfg = { 'alert2' : { 'tracked': 3 } }
+        await self.initCase(cfg)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'expected list')
+        
+        cfg = { 'alert2' : { 'ttracked': 3 } }
+        await self.initCase(cfg)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'extra keys.*ttracked')
+
+        cfg = { 'alert2' : 'foo' }
+        await self.initCase(cfg)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'expected a dictionary')
         
 if __name__ == '__main__':
     unittest.main()
