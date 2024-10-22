@@ -9,6 +9,7 @@ import asyncio
 import datetime as dt
 import voluptuous as vol
 import logging
+import jinja2
 _LOGGER = logging.getLogger(None) # get root logger
 _LOGGER.setLevel(logging.DEBUG)
 from types import SimpleNamespace
@@ -51,7 +52,8 @@ def fake_template(value):
             self.hass = None
             self.rawStr = value
         def async_render(self, vvars=None, parse_result=False):
-            return self.rawStr
+            return jinja2.Template(self.rawStr).render()
+            #return self.rawStr
         def set_value(self, new):
             self.rawStr = new
     if value is None or isinstance(value, (list, dict, FakeTemplate)):
@@ -183,7 +185,7 @@ parentdir = os.path.dirname(currentdir)
 sys.path.append('/home/redstone/home-monitoring/homeassistant')
 import custom_components.alert2 as alert2
 alert2.kNotifierInitGraceSecs = 3
-alert2.kStartupWaitPollSecs   = 1
+alert2.kStartupWaitPollSecs   = 0.5
 
 def doConditionUpdate(aler, rez):
     #assert isinstance(rez, bool)
@@ -230,6 +232,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.hass = FakeHass()
         alert2.global_hass = self.hass
         self.gad = alert2.Alert2Data(self.hass, cfg)
+        self.hass.data = { alert2.DOMAIN : self.gad }
         await self.gad.init2()
         for dom in self.gad.alerts:
             for name in self.gad.alerts[dom]:
@@ -414,44 +417,212 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'test_t6.* on for ')
         self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'test_t6.*turned off')
 
-    async def test_notifiers(self):
+    async def test_notifiers1(self):
         cfg = { 'alert2' : { 'alerts' : [
-            { 'domain': 'test', 'name': 't7', 'condition': '{{ true }}', 'notifier': 'foo' },
+            # notifier available immediately
+            { 'domain': 'test', 'name': 't7', 'condition': '{{ true }}', 'notifier': 'persistent_notification' },
+            # notifier available in grace period
+            { 'domain': 'test', 'name': 't7a', 'condition': '{{ true }}', 'notifier': 'foo' },
+            # notifier available after grace period
+            { 'domain': 'test', 'name': 't7b', 'condition': '{{ true }}', 'notifier': 'foo2' },
         ], } }
         alert2.moduleLoadTime = dt.datetime.now()
         await self.initCase(cfg)
-        tal = self.gad.alerts['test']['t7']
+        t7 = self.gad.alerts['test']['t7']
+        t7a = self.gad.alerts['test']['t7a']
+        t7b = self.gad.alerts['test']['t7b']
+        self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
         
-        doConditionUpdate(tal, True)
-        doConditionUpdate(tal, False)
-
-        await asyncio.sleep(1)
-        # We're in startup grace period, so notifications should have happened
+        #####
+        # initial startup
+        doConditionUpdate(t7, True)
+        await asyncio.sleep(0.05)
         nn = self.hass.servHandlers['notify.persistent_notification']
-        self.assertEqual(len(nn.await_args_list), 0)
-        self.assertTrue('notify.foo' not in self.hass.servHandlers)
-        
-        await asyncio.sleep(5)
-        # We're out of grace period, so should see notification to default notifier
-        self.assertTrue('notify.foo' not in self.hass.servHandlers)
         self.assertEqual(len(nn.await_args_list), 1)
-        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'test_t7.*Notifier notify.foo not available. Falling back to notify.persistent_notification')
+        self.assertEqual(nn.await_args_list[0].args[0].data['message'], 'Alert2 test_t7: turned on')
+        doConditionUpdate(t7a, True)
+        await asyncio.sleep(0.05)
+        doConditionUpdate(t7a, False)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), 1)
+        doConditionUpdate(t7b, True)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), 1)
 
-        # There should be nothing more waiting around
+        ####
+        # Now notifier foo becomes available, so we get the notification
+        self.hass.servHandlers['notify.foo'] = AsyncMock(name='foo', spec_set=[])
+        nfoo = self.hass.servHandlers['notify.foo']
+        self.assertEqual(len(nfoo.await_args_list), 0)
+        await asyncio.sleep(1.2 * alert2.kStartupWaitPollSecs)
+        self.assertEqual(len(nfoo.await_args_list), 2)
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertEqual(nfoo.await_args_list[0].args[0].data['message'], 'Alert2 test_t7a: turned on')
+        self.assertRegex(nfoo.await_args_list[1].args[0].data['message'], 'Alert2 test_t7a: turned off')
+        
+        ###
+        # Now let the rest of the grace period interval elapse. Should get errors finally
+        # ( we already waited some, so waiting the full kNotifierInitGraceSecs should be adequate )
+        await asyncio.sleep(alert2.kNotifierInitGraceSecs)
+        self.assertEqual(len(nfoo.await_args_list), 2)
+        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'notifiers are not known.*\'foo2\'')
+        
+        # TODO - what about the los test_t7b notification?
+
+        #and test now new notifications now that we are out of the grace period
+        doConditionUpdate(t7, False)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nfoo.await_args_list), 2)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Alert2 test_t7: turned off')
+        doConditionUpdate(t7a, True)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nfoo.await_args_list), 3)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertRegex(nfoo.await_args_list[2].args[0].data['message'], 'Alert2 test_t7a: turned on')
+        doConditionUpdate(t7b, False)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nfoo.await_args_list), 3)
+        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'test_t7b.*notifier "foo2" is not known.*with message=.*turned off')
+
+        # And now register foo2
+        self.hass.servHandlers['notify.foo2'] = AsyncMock(name='foo2', spec_set=[])
+        nfoo2 = self.hass.servHandlers['notify.foo2']
+        self.assertEqual(len(nfoo2.await_args_list), 0)
+        doConditionUpdate(t7b, True)
+        await asyncio.sleep(0.05)
+        self.assertEqual(nfoo2.await_args_list[0].args[0].data['message'], 'Alert2 test_t7b: turned on')
+        doConditionUpdate(t7a, False)
+        doConditionUpdate(t7b, False)
+        await asyncio.sleep(0.05)
+
         self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
 
-        # Now register foo, and notifications should work
-        self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
-        nn2 = self.hass.servHandlers['notify.foo']
-        doConditionUpdate(tal, True)
-        doConditionUpdate(tal, False)
-        await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 1) # no new notifications
-        self.assertEqual(len(nn2.await_args_list), 2) # start + stop
-        self.assertRegex(nn2.await_args_list[0].args[0].data['message'], 'test_t7.*turned on')
-        self.assertRegex(nn2.await_args_list[1].args[0].data['message'], 'test_t7.*turned off')
         
     async def test_notifiers2(self):
+        cfg = { 'alert2' : { 'alerts' : [
+            # some combos
+            # foo available soon after startup.  Foo2 not available till later
+            { 'domain': 'test', 'name': 't7c', 'condition': '{{ true }}', 'notifier': ['persistent_notification', 'foo'] },
+            { 'domain': 'test', 'name': 't7d', 'condition': '{{ true }}', 'notifier': ['foo', 'persistent_notification'] },
+            { 'domain': 'test', 'name': 't7e', 'condition': '{{ true }}', 'notifier': ['foo', 'foo2'] },
+            { 'domain': 'test', 'name': 't7f', 'condition': '{{ true }}', 'notifier': ['foo2', 'persistent_notification'] },
+        ], } }
+        alert2.moduleLoadTime = dt.datetime.now()
+        await self.initCase(cfg)
+        t7c = self.gad.alerts['test']['t7c']
+        t7d = self.gad.alerts['test']['t7d']
+        t7e = self.gad.alerts['test']['t7e']
+        t7f = self.gad.alerts['test']['t7f']
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
+
+        # only persistent one exists.
+        doConditionUpdate(t7c, True)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertEqual(nn.await_args_list[0].args[0].data['message'], 'Alert2 test_t7c: turned on')
+        doConditionUpdate(t7d, True)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertEqual(nn.await_args_list[1].args[0].data['message'], 'Alert2 test_t7d: turned on')
+        doConditionUpdate(t7e, True)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), 2)
+        doConditionUpdate(t7f, True)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(nn.await_args_list[2].args[0].data['message'], 'Alert2 test_t7f: turned on')
+
+        # Now foo comes around
+        self.hass.servHandlers['notify.foo'] = AsyncMock(name='foo', spec_set=[])
+        nfoo = self.hass.servHandlers['notify.foo']
+        self.assertEqual(len(nfoo.await_args_list), 0)
+        await asyncio.sleep(1.2 * alert2.kStartupWaitPollSecs)
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(len(nfoo.await_args_list), 3)
+        self.assertEqual(nfoo.await_args_list[0].args[0].data['message'], 'Alert2 test_t7c: turned on')
+        self.assertRegex(nfoo.await_args_list[1].args[0].data['message'], 'Alert2 test_t7d: turned on')
+        self.assertRegex(nfoo.await_args_list[2].args[0].data['message'], 'Alert2 test_t7e: turned on')
+
+        # Now let rest of startup grace period elapse.
+        await asyncio.sleep(alert2.kNotifierInitGraceSecs)
+        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(len(nfoo.await_args_list), 3)
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'notifiers are not known.*\'foo2\'')
+
+        doConditionUpdate(t7c, False)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), 5)
+        self.assertEqual(len(nfoo.await_args_list), 4)
+        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'Alert2 test_t7c: turned off')
+        self.assertRegex(nfoo.await_args_list[3].args[0].data['message'], 'Alert2 test_t7c: turned off')
+        doConditionUpdate(t7d, False)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), 6)
+        self.assertEqual(len(nfoo.await_args_list), 5)
+        self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'Alert2 test_t7d: turned off')
+        self.assertRegex(nfoo.await_args_list[4].args[0].data['message'], 'Alert2 test_t7d: turned off')
+        doConditionUpdate(t7e, False)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), 7)
+        self.assertEqual(len(nfoo.await_args_list), 6)
+        self.assertRegex(nn.await_args_list[6].args[0].data['message'], '"foo2".*is not known.*message=.*t7e.*turned off')
+        self.assertRegex(nfoo.await_args_list[5].args[0].data['message'], 'Alert2 test_t7e: turned off')
+        doConditionUpdate(t7f, False)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), 9)
+        self.assertEqual(len(nfoo.await_args_list), 6)
+        self.assertRegex(nn.await_args_list[7].args[0].data['message'], 'Alert2 test_t7f: turned off')
+        self.assertRegex(nn.await_args_list[8].args[0].data['message'], '"foo2".*is not known.*message=.*turned off')
+        
+        # Now register foo2
+        self.hass.servHandlers['notify.foo2'] = AsyncMock(name='foo2', spec_set=[])
+        nfoo2 = self.hass.servHandlers['notify.foo2']
+        self.assertEqual(len(nfoo2.await_args_list), 0)
+        doConditionUpdate(t7e, True)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nfoo.await_args_list), 7)
+        self.assertEqual(len(nfoo2.await_args_list), 1)
+        self.assertRegex(nfoo.await_args_list[6].args[0].data['message'], 'Alert2 test_t7e: turned on')
+        self.assertRegex(nfoo2.await_args_list[0].args[0].data['message'], 'Alert2 test_t7e: turned on')
+        
+        doConditionUpdate(t7e, False)
+        await asyncio.sleep(0.05)
+        self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
+
+    async def test_notifiers3(self):
+        # Check if default notifier is bad
+        cfg = { 'alert2' : { 'defaults': { 'notifier': 'foo2' }, 'alerts' : [
+            { 'domain': 'test', 'name': 't8a', 'condition': '{{ true }}', 'notifier': 'foo' },
+        ], } }
+        alert2.moduleLoadTime = dt.datetime.now()
+        await self.initCase(cfg)
+        t8a = self.gad.alerts['test']['t8a']
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
+
+        # notification deferred
+        doConditionUpdate(t8a, True)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), 0)
+
+        # Wait for end of startup period. Error reported, but since foo2 doesn't exist, it falls
+        # back to persistent one
+        await asyncio.sleep(alert2.kNotifierInitGraceSecs + 0.3)
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'notifiers are not known.*\'foo\'.*"foo2" is not known')
+
+        # And now if new instance:
+        doConditionUpdate(t8a, False)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], '\"foo\" is not known.*turned off.*"foo2" is not known')
+        self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
+        
+    async def test_notifiers4(self):
         # Check that default notifier is used
         cfg = { 'alert2' : { 'defaults': { 'notifier': 'foo' }, 'alerts' : [
             { 'domain': 'test', 'name': 't8', 'condition': '{{ true }}' },
@@ -470,6 +641,29 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn2.await_args_list[0].args[0].data['message'], 'test_t8.*turned on')
         self.assertRegex(nn2.await_args_list[1].args[0].data['message'], 'test_t8.*turned off')
 
+    async def test_notifiers5(self):
+        # Check template notifier formats
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': 'foo' },
+            { 'domain': 'test', 'name': 't7d', 'condition': '{{ true }}', 'notifier': ['foo', 'persistent_notification'] },
+            { 'domain': 'test', 'name': 't7e', 'condition': '{{ true }}', 'notifier': ['foo', 'foo2'] },
+            { 'domain': 'test', 'name': 't7f', 'condition': '{{ true }}', 'notifier': ['foo2', 'persistent_notification'] },
+        ], } }
+        await self.initCase(cfg)
+        self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
+        tal = self.gad.alerts['test']['t8']
+        
+        doConditionUpdate(tal, True)
+        doConditionUpdate(tal, False)
+        await self.waitForAllBut(self.oldTasks)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), 0)
+        nn2 = self.hass.servHandlers['notify.foo']
+        self.assertEqual(len(nn2.await_args_list), 2) # start + stop
+        self.assertRegex(nn2.await_args_list[0].args[0].data['message'], 'test_t8.*turned on')
+        self.assertRegex(nn2.await_args_list[1].args[0].data['message'], 'test_t8.*turned off')
+
+        
     async def test_throttle(self):
         # Check that default notifier is used
         cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
