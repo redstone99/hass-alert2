@@ -644,8 +644,28 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
     async def test_notifiers5(self):
         # Check template notifier formats
         cfg = { 'alert2' : { 'alerts' : [
+            # notifier can be list.
+            # need to strip()
+            # if notifier is single string, it either is name of notifier, or something that evaluates with json.loads
+            # First singleton notifiers
             { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': 'foo' },
-            { 'domain': 'test', 'name': 't7d', 'condition': '{{ true }}', 'notifier': ['foo', 'persistent_notification'] },
+            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '"foo"' },
+            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '[ "foo" ]' },
+            
+            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '{{ \'foo\' }}' },
+            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '{{ "foo" }}' },
+
+            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '{{ ["foo"]|tojson }}' },
+
+            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '{{ "a" if false else "foo" }}' },
+            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '{{ [\'foo\'] }}' },
+
+            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '{{ (["foo"] + |tojson }}' },
+
+            
+            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '[ "a" ]' },
+            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '[ "a"  ]' },
+            { 'domain': 'test', 'name': 't7d', 'condition': '{{ true }}', 'notifier': '{{  }}' },
             { 'domain': 'test', 'name': 't7e', 'condition': '{{ true }}', 'notifier': ['foo', 'foo2'] },
             { 'domain': 'test', 'name': 't7f', 'condition': '{{ true }}', 'notifier': ['foo2', 'persistent_notification'] },
         ], } }
