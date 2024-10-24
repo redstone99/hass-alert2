@@ -52,7 +52,12 @@ def fake_template(value):
             self.hass = None
             self.rawStr = value
         def async_render(self, vvars=None, parse_result=False):
-            return jinja2.Template(self.rawStr).render()
+            rez = None
+            try:
+                rez = jinja2.Template(self.rawStr).render()
+            except Exception as err:
+                raise FakeExceptions.TemplateError(err) from err
+            return rez
             #return self.rawStr
         def set_value(self, new):
             self.rawStr = new
@@ -645,44 +650,130 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         # Check template notifier formats
         cfg = { 'alert2' : { 'alerts' : [
             # notifier can be list.
+            # otherwise, jinja2 eval it
             # need to strip()
+            # ast.eval_literal
+            # if fails, consider a single notifier name (or entity name?)
+            #
             # if notifier is single string, it either is name of notifier, or something that evaluates with json.loads
             # First singleton notifiers
-            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': 'foo' },
-            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '"foo"' },
-            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '[ "foo" ]' },
+            { 'domain': 'test', 'name': 't9a', 'condition': '{{ true }}', 'notifier': 'foo' },
+            { 'domain': 'test', 'name': 't9b', 'condition': '{{ true }}', 'notifier': 'sensor.testent' },
+            { 'domain': 'test', 'name': 't9c', 'condition': '{{ true }}', 'notifier': '"foo"' },
+            { 'domain': 'test', 'name': 't9d', 'condition': '{{ true }}', 'notifier': '\'foo\'' },
+            { 'domain': 'test', 'name': 't9e', 'condition': '{{ true }}', 'notifier': '[ "foo" ]' },
+            { 'domain': 'test', 'name': 't9f', 'condition': '{{ true }}', 'notifier': '[ \'foo\' ]' },
             
-            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '{{ \'foo\' }}' },
-            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '{{ "foo" }}' },
+            { 'domain': 'test', 'name': 't9g', 'condition': '{{ true }}', 'notifier': '{{ \'foo\' }}' },
+            { 'domain': 'test', 'name': 't9h', 'condition': '{{ true }}', 'notifier': '{{ "foo" }}' },
 
-            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '{{ ["foo"]|tojson }}' },
+            { 'domain': 'test', 'name': 't9i', 'condition': '{{ true }}', 'notifier': '{{ ["foo"] }}' },
+            { 'domain': 'test', 'name': 't9j', 'condition': '{{ true }}', 'notifier': '{{ [\'foo\'] }}' },
 
-            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '{{ "a" if false else "foo" }}' },
-            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '{{ [\'foo\'] }}' },
+            { 'domain': 'test', 'name': 't9k', 'condition': '{{ true }}', 'notifier': '{{ "a" if false else "foo" }}' },
+            { 'domain': 'test', 'name': 't9l', 'condition': '{{ true }}', 'notifier': '{{ "a" if false else "sensor.testent" }}' },
 
-            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '{{ (["foo"] + |tojson }}' },
+            { 'domain': 'test', 'name': 't9m', 'condition': '{{ true }}', 'notifier': '{% if true %}foo{% endif %}' },
+            { 'domain': 'test', 'name': 't9n', 'condition': '{{ true }}', 'notifier': '{% if true %}{{ ["foo"]}}{% endif %}' },
 
+            # And let's test some error cases
+            # notifier evals to something other than string
+            { 'domain': 'test', 'name': 't9p', 'condition': '{{ true }}', 'notifier': '3' },
+            { 'domain': 'test', 'name': 't9q', 'condition': '{{ true }}', 'notifier': '{ "a": 4 }' },
+            { 'domain': 'test', 'name': 't9r', 'condition': '{{ true }}', 'notifier': '[ 4 ]' },
+            { 'domain': 'test', 'name': 't9s', 'condition': '{{ true }}', 'notifier': '{{ "foo"' },
+            { 'domain': 'test', 'name': 't9t', 'condition': '{{ true }}', 'notifier': '{{ ["foo", 5] }}' },
+            { 'domain': 'test', 'name': 't9u', 'condition': '{{ true }}', 'notifier': '{% if true %}{% endif %}' },
             
-            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '[ "a" ]' },
-            { 'domain': 'test', 'name': 't8b', 'condition': '{{ true }}', 'notifier': '[ "a"  ]' },
-            { 'domain': 'test', 'name': 't7d', 'condition': '{{ true }}', 'notifier': '{{  }}' },
-            { 'domain': 'test', 'name': 't7e', 'condition': '{{ true }}', 'notifier': ['foo', 'foo2'] },
-            { 'domain': 'test', 'name': 't7f', 'condition': '{{ true }}', 'notifier': ['foo2', 'persistent_notification'] },
+            { 'domain': 'test', 'name': 't9v', 'condition': '{{ true }}', 'notifier': '{{ ["foo", "bar"] }}' },
+            # sensor unavailable
+            { 'domain': 'test', 'name': 't9w', 'condition': '{{ true }}', 'notifier': 'sensor.unavailEnt' },
+            # sensor missing
+            { 'domain': 'test', 'name': 't9x', 'condition': '{{ true }}', 'notifier': 'sensor.missingEnt' },
+            # sensor unavailable, but then becomes available
+            { 'domain': 'test', 'name': 't9y', 'condition': '{{ true }}', 'notifier': 'sensor.unavailEnt' },
+
+            # we don't support ent in a list
+            { 'domain': 'test', 'name': 't9z', 'condition': '{{ true }}', 'notifier': '{{ ["sensor.testent"] }}' },
+
         ], } }
         await self.initCase(cfg)
         self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
-        tal = self.gad.alerts['test']['t8']
-        
-        doConditionUpdate(tal, True)
-        doConditionUpdate(tal, False)
-        await self.waitForAllBut(self.oldTasks)
+        self.hass.states['sensor.testent'] = SimpleNamespace(state='foo')
+        self.hass.states['sensor.unavailEnt'] = SimpleNamespace(state='unavailable')
+        self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
         nn = self.hass.servHandlers['notify.persistent_notification']
+        nfoo = self.hass.servHandlers['notify.foo']
         self.assertEqual(len(nn.await_args_list), 0)
-        nn2 = self.hass.servHandlers['notify.foo']
-        self.assertEqual(len(nn2.await_args_list), 2) # start + stop
-        self.assertRegex(nn2.await_args_list[0].args[0].data['message'], 'test_t8.*turned on')
-        self.assertRegex(nn2.await_args_list[1].args[0].data['message'], 'test_t8.*turned off')
+        self.assertEqual(len(nfoo.await_args_list), 0)
 
+        perCount = 0
+        fooCount = 0
+        async def doTst(tname, perBump, fooBump):
+            alertEnt = self.gad.alerts['test'][tname]
+            doConditionUpdate(alertEnt, True)
+            await asyncio.sleep(0.05)
+            nonlocal perCount
+            nonlocal fooCount
+            perCount += perBump
+            fooCount += fooBump
+            self.assertEqual(len(nn.await_args_list), perCount)
+            self.assertEqual(len(nfoo.await_args_list), fooCount)
+
+        
+        for tname in ['t9p', 't9q', 't9r' ]:
+            await doTst(tname, 1, 0)
+            self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_{tname}.*not a string')
+        await doTst('t9s', 1, 0)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_t9s.*unexpected end of template')
+        await doTst('t9t', 1, 1)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_t9t.*not a string')
+        self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_t9t.*turned on')
+        await doTst('t9u', 1, 0)
+        # TODO - would be nice if the error message included the template for context
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_t9u.*notifier "".*zero length')
+        
+        # Next set of tests use the startup grace period
+        t9v = self.gad.alerts['test']['t9v']
+        t9w = self.gad.alerts['test']['t9w']
+        t9x = self.gad.alerts['test']['t9x']
+        t9y = self.gad.alerts['test']['t9y']
+        t9z = self.gad.alerts['test']['t9z']
+        await doTst('t9v', 0, 1)
+        self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_t9v.*turned on')
+        for tname in ['t9w', 't9x', 't9y', 't9z' ]:
+            await doTst(tname, 0, 0)
+        
+        self.hass.services.async_register('notify','bar', AsyncMock(name='bar', spec_set=[]))
+        nbar = self.hass.servHandlers['notify.bar']
+        await asyncio.sleep(1.2 * alert2.kStartupWaitPollSecs)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        self.assertEqual(len(nbar.await_args_list), 1)
+        self.assertRegex(nbar.await_args_list[0].args[0].data['message'], f'test_t9v.*turned on')
+
+        self.hass.states['sensor.unavailEnt'].state = 'foo'
+        await asyncio.sleep(1.2 * alert2.kStartupWaitPollSecs)
+        self.assertEqual(len(nfoo.await_args_list), fooCount+1)
+        self.assertRegex(nfoo.await_args_list[fooCount].args[0].data['message'], f'test_t9w.*turned on')
+
+        
+        fuck
+
+        
+        #for tname in [ 't9b' ]:
+        for tname in [ 't9a', 't9b', 't9c', 't9d', 't9e', 't9f', 't9g', 't9h', 't9i', 't9j', 't9k', 't9l', 't9m', 't9n' ]:
+            alertEnt = self.gad.alerts['test'][tname]
+            doConditionUpdate(alertEnt, True)
+            await asyncio.sleep(0.05)
+            self.assertEqual(len(nn.await_args_list), perCount)
+            fooCount += 1
+            self.assertEqual(len(nfoo.await_args_list), fooCount)
+            self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_{tname}.*turned on')
+
+            
+        # error message should include template str for context
+        # what if sensor unknown or unavail?
         
     async def test_throttle(self):
         # Check that default notifier is used
