@@ -40,8 +40,20 @@ sys.modules['homeassistant.exceptions'] = FakeExceptions
 class FakeHelpers:
     class template:
         @staticmethod
-        def result_as_boolean(rez):
-            return bool(rez)
+        def result_as_boolean(value):  # copied from helpers/config_validation.py:boolean()
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                value = value.lower().strip()
+                if value in ("1", "true", "yes", "on", "enable"):
+                    return True
+                if value in ("0", "false", "no", "off", "disable"):
+                    return False
+            elif isinstance(value, Number):
+                # type ignore: https://github.com/python/mypy/issues/3186
+                return value != 0  # type: ignore[comparison-overlap]
+            raise vol.Invalid(f"invalid boolean value {value}")
+            #return bool(rez)
         pass
     class discovery:
         pass
@@ -50,17 +62,17 @@ def fake_template(value):
     class FakeTemplate:
         def __init__(self, value):
             self.hass = None
-            self.rawStr = value
+            self.template = value
         def async_render(self, vvars=None, parse_result=False):
             rez = None
             try:
-                rez = jinja2.Template(self.rawStr).render()
+                rez = jinja2.Template(self.template).render()
             except Exception as err:
                 raise FakeExceptions.TemplateError(err) from err
             return rez
-            #return self.rawStr
+            #return self.template
         def set_value(self, new):
-            self.rawStr = new
+            self.template = new
     if value is None or isinstance(value, (list, dict, FakeTemplate)):
         raise vol.Invalid(f'{value} is not a string for template')
     return FakeTemplate(str(value))
@@ -190,28 +202,49 @@ parentdir = os.path.dirname(currentdir)
 sys.path.append('/home/redstone/home-monitoring/homeassistant')
 import custom_components.alert2 as alert2
 alert2.kNotifierInitGraceSecs = 3
-alert2.kStartupWaitPollSecs   = 0.5
+alert2.kStartupWaitPollSecs   = 0.2
 
 def doConditionUpdate(aler, rez):
     #assert isinstance(rez, bool)
-    aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                               [ SimpleNamespace(template=aler._condition_template, result=rez) ])
     setCondition(aler, rez)
+    try:
+        crez = aler._condition_template.async_render()
+    except FakeExceptions.TemplateError as f:
+        crez = f
+    aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                               [ SimpleNamespace(template=aler._condition_template, result=crez) ])
 def doValueUpdate(aler, rez):
-    aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                               [ SimpleNamespace(template=aler._threshold_value_template, result=rez) ])
     setValue(aler, rez)
-def doCondValueUpdate(aler, condRez, valRez):
+    try:
+        vrez = aler._threshold_value_template.async_render()
+    except FakeExceptions.TemplateError as f:
+        vrez = f
     aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                               [ SimpleNamespace(template=aler._threshold_value_template, result=valRez),
-                                 SimpleNamespace(template=aler._condition_template, result=condRez) ])
+                               [ SimpleNamespace(template=aler._threshold_value_template, result=vrez) ])
+def doCondValueUpdate(aler, condRez, valRez):
     setCondition(aler, condRez)
     setValue(aler, valRez)
+    try:
+        crez = aler._condition_template.async_render()
+    except FakeExceptions.TemplateError as f:
+        crez = f
+    try:
+        vrez = aler._threshold_value_template.async_render()
+    except FakeExceptions.TemplateError as f:
+        vrez = f
+    aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                               [ SimpleNamespace(template=aler._threshold_value_template, result=vrez),
+                                 SimpleNamespace(template=aler._condition_template, result=crez) ])
     
 def setValue(aler, rez):
     aler._threshold_value_template.set_value(rez)
 def setCondition(aler, rez):
-    aler._condition_template.set_value(rez)
+    if isinstance(rez, bool):
+        aler._condition_template.set_value("{{ true }} " if rez else "{{ false }}")
+    else:
+        assert isinstance(rez, str), rez
+        #assert '{{' in rez, rez
+        aler._condition_template.set_value(rez)
 
 class FooTest(unittest.IsolatedAsyncioTestCase):
     async def waitForAllBut(self, oldTasks):
@@ -231,6 +264,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             if not sawOne:
                 break
         return count
+    
     async def initCase(self, cfg):
         print('setting up')
         self.oldTasks = asyncio.all_tasks()
@@ -321,7 +355,55 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), 4)
         self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'test_t1.*turned on')
         
+    async def test_badtemplate(self):
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': 't2a', 'condition': '{{ true }}' },
+            { 'domain': 'test', 'name': 't2b', 'condition': '{{ true }}', 'trigger': 'zzz' },
+        ], 'tracked': [ { 'domain': 'test', 'name': 't2c' } ] } }
+        await self.initCase(cfg)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        t2a = self.gad.alerts['test']['t2a']
+        t2b = self.gad.tracked['test']['t2b']
+        perCount = 0
+        self.assertEqual(len(nn.await_args_list), perCount)
+        
+        doConditionUpdate(t2a, '{{ foo')
+        await self.waitForAllBut(self.oldTasks)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t2a.*unexpected end of template')
+        doConditionUpdate(t2a, 'happy')
+        await self.waitForAllBut(self.oldTasks)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t2a.*happy.*not truthy')
+        doConditionUpdate(t2a, '{{ none }}')
+        await self.waitForAllBut(self.oldTasks)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t2a.*None.*not truthy')
 
+        setCondition(t2b, '{{ foo')
+        await t2b.async_trigger({'trigger': {}}, None, skip_condition=False)
+        await self.waitForAllBut(self.oldTasks)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t2b.*unexpected end of template')
+        setCondition(t2b, 'happy')
+        await t2b.async_trigger({'trigger': {}}, None, skip_condition=False)
+        await self.waitForAllBut(self.oldTasks)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t2b.*happy.*not truthy')
+        setCondition(t2b, '{{ none }}')
+        await t2b.async_trigger({'trigger': {}}, None, skip_condition=False)
+        await self.waitForAllBut(self.oldTasks)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t2b.*None.*not truthy')
+
+        
+        
     async def test_reminder(self):
         cfg = { 'alert2' : { 'alerts' : [
             { 'domain': 'test', 'name': 't2', 'condition': '{{ true }}', 'reminder_frequency_mins': [0.01, 0.05] },
@@ -684,23 +766,22 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             { 'domain': 'test', 'name': 't9s', 'condition': '{{ true }}', 'notifier': '{{ "foo"' },
             { 'domain': 'test', 'name': 't9t', 'condition': '{{ true }}', 'notifier': '{{ ["foo", 5] }}' },
             { 'domain': 'test', 'name': 't9u', 'condition': '{{ true }}', 'notifier': '{% if true %}{% endif %}' },
+            { 'domain': 'test', 'name': 't9v', 'condition': '{{ true }}', 'notifier': 'sensor.unavailEnt2' },
             
-            { 'domain': 'test', 'name': 't9v', 'condition': '{{ true }}', 'notifier': '{{ ["foo", "bar"] }}' },
-            # sensor unavailable
-            { 'domain': 'test', 'name': 't9w', 'condition': '{{ true }}', 'notifier': 'sensor.unavailEnt' },
-            # sensor missing
-            { 'domain': 'test', 'name': 't9x', 'condition': '{{ true }}', 'notifier': 'sensor.missingEnt' },
-            # sensor unavailable, but then becomes available
-            { 'domain': 'test', 'name': 't9y', 'condition': '{{ true }}', 'notifier': 'sensor.unavailEnt' },
+            { 'domain': 'test', 'name': 't9w', 'condition': '{{ true }}', 'notifier': '{{ ["foo", "bar"] }}' },
+            { 'domain': 'test', 'name': 't9x', 'condition': '{{ true }}', 'notifier': 'sensor.unavailEnt' },
+            { 'domain': 'test', 'name': 't9y', 'condition': '{{ true }}', 'notifier': '[ "foo" ' },
 
             # we don't support ent in a list
             { 'domain': 'test', 'name': 't9z', 'condition': '{{ true }}', 'notifier': '{{ ["sensor.testent"] }}' },
 
         ], } }
+        alert2.moduleLoadTime = dt.datetime.now()
         await self.initCase(cfg)
         self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
         self.hass.states['sensor.testent'] = SimpleNamespace(state='foo')
         self.hass.states['sensor.unavailEnt'] = SimpleNamespace(state='unavailable')
+        self.hass.states['sensor.unavailEnt2'] = SimpleNamespace(state=None)
         self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
         nn = self.hass.servHandlers['notify.persistent_notification']
         nfoo = self.hass.servHandlers['notify.foo']
@@ -709,9 +790,9 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
 
         perCount = 0
         fooCount = 0
-        async def doTst(tname, perBump, fooBump):
+        async def doTst(tname, perBump, fooBump, onVal=True):
             alertEnt = self.gad.alerts['test'][tname]
-            doConditionUpdate(alertEnt, True)
+            doConditionUpdate(alertEnt, onVal)
             await asyncio.sleep(0.05)
             nonlocal perCount
             nonlocal fooCount
@@ -719,8 +800,17 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             fooCount += fooBump
             self.assertEqual(len(nn.await_args_list), perCount)
             self.assertEqual(len(nfoo.await_args_list), fooCount)
-
         
+        for tname in [ 't9a', 't9b', 't9c', 't9d', 't9e', 't9f', 't9g', 't9h', 't9i', 't9j', 't9k', 't9l', 't9m', 't9n' ]:
+            alertEnt = self.gad.alerts['test'][tname]
+            doConditionUpdate(alertEnt, True)
+            await asyncio.sleep(0.05)
+            self.assertEqual(len(nn.await_args_list), perCount)
+            fooCount += 1
+            self.assertEqual(len(nfoo.await_args_list), fooCount)
+            self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_{tname}.*turned on')
+
+
         for tname in ['t9p', 't9q', 't9r' ]:
             await doTst(tname, 1, 0)
             self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_{tname}.*not a string')
@@ -731,18 +821,21 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_t9t.*turned on')
         await doTst('t9u', 1, 0)
         # TODO - would be nice if the error message included the template for context
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_t9u.*notifier "".*zero length')
-        
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_t9u.*cannot be the empty string')
+        await doTst('t9v', 1, 0)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_t9v.*notifier is not a string.*NoneType')
+
         # Next set of tests use the startup grace period
+        await doTst('t9w', 0, 1)
+        self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_t9w.*turned on')
+        for tname in ['t9x', 't9y', 't9z' ]:
+            await doTst(tname, 0, 0)
+
         t9v = self.gad.alerts['test']['t9v']
         t9w = self.gad.alerts['test']['t9w']
         t9x = self.gad.alerts['test']['t9x']
         t9y = self.gad.alerts['test']['t9y']
         t9z = self.gad.alerts['test']['t9z']
-        await doTst('t9v', 0, 1)
-        self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_t9v.*turned on')
-        for tname in ['t9w', 't9x', 't9y', 't9z' ]:
-            await doTst(tname, 0, 0)
         
         self.hass.services.async_register('notify','bar', AsyncMock(name='bar', spec_set=[]))
         nbar = self.hass.servHandlers['notify.bar']
@@ -750,30 +843,19 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(nfoo.await_args_list), fooCount)
         self.assertEqual(len(nbar.await_args_list), 1)
-        self.assertRegex(nbar.await_args_list[0].args[0].data['message'], f'test_t9v.*turned on')
-
-        self.hass.states['sensor.unavailEnt'].state = 'foo'
-        await asyncio.sleep(1.2 * alert2.kStartupWaitPollSecs)
-        self.assertEqual(len(nfoo.await_args_list), fooCount+1)
-        self.assertRegex(nfoo.await_args_list[fooCount].args[0].data['message'], f'test_t9w.*turned on')
+        self.assertRegex(nbar.await_args_list[0].args[0].data['message'], f'test_t9w.*turned on')
 
         
-        fuck
+        # Wait rest of startup grace period
+        await asyncio.sleep(alert2.kNotifierInitGraceSecs + 0.3)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        self.assertEqual(len(nbar.await_args_list), 1)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'not known to HA.*\'unavailable\'.*\'\\[ "foo"\', \'sensor.testent\'')
 
-        
-        #for tname in [ 't9b' ]:
-        for tname in [ 't9a', 't9b', 't9c', 't9d', 't9e', 't9f', 't9g', 't9h', 't9i', 't9j', 't9k', 't9l', 't9m', 't9n' ]:
-            alertEnt = self.gad.alerts['test'][tname]
-            doConditionUpdate(alertEnt, True)
-            await asyncio.sleep(0.05)
-            self.assertEqual(len(nn.await_args_list), perCount)
-            fooCount += 1
-            self.assertEqual(len(nfoo.await_args_list), fooCount)
-            self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_{tname}.*turned on')
-
-            
-        # error message should include template str for context
-        # what if sensor unknown or unavail?
+        await doTst('t9x', 1, 0, False)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'unavailable" is not known.*sensor.unavailEnt')
         
     async def test_throttle(self):
         # Check that default notifier is used
@@ -933,7 +1015,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
     async def test_threshold(self):
         # Check that default notifier is used
         cfg = { 'alert2' : { 'alerts' : [
-            { 'domain': 'test', 'name': 't18', 'condition': '{{ xxx }}', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'minimum': 0 } },
+            { 'domain': 'test', 'name': 't18', 'condition': '{{ xxx }}', 'threshold': { 'value': "{{ 'zzz' }}", 'hysteresis': 3, 'minimum': 0 } },
             { 'domain': 'test', 'name': 't19', 'condition': '{{ xxx }}', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'maximum': 10 } },
             { 'domain': 'test', 'name': 't20', 'condition': '{{ xxx }}', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'minimum': 0, 'maximum': 10 } },
         ], } }
@@ -1251,7 +1333,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(t20.state, 'on')
 
         # Lastly a temlate error
-        doConditionUpdate(t20, FakeExceptions.TemplateError('foobar error'))
+        doConditionUpdate(t20, '{{ zz')
         await asyncio.sleep(0.1)
         self.assertEqual(len(nn.await_args_list), 29)
         self.assertRegex(nn.await_args_list[28].args[0].data['message'], 'err')
@@ -1485,14 +1567,14 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'expected dictionary.*t35')
 
         self.assertEqual(self.gad.tracked['test']['t30']._friendly_name, 'happyt30')
-        self.assertEqual(self.gad.alerts['test']['t31']._condition_template.rawStr, '3')
-        self.assertEqual(self.gad.tracked['test']['t32']._condition_template.rawStr, '3.2')
-        self.assertEqual(self.gad.alerts['test']['t33']._condition_template.rawStr, '{{ states("foo.bar") }}')
-        self.assertEqual(self.gad.alerts['test']['t34']._condition_template.rawStr, '{{ ick }}')
+        self.assertEqual(self.gad.alerts['test']['t31']._condition_template.template, '3')
+        self.assertEqual(self.gad.tracked['test']['t32']._condition_template.template, '3.2')
+        self.assertEqual(self.gad.alerts['test']['t33']._condition_template.template, '{{ states("foo.bar") }}')
+        self.assertEqual(self.gad.alerts['test']['t34']._condition_template.template, '{{ ick }}')
         self.assertNotIn('35', self.gad.alerts['test'])
-        self.assertEqual(self.gad.alerts['test']['t36']._threshold_value_template.rawStr, '5')
-        self.assertEqual(self.gad.alerts['test']['t37']._threshold_value_template.rawStr, '{{ states("foo.bar2") }}')
-        self.assertEqual(self.gad.alerts['test']['t38']._threshold_value_template.rawStr, '{{ ick2 }}')
+        self.assertEqual(self.gad.alerts['test']['t36']._threshold_value_template.template, '5')
+        self.assertEqual(self.gad.alerts['test']['t37']._threshold_value_template.template, '{{ states("foo.bar2") }}')
+        self.assertEqual(self.gad.alerts['test']['t38']._threshold_value_template.template, '{{ ick2 }}')
 
     async def test_err_args(self):
         # test pssing entity name instead of template for condition or threshold value
@@ -1549,6 +1631,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         nn = self.hass.servHandlers['notify.persistent_notification']
         self.assertEqual(len(nn.await_args_list), 1)
         self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'expected a dictionary')
+
         
 if __name__ == '__main__':
     unittest.main()
