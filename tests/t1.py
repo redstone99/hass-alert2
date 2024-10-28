@@ -741,6 +741,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             # First singleton notifiers
             { 'domain': 'test', 'name': 't9a', 'condition': '{{ true }}', 'notifier': 'foo' },
             { 'domain': 'test', 'name': 't9b', 'condition': '{{ true }}', 'notifier': 'sensor.testent' },
+            { 'domain': 'test', 'name': 't9b2', 'condition': '{{ true }}', 'notifier': 'sensor.multient' },
             { 'domain': 'test', 'name': 't9c', 'condition': '{{ true }}', 'notifier': '"foo"' },
             { 'domain': 'test', 'name': 't9d', 'condition': '{{ true }}', 'notifier': '\'foo\'' },
             { 'domain': 'test', 'name': 't9e', 'condition': '{{ true }}', 'notifier': '[ "foo" ]' },
@@ -770,6 +771,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             
             { 'domain': 'test', 'name': 't9w', 'condition': '{{ true }}', 'notifier': '{{ ["foo", "bar"] }}' },
             { 'domain': 'test', 'name': 't9x', 'condition': '{{ true }}', 'notifier': 'sensor.unavailEnt' },
+            { 'domain': 'test', 'name': 't9x1', 'condition': '{{ true }}', 'notifier': '[ foo ]' },
             { 'domain': 'test', 'name': 't9y', 'condition': '{{ true }}', 'notifier': '[ "foo" ' },
 
             # we don't support ent in a list
@@ -780,6 +782,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.initCase(cfg)
         self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
         self.hass.states['sensor.testent'] = SimpleNamespace(state='foo')
+        #self.hass.states['sensor.multient'] = SimpleNamespace(state='[ foo, persistent_notification ]')
+        self.hass.states['sensor.multient'] = SimpleNamespace(state='[ "foo", "persistent_notification" ]')
         self.hass.states['sensor.unavailEnt'] = SimpleNamespace(state='unavailable')
         self.hass.states['sensor.unavailEnt2'] = SimpleNamespace(state=None)
         self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
@@ -802,14 +806,18 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(nfoo.await_args_list), fooCount)
         
         for tname in [ 't9a', 't9b', 't9c', 't9d', 't9e', 't9f', 't9g', 't9h', 't9i', 't9j', 't9k', 't9l', 't9m', 't9n' ]:
-            alertEnt = self.gad.alerts['test'][tname]
-            doConditionUpdate(alertEnt, True)
-            await asyncio.sleep(0.05)
-            self.assertEqual(len(nn.await_args_list), perCount)
-            fooCount += 1
-            self.assertEqual(len(nfoo.await_args_list), fooCount)
+            await doTst(tname, 0, 1)
+            #alertEnt = self.gad.alerts['test'][tname]
+            #doConditionUpdate(alertEnt, True)
+            #await asyncio.sleep(0.05)
+            #self.assertEqual(len(nn.await_args_list), perCount)
+            #fooCount += 1
+            #self.assertEqual(len(nfoo.await_args_list), fooCount)
             self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_{tname}.*turned on')
 
+        await doTst('t9b2', 1, 1)
+        self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_t9b2.*turned on')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_t9b2.*turned on')
 
         for tname in ['t9p', 't9q', 't9r' ]:
             await doTst(tname, 1, 0)
@@ -828,7 +836,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         # Next set of tests use the startup grace period
         await doTst('t9w', 0, 1)
         self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_t9w.*turned on')
-        for tname in ['t9x', 't9y', 't9z' ]:
+        for tname in ['t9x', 't9y', 't9z', 't9x1' ]:
             await doTst(tname, 0, 0)
 
         t9v = self.gad.alerts['test']['t9v']
@@ -852,10 +860,10 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(nfoo.await_args_list), fooCount)
         self.assertEqual(len(nbar.await_args_list), 1)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'not known to HA.*\'unavailable\'.*\'\\[ "foo"\', \'sensor.testent\'')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'not known to HA.*\'unavailable\'.*\'\\[ "foo"\', \'sensor.testent\'.*\\[ foo \\]')
 
         await doTst('t9x', 1, 0, False)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'unavailable" is not known.*sensor.unavailEnt')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_t9x.*unavailable" is not known.*sensor.unavailEnt')
         
     async def test_throttle(self):
         # Check that default notifier is used

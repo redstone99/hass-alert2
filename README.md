@@ -174,8 +174,9 @@ The text of each notification by default includes some basic context information
 
 ### Alert2 internal errors
 
-Alert2 automatically defines an alert, `alert2.error`. This alert uses your default settings. It fires and will notify you of problems in your configuration file as well as if Alert2 internally encounters a problem, such as a notifier can not be found.  If you don't want to be notified of errors like these, an option, `skip_internal_errors`, is available. One reason this alert is important is because if Alert2 itself encounters a problem, you may stop receiving alerts for things you do care about. So in a sense, this alert is at least as important as your most important alert.
+Alert2 automatically defines an alert, `alert2.error`. This alert uses your default settings. It fires and will notify you of problems in your configuration file as well as if Alert2 internally encounters a problem, such as a notifier that does not exist.  If you don't want to be notified of errors like these, an option, `skip_internal_errors`, is available. One reason this alert is important is because if Alert2 itself encounters a problem, you may stop receiving alerts for things you do care about. So in a sense, this alert is at least as important as your most important alert.
 
+`alert2.error` may be configured. See example in the [Tracked](#tracked) section, below.
 
 ## Configuration
 
@@ -185,13 +186,11 @@ Alert configuration is done through the `alert2:` section of your `configuration
 
 The `defaults:` subsection specifies default values for parameters common to every alert. Each of these parameters may be specified either in this subsection or over-ridden on a per-alert basis.
 
-The defaults specified here apply also to internal alerts that may fire, such as due to a config error or assertion failure.
-
 
 | Key | Type | Description |
 |---|---|---|
 | `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. |
-| `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers or an entity name whose state is a list of notifiers. See "Notifiers" section below for possibilities here.  |
+| `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers, an entity name whose state is a list of notifiers, or a template that evaluates to either. See [Notifiers](#notifiers) section below for possibilities here.  |
 | `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notification, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
 | `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on a list of two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, "[10, 60]" means you'll receive no more than 10 notifications of the alert firing every hour.<br>Default is no throttling. |
 
@@ -214,7 +213,7 @@ Note `reminder_frequency_mins` or `throttle_fires_per_mins` may be specified as 
 
 ### Alerts
 
-The `alerts:` subsection contains a list of condition-based and event-based alert specifications. The full list of parameters for each alert are as follows.
+The `alerts:` subsection contains a list of condition-based and event-based alert specifications. The full list of parameters for each alert are as follows:
 
 
 | Key | Type | Required | Description |
@@ -237,7 +236,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `title` | template | optional | Passed as the "title" parameter to the notify service call |
 | `annotate_messages` | bool | optional | Override the default value of `annotate_messages`.  |
 | `reminder_frequency_mins` | float | optional | Override the default `reminder_frequency_mins`|
-| `notifier` | template | optional | Override the default `notifier`. |
+| `notifier` | template | optional | Override the default `notifier`. See [Notifiers](#notifiers) section below for examples. |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts.  |
 
@@ -320,7 +319,7 @@ The `notifier` parameter can take a variety of different values. The basic usage
           # Single notifier
           notifier: telegram_1
 
-          # List of notifiers
+          # List of notifiers (native YAML)
           notifier:
           - telegram_1
           - telegram_2
@@ -328,13 +327,14 @@ The `notifier` parameter can take a variety of different values. The basic usage
           # List of notifiers (YAML flow sequence, identical to list, above)
           notifier: [ telegram_1, telegram_2 ]
 
-          # List of notifiers as a string
-          notifier: "[ telegram_1, telegram_2 ]"
+          # List of notifiers as a string.
+          # Will be interpreted as python literal, so inner quotes needed.
+          notifier: "[ 'telegram_1', 'telegram_2' ]"
 
           # Entity whose state is a list of notifiers (as a string)
-          # for example, if sensor.my_notify_list has a state: "[ telegram_1, telegram_2 ]"
+          # for example, if sensor.my_notifier_list has state: "[ 'telegram_1', 'telegram_2' ]"
           # you might say:
-          notifier: sensor.my_notify_list
+          notifier: sensor.my_notifier_list
 
 You can also specify a template that evaluates to either single notifier, a list of notifiers or to a single entity name that contains a list of notifiers
 
@@ -343,13 +343,14 @@ You can also specify a template that evaluates to either single notifier, a list
                      {% else %} mobile_app_b {% endif %}"
           
           # It can resolve to a list of notifiers
-          notifier: "{{ [ notifier_a, notifier_b ] + [ notifier_c, notifier_d ] }}"
+          notifier: "{{ [ 'notifier_a', 'notifier_b' ] + [ 'notifier_c', 'notifier_d' ] }}"
 
-          # It can resolve to the name of an entity that has a notifer or list of notifiers
+          # It can resolve to the name of an entity that has a notifier or list of notifiers
           # as its state.
           #
-          # Suppose you have two entities, one with notifiers to use when away and another to use when home.
-          # say sensor.away_notifiers has state "[ notifier_a, notifier_b ]"
+          # Suppose you have two entities, one with notifiers to use when away and another
+          # to use when home.
+          # say sensor.away_notifiers has state "[ 'notifier_a', 'notifier_b' ]"
           # and sensor.home_notifiers has state "notifier_c"
           # you could dynamically switch between them with:
           notifier: "{% if states('binary_sensor.is_away')|bool %} sensor.away_notifiers
@@ -359,11 +360,16 @@ You can also specify a template that evaluates to either single notifier, a list
           notifier: "{{ [ 'telegram_1', 'telegram_2' ] +
                         ( [ 'mobile_app_josh' ] if states('binary_sensor.is_away')|bool else [] ) }}"
 
+A technical note on quoting and lists of notifiers:<br>
+Templates evaluate to a string, even if they have a list inside. An entity's state also produces a string.  Alert2 detects lists in such strings by evaluating the string as a python literal and seeing if a list results.  So notifiers in such lists need to be quoted or the eval mechanism will think you're trying to name a variable.
+
 ### Tracked
 
 The `tracked` config subsection is for declaring event alerts that have no `trigger` specification and so can only be triggered by a service call to `alert2.report`. Declaring these alerts here avoids an "undeclared alert" alert when reporting, and also enables the system to restore the alert state when HomeAssistant restarts.
 
 Any of the above event alert parameters may be specified here except for `message` (since `alert2.report` specifies the message), `trigger` and `condition`.
+
+The `alert2.error` alert may be configured here.
 
 Example:
 
@@ -374,8 +380,10 @@ Example:
       alerts:
         ...
       tracked:
-        - domain: dahua
-          name: front_porch_fault
+        - domain: alert2
+          name: error
+          reminder_frequency_mins: 20
+          ...
         - domain: dahua
           name: side_porch_fault
 
