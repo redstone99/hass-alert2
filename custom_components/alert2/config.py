@@ -18,8 +18,17 @@ def has_atleast_oneof(alist: list, aschema):
         return obj2
     return validate
 
+def jnotifier(afield):
+    alist = cv.ensure_list(afield)
+    for elem in alist:
+        if isinstance(elem, str):
+            if len(elem) == 0:
+                raise vol.Invalid(f'Notifier can not be empty string')
+        else:
+            raise vol.Invalid(f'Notifier "{elem}" is type {type(elem)} rather than string')
+    return alist
 DEFAULTS_SCHEMA = vol.Schema({
-    vol.Optional('notifier'): cv.string,
+    vol.Optional('notifier'): vol.Any(cv.template, jnotifier),
     vol.Optional('annotate_messages'): cv.boolean,
     vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
     vol.Optional('throttle_fires_per_mins'): vol.Schema(vol.All(vol.ExactSequence([int, vol.Coerce(float)]),
@@ -29,7 +38,7 @@ SINGLE_TRACKED_SCHEMA = vol.Schema({
     vol.Required('domain'): cv.string,
     vol.Required('name'): cv.string,
     vol.Optional('friendly_name'): cv.string,
-    vol.Optional('notifier'): cv.string, #cv.template,
+    vol.Optional('notifier'): vol.Any(cv.template, jnotifier),
     vol.Optional('title'): cv.template,
     vol.Optional('target'): cv.template,
     vol.Optional('data'): dict,

@@ -154,6 +154,13 @@ class FakeHA:
             def now():
                 return dt.datetime.now() 
             pass
+class States:
+    def __init__(self):
+        self.data = {}
+    def set(self, n, v):
+        self.data[n] = v
+    def get(self, n):
+        return self.data[n] if n in self.data else None
 class FakeHass:
     def __init__(self):
         self.bus = SimpleNamespace(async_listen_once = lambda a,b: None,
@@ -167,7 +174,7 @@ class FakeHass:
         self.evHandlers = {  }
         self.servHandlers = { 'notify.persistent_notification': AsyncMock(name='persist', spec_set=[]) }
         self.loop = asyncio.get_running_loop()
-        self.states = {}
+        self.states = States()
     def verify_event_loop_thread(self, msg):
         return True
     def service_async_register(self, dom, nm, fun):
@@ -198,8 +205,8 @@ import inspect
 import os.path
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(currentdir)
-#sys.path.insert(0, parentdir)
-sys.path.append('/home/redstone/home-monitoring/homeassistant')
+sys.path.insert(0, parentdir)
+#sys.path.append('/home/redstone/home-monitoring/homeassistant')
 import custom_components.alert2 as alert2
 alert2.kNotifierInitGraceSecs = 3
 alert2.kStartupWaitPollSecs   = 0.2
@@ -554,6 +561,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nfoo.await_args_list), 2)
         self.assertEqual(len(nn.await_args_list), 2)
         self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'notifiers are not known.*\'foo2\'')
+        self.assertNotRegex(nn.await_args_list[1].args[0].data['message'], 'malformed list')
         
         # TODO - what about the los test_t7b notification?
 
@@ -573,6 +581,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nfoo.await_args_list), 3)
         self.assertEqual(len(nn.await_args_list), 4)
         self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'test_t7b.*notifier "foo2" is not known.*with message=.*turned off')
+        self.assertNotRegex(nn.await_args_list[3].args[0].data['message'], 'malformed list')
 
         # And now register foo2
         self.hass.servHandlers['notify.foo2'] = AsyncMock(name='foo2', spec_set=[])
@@ -781,11 +790,11 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         alert2.moduleLoadTime = dt.datetime.now()
         await self.initCase(cfg)
         self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
-        self.hass.states['sensor.testent'] = SimpleNamespace(state='foo')
+        self.hass.states.set('sensor.testent', SimpleNamespace(state='foo'))
         #self.hass.states['sensor.multient'] = SimpleNamespace(state='[ foo, persistent_notification ]')
-        self.hass.states['sensor.multient'] = SimpleNamespace(state='[ "foo", "persistent_notification" ]')
-        self.hass.states['sensor.unavailEnt'] = SimpleNamespace(state='unavailable')
-        self.hass.states['sensor.unavailEnt2'] = SimpleNamespace(state=None)
+        self.hass.states.set('sensor.multient', SimpleNamespace(state='[ "foo", "persistent_notification" ]'))
+        self.hass.states.set('sensor.unavailEnt', SimpleNamespace(state='unavailable'))
+        self.hass.states.set('sensor.unavailEnt2', SimpleNamespace(state=None))
         self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
         nn = self.hass.servHandlers['notify.persistent_notification']
         nfoo = self.hass.servHandlers['notify.foo']
@@ -860,10 +869,12 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(nfoo.await_args_list), fooCount)
         self.assertEqual(len(nbar.await_args_list), 1)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'not known to HA.*\'unavailable\'.*\'\\[ "foo"\', \'sensor.testent\'.*\\[ foo \\]')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'not known to HA.*\'unavailable\'.*\'\\[ "foo"\', \'sensor.testent\'.*\\[ foo \\].*malformed list')
 
         await doTst('t9x', 1, 0, False)
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_t9x.*unavailable" is not known.*sensor.unavailEnt')
+        await doTst('t9x1', 1, 0, False)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_t9x1.*is not known.*malformed list')
         
     async def test_throttle(self):
         # Check that default notifier is used
@@ -1393,6 +1404,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             { 'domain': 'test', 'name': 't23', 'friendly_name': 'friendlyt23' },
             { 'domain': 'test', 'name': 't24', 'title': 'title24' },
             { 'domain': 'test', 'name': 't25', 'target': 'targett25' },
+            { 'domain': 'test', 'name': 't25a', 'target': '{{ "ab" + "cd" }}' },
             { 'domain': 'test', 'name': 't26', 'data': { 'd1': 'data-d1' } },
         ], } }
         await self.initCase(cfg)
@@ -1433,13 +1445,19 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 6)
         self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'test_t25.*foo')
-        self.assertRegex(nn.await_args_list[5].args[0].data['target'],   'targett25')
+        self.assertEqual(nn.await_args_list[5].args[0].data['target'],   'targett25')
+
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t25a', 'message': 'foo'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 7)
+        self.assertRegex(nn.await_args_list[6].args[0].data['message'], 'test_t25a.*foo')
+        self.assertEqual(nn.await_args_list[6].args[0].data['target'],   'abcd')
 
         await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t26', 'message': 'foo'})
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 7)
-        self.assertRegex(nn.await_args_list[6].args[0].data['message'], 'test_t26.*foo')
-        self.assertDictEqual(nn.await_args_list[6].args[0].data['data'], { 'd1': 'data-d1' })
+        self.assertEqual(len(nn.await_args_list), 8)
+        self.assertRegex(nn.await_args_list[7].args[0].data['message'], 'test_t26.*foo')
+        self.assertDictEqual(nn.await_args_list[7].args[0].data['data'], { 'd1': 'data-d1' })
 
     async def test_event2(self):
         # Check throttling
