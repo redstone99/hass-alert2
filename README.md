@@ -42,8 +42,9 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - **Persistent notification details**. In your HA dashboard, you can view past alert firings as well as the message text sent in notifications.
 - **Custom frontend card**. Makes it easier to view and manage recent alerts.
 - **Hysteresis**. Reduce spurious alerts as sensors fluctuate.
+- **Template notifiers**. Dynamically specify who gets notified.
 
-Suggestions welcome! File an [Issue](https://github.com/redstone99/hass-alert2/issues).
+Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-alert2/discussions) or file an [Issue](https://github.com/redstone99/hass-alert2/issues).
 
 ## Installation
 
@@ -173,7 +174,7 @@ The text of each notification by default includes some basic context information
 
 ### Alert2 internal errors
 
-Alert2 automatically defines an alert, `alert2.error`. This alert uses your default settings. It fires and will notify you of problems in your configuration file as well as if Alert2 internally encounters a problem.  If you don't want to be notified of errors like these, an option, `skip_internal_errors`, is available. One reason this alert is important is because if Alert2 itself encounters a problem, you may stop receiving alerts for things you do care about. So in a sense, this alert is at least as important as your most important alert.
+Alert2 automatically defines an alert, `alert2.error`. This alert uses your default settings. It fires and will notify you of problems in your configuration file as well as if Alert2 internally encounters a problem, such as a notifier can not be found.  If you don't want to be notified of errors like these, an option, `skip_internal_errors`, is available. One reason this alert is important is because if Alert2 itself encounters a problem, you may stop receiving alerts for things you do care about. So in a sense, this alert is at least as important as your most important alert.
 
 
 ## Configuration
@@ -190,7 +191,7 @@ The defaults specified here apply also to internal alerts that may fire, such as
 | Key | Type | Description |
 |---|---|---|
 | `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. |
-| `notifier` | string | Name of notifier to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). |
+| `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers or an entity name whose state is a list of notifiers. See "Notifiers" section below for possibilities here.  |
 | `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notification, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
 | `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on a list of two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, "[10, 60]" means you'll receive no more than 10 notifications of the alert firing every hour.<br>Default is no throttling. |
 
@@ -236,7 +237,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `title` | template | optional | Passed as the "title" parameter to the notify service call |
 | `annotate_messages` | bool | optional | Override the default value of `annotate_messages`.  |
 | `reminder_frequency_mins` | float | optional | Override the default `reminder_frequency_mins`|
-| `notifier` | string | optional | Override the default `notifier`. If the notifier specified here is not available, then the default notifier is tried. If the default notifier is not available then notification will fall back to `notify.notify`. |
+| `notifier` | template | optional | Override the default `notifier`. |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts.  |
 
@@ -312,6 +313,51 @@ Alerts may pass additional data to the notifier which is convenient for notifica
           data:
             group: "motion-alarms"
 
+#### Notifiers
+
+The `notifier` parameter can take a variety of different values. The basic usage can specify a single notifier or list of notifiers, or an entity whose state is a list of notifiers:
+
+          # Single notifier
+          notifier: telegram_1
+
+          # List of notifiers
+          notifier:
+          - telegram_1
+          - telegram_2
+
+          # List of notifiers (YAML flow sequence, identical to list, above)
+          notifier: [ telegram_1, telegram_2 ]
+
+          # List of notifiers as a string
+          notifier: "[ telegram_1, telegram_2 ]"
+
+          # Entity whose state is a list of notifiers (as a string)
+          # for example, if sensor.my_notify_list has a state: "[ telegram_1, telegram_2 ]"
+          # you might say:
+          notifier: sensor.my_notify_list
+
+You can also specify a template that evaluates to either single notifier, a list of notifiers or to a single entity name that contains a list of notifiers
+
+          # The template can resolve to a single notifier
+          notifier: "{% if states('binary_sensor.is_away')|bool %} mobile_app_a
+                     {% else %} mobile_app_b {% endif %}"
+          
+          # It can resolve to a list of notifiers
+          notifier: "{{ [ notifier_a, notifier_b ] + [ notifier_c, notifier_d ] }}"
+
+          # It can resolve to the name of an entity that has a notifer or list of notifiers
+          # as its state.
+          #
+          # Suppose you have two entities, one with notifiers to use when away and another to use when home.
+          # say sensor.away_notifiers has state "[ notifier_a, notifier_b ]"
+          # and sensor.home_notifiers has state "notifier_c"
+          # you could dynamically switch between them with:
+          notifier: "{% if states('binary_sensor.is_away')|bool %} sensor.away_notifiers
+                     {% else %} sensor.home_notifiers {% endif %}"
+
+          # Or say you want to conditionally notify a 3rd notifier, "mobile_app_josh":
+          notifier: "{{ [ 'telegram_1', 'telegram_2' ] +
+                        ( [ 'mobile_app_josh' ] if states('binary_sensor.is_away')|bool else [] ) }}"
 
 ### Tracked
 
@@ -344,6 +390,8 @@ Example:
 
 
 ### Alert recommendations
+
+We recommend setting a value for the default notifier so the `alert2.error` alert notifications will go somewhere you wish.  You can also 
 
 As described above in `early_start`, alerts by default don't start being monitored until HA fully starts.  This is to reduce template errors during startup due to entities not being defined yet.  However, the downside is that if some problem prevents HA from fully starting, none of your alerts will be monitored.  To prevent this, we provide a binary_sensor entity, `binary_sensor.alert2_ha_startup_done`, that turns on when HA has fully started. That entity also has an attribute, `start_time`, that is the time the module loaded. Together you can use them to alert if HA startup takes too long as follows:
 
