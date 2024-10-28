@@ -174,9 +174,9 @@ The text of each notification by default includes some basic context information
 
 ### Alert2 internal errors
 
-Alert2 automatically defines an alert, `alert2.error`. This alert uses your default settings. It fires and will notify you of problems in your configuration file as well as if Alert2 internally encounters a problem, such as a notifier that does not exist.  If you don't want to be notified of errors like these, an option, `skip_internal_errors`, is available. One reason this alert is important is because if Alert2 itself encounters a problem, you may stop receiving alerts for things you do care about. So in a sense, this alert is at least as important as your most important alert.
+Alert2 automatically defines an alert, `alert2.error`. It fires and will notify you of problems in your configuration file as well as if Alert2 internally encounters a problem, such as a notifier that does not exist.  If you don't want to be notified of errors like these, an option, `skip_internal_errors`, is available. One reason this alert is important is because if Alert2 itself encounters a problem, you may stop receiving alerts for things you do care about. So in a sense, this alert is at least as important as your most important alert.
 
-`alert2.error` may be configured. See example in the [Tracked](#tracked) section, below.
+`alert2.error` may be configured. See example in the [Tracked](#tracked) section, below.  If you specify a notifier that doesn't exist for `alert2.error` itself, then it falls back to `persistent_notification`.
 
 ## Configuration
 
@@ -232,7 +232,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `message` | template | optional | Template string evaluated when the alert fires. This text is included in notifications. For event-based alerts, the message can reference the `trigger` variable (see example below). Because notifications by default include context information like the alert domain and name, the message can be brief or even omitted all together |
 | `done_message` | template | optional | Message to send when a condition alert turns off.  Replaces the default message (e.g., "Alert2 [name] turned off after x minutes") |
 | `data` | dict | optional | Optional dictionary passed as the "data" parameter to the notify service call |
-| `target` | string | optional | String passed as the "target" parameter to the notify service call |
+| `target` | template | optional | Passed as the "target" parameter to the notify service call |
 | `title` | template | optional | Passed as the "title" parameter to the notify service call |
 | `annotate_messages` | bool | optional | Override the default value of `annotate_messages`.  |
 | `reminder_frequency_mins` | float | optional | Override the default `reminder_frequency_mins`|
