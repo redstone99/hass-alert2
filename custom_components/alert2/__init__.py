@@ -20,7 +20,7 @@ from   homeassistant.const import (
 )
 from   homeassistant.core import HomeAssistant, callback, Context, Event, EventStateChangedData
 import homeassistant.const as haConst
-from   homeassistant.exceptions import TemplateError
+from   homeassistant.exceptions import TemplateError, ServiceNotFound
 from   homeassistant.helpers import template as template_helper, discovery
 import homeassistant.helpers.config_validation as cv
 from   homeassistant.helpers.entity_component import EntityComponent
@@ -499,6 +499,7 @@ class AlertBase(RestoreEntity):
                 pass # skip notifying
             else:
                 if self.alDomain == DOMAIN and self.alName == 'error':
+                    # Since alert2 depends on notify, we should be assured that persistent_notification exists.
                     notifier_list = [ 'persistent_notification' ]
                 else:
                     # errors should have reason for missing notifiers, and it'll be reported
@@ -710,10 +711,19 @@ class AlertBase(RestoreEntity):
             if len(notifier_list) > 0:
                 _LOGGER.warning(f'Notifying {notifier_list}: {args["message"]}')
                 async def foo():
-                    futures = [ self.hass.services.async_call(
-                        'notify', notifier, # eg 'raw_jtelegram'
-                        args) for notifier in notifier_list ]
-                    await asyncio.gather(*futures)
+                    for notifier in notifier_list:
+                        try:
+                            await self.hass.services.async_call('notify', notifier, # eg 'raw_jtelegram'
+                                                                args)
+                        except ServiceNotFound:
+                            # We check has_service and depend on notify in manifest,
+                            # so this should never happen.  But don't report in case it's for alert2.error
+                            # so we don't loop.
+                            _LOGGER.error(f'{gAssertMsg} {self.name} Somehow notify of {notifier} failed with ServiceNotFound. args={args}')
+                    #futures = [ self.hass.services.async_call(
+                    #    'notify', notifier, # eg 'raw_jtelegram'
+                    #    args) for notifier in notifier_list ]
+                    #await asyncio.gather(*futures)
                     _LOGGER.debug(f'Notifying done: {notifier_list}')
                 atask = create_task(self.hass, DOMAIN, foo())
             if len(defer_notifier_list) > 0:
@@ -973,8 +983,11 @@ class ConditionAlertBase(AlertBase):
     # Call when alert would otherwise be on
     # return True if will wait for delayed on
     def delayed_on_check(self, toState):
+        #_LOGGER.warning(f'delayed_on_check for {toState}')
         async def dodelay():
+            #_LOGGER.warning(f'sleeping delay_on for  {self.delay_on_secs}')
             await asyncio.sleep(self.delay_on_secs)
+            #_LOGGER.warning(f'         delay_on sleep done')
             self.update_state_internal2(True)
             self.cond_true_time = None
             self.cond_true_task = None
@@ -985,8 +998,11 @@ class ConditionAlertBase(AlertBase):
                     _LOGGER.debug(f'{self.name}, starting delay of {self.delay_on_secs} until turning on')
                     self.cond_true_time = dt.now()
                     self.cond_true_task = create_background_task(self.hass, DOMAIN, dodelay())
-                else:
-                    report(DOMAIN, 'error', f'{gAssertMsg} {self.name} turning on but already have delayed wait set')
+                # If cond_true_time is already set, it could just be that
+                # update_state_internal has been called twice for the same "on" state.
+                # E.g., if we exceeded a threshold, then exceed it a bit more.
+                # report(DOMAIN, 'error', f'{gAssertMsg} {self.name} turning on but already have delayed wait set')
+                # Return here so we don't notify till cond_true_task is ready
                 return True
             # else: already on, so fall through
         else:
@@ -1292,6 +1308,16 @@ class ConditionAlert(ConditionAlertBase):
                     pass # threshold_exceeded is unchanged
                 else:
                     self.threshold_exceeded = ThresholdExeeded.Init
+            else:  # state is 'off'
+                # If state is off, the generally we expect threshold_exceeded to be Init.
+                # since the earlier turning off would have reset it.
+                # but with delay_on_secs, it could be we exceeded threshold then dropped below it again
+                # before turning on.  In that case, there's no hysteresis.
+                # So hysteresis only applies once the alert has turned on.
+                #
+                # Actually, state could be off because the condition is false.  In this case also,
+                # we don't track hysteresis
+                self.threshold_exceeded = ThresholdExeeded.Init
                     
             # Now update newState
             if condition_bool is False:
@@ -1301,6 +1327,7 @@ class ConditionAlert(ConditionAlertBase):
             else:
                 report(DOMAIN, 'error', f'{gAssertMsg} template for {self.name}: condition_bool is neither None or bool. Is {condition_bool} {type(condition_bool)}')
                 newState = False
+        #_LOGGER.warning(f'about to update_state_internal with {condition_bool} {aboveMax} {belowMin} {self.threshold_exceeded}')
         return self.update_state_internal(newState)
 
 class ConditionAlertManual(ConditionAlertBase):

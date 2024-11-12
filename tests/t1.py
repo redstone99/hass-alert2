@@ -36,6 +36,8 @@ sys.modules['homeassistant.core'] = FakeCore
 class FakeExceptions:
     class TemplateError(Exception):
         pass
+    class ServiceNotFound(Exception):
+        pass
 sys.modules['homeassistant.exceptions'] = FakeExceptions
 class FakeHelpers:
     class template:
@@ -186,7 +188,10 @@ class FakeHass:
         asyncio.get_running_loop().create_task(self.evHandlers[ev](obj))
     async def service_async_call(self, dom, nm, args):
         call = SimpleNamespace(data = args)
-        await self.servHandlers[f'{dom}.{nm}'](call)
+        fulln = f'{dom}.{nm}'
+        if not fulln in self.servHandlers:
+            raise FakeExceptions.ServiceNotFound(f'not found {fulln}')
+        await self.servHandlers[fulln](call)
     def async_create_task(self, afut, eager_start=False ):
         return asyncio.get_running_loop().create_task(afut)
     def async_create_background_task(self, afut, name, eager_start=False ):
@@ -1006,6 +1011,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         ], } }
         await self.initCase(cfg)
         t17 = self.gad.alerts['test']['t17']
+        t17a = self.gad.alerts['test']['t17']
         nn = self.hass.servHandlers['notify.persistent_notification']
         
         doConditionUpdate(t17, True)
@@ -1024,12 +1030,17 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         # so sleeping a bit more shouldn't trigger reminder
         await asyncio.sleep(0.2)
         self.assertEqual(len(nn.await_args_list), 1)
+
+        # Sleeping a bit more should now trigger it
+        await asyncio.sleep(0.8)
+        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'test_t17.*on for')
         
         doConditionUpdate(t17, False)
         self.assertEqual(t17.state, 'off')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 2)
-        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'test_t17.*turned off')
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'test_t17.*turned off')
         
     async def test_threshold(self):
         # Check that default notifier is used
@@ -1317,7 +1328,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[24].args[0].data['message'], 'test_t20: turned off')
         self.assertEqual(t20.state, 'off')
 
-        # check threshold tracking even when condition is false
+        # No threshold tracking even when condition is false
         setCondition(t20, False)
         doValueUpdate(t20, '-1')
         await asyncio.sleep(0.1)
@@ -1327,52 +1338,57 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.1)
         self.assertEqual(len(nn.await_args_list), 25)
         self.assertEqual(t20.state, 'off')
-
         doConditionUpdate(t20, True)
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 26)
-        self.assertRegex(nn.await_args_list[25].args[0].data['message'], 'test_t20: turned on')
-        self.assertEqual(t20.state, 'on')
+        self.assertEqual(len(nn.await_args_list), 25)
+        self.assertEqual(t20.state, 'off')
 
+        perCount = 25
         doCondValueUpdate(t20, False, '11')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 27)
-        self.assertRegex(nn.await_args_list[26].args[0].data['message'], 'test_t20: turned off')
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t20.state, 'off')
 
         doCondValueUpdate(t20, False, '9')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 27)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t20.state, 'off')
 
+        # condition true, we don't track hysteresis coming from above max, so no turn on
         doConditionUpdate(t20, True)
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 28)
-        self.assertRegex(nn.await_args_list[27].args[0].data['message'], 'test_t20: turned on')
-        self.assertEqual(t20.state, 'on')
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(t20.state, 'off')
 
         # Lastly a temlate error
         doConditionUpdate(t20, '{{ zz')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 29)
-        self.assertRegex(nn.await_args_list[28].args[0].data['message'], 'err')
-        self.assertEqual(t20.state, 'on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'err')
+        self.assertEqual(t20.state, 'off')
 
         doConditionUpdate(t20, False)
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 30)
-        self.assertRegex(nn.await_args_list[29].args[0].data['message'], 'test_t20: turned off')
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t20.state, 'off')
         
     async def test_threshold2(self):
         # Check that default notifier is used
         cfg = { 'alert2' : { 'alerts' : [
-            { 'domain': 'test', 'name': 't21', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'minimum': 0 } },
+            { 'domain': 'test', 'name': 't21',  'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'minimum': 0 } },
+            { 'domain': 'test', 'name': 't21a', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'maximum': 10 }, 'delay_on_secs': 0.5 },
+            { 'domain': 'test', 'name': 't21b', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'minimum': 0 }, 'delay_on_secs': 0.5 },
+            { 'domain': 'test', 'name': 't21c', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'minimum':0, 'maximum': 10 }, 'delay_on_secs': 0.5 },
         ], } }
         await self.initCase(cfg)
         t21 = self.gad.alerts['test']['t21']
+        t21a = self.gad.alerts['test']['t21a']
+        t21b = self.gad.alerts['test']['t21b']
+        t21c = self.gad.alerts['test']['t21c']
         nn = self.hass.servHandlers['notify.persistent_notification']
         self.assertEqual(t21.state, 'off')
+        self.assertEqual(t21a.state, 'off')
 
         # Test hysteresis without a condition
         doValueUpdate(t21, '1')
@@ -1386,6 +1402,11 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'test_t21: turned on')
         self.assertEqual(t21.state, 'on')
 
+        doValueUpdate(t21, '-1.1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertEqual(t21.state, 'on')
+        
         doValueUpdate(t21, '1')
         await asyncio.sleep(0.1)
         self.assertEqual(len(nn.await_args_list), 1)
@@ -1396,7 +1417,88 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), 2)
         self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'test_t21: turned off')
         self.assertEqual(t21.state, 'off')
+        await self.waitForAllBut(self.oldTasks)
 
+        # Test thresh with delay_on, so we get multiple updates while it's firing.
+        doValueUpdate(t21a, '11')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertEqual(t21a.state, 'off')
+        doValueUpdate(t21a, '12')
+        await asyncio.sleep(0.1)
+        self.assertEqual(t21a.state, 'off')
+        self.assertEqual(len(nn.await_args_list), 2)
+        await asyncio.sleep(1)
+        self.assertEqual(t21a.state, 'on')
+        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'test_t21a: turned on')
+        doValueUpdate(t21a, '1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(t21a.state, 'off')
+        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'test_t21a: turned off')
+        await self.waitForAllBut(self.oldTasks)
+
+        # Try again, with multiple ticks on past threshold, but turn off before it fully turns on
+        doValueUpdate(t21a, '11')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(t21a.state, 'off')
+        doValueUpdate(t21a, '12')
+        await asyncio.sleep(0.1)
+        self.assertEqual(t21a.state, 'off')
+        self.assertEqual(len(nn.await_args_list), 4)
+        doValueUpdate(t21a, '10')
+        await asyncio.sleep(0.1)
+        self.assertEqual(t21a.state, 'off')
+        self.assertEqual(len(nn.await_args_list), 4)
+        await asyncio.sleep(1)
+        self.assertEqual(t21a.state, 'off')
+        self.assertEqual(len(nn.await_args_list), 4)
+        await self.waitForAllBut(self.oldTasks)
+
+        # Same with minimum
+        doValueUpdate(t21b, '-1')
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(t21b.state, 'off')
+        doValueUpdate(t21b, '-2')
+        await asyncio.sleep(0.1)
+        self.assertEqual(t21b.state, 'off')
+        self.assertEqual(len(nn.await_args_list), 4)
+        doValueUpdate(t21b, '0')
+        await asyncio.sleep(0.1)
+        self.assertEqual(t21b.state, 'off')
+        self.assertEqual(len(nn.await_args_list), 4)
+        await asyncio.sleep(1)
+        self.assertEqual(t21b.state, 'off')
+        self.assertEqual(len(nn.await_args_list), 4)
+        await self.waitForAllBut(self.oldTasks)
+
+        # Same with max+min
+        doValueUpdate(t21c, '-1')
+        await asyncio.sleep(0.2)
+        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(t21c.state, 'off')
+        doValueUpdate(t21c, '-2')
+        await asyncio.sleep(0.2)
+        self.assertEqual(t21c.state, 'off')
+        self.assertEqual(len(nn.await_args_list), 4)
+        # we're close to 0.5 secs to turn on.  Now switch poles.
+        # so 0.3 should be enough to turn it on
+        doValueUpdate(t21c, '11')
+        await asyncio.sleep(0.3)
+        self.assertEqual(t21c.state, 'on')
+        self.assertEqual(len(nn.await_args_list), 5)
+        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'test_t21c: turned on')
+        doValueUpdate(t21c, '5')
+        await asyncio.sleep(1)
+        self.assertEqual(t21c.state, 'off')
+        self.assertEqual(len(nn.await_args_list), 6)
+        self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'test_t21c: turned off')
+        await self.waitForAllBut(self.oldTasks)
+
+        
     async def test_event(self):
         # Check that default notifier is used
         cfg = { 'alert2' : { 'tracked' : [
