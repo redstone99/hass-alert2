@@ -14,6 +14,8 @@ _LOGGER = logging.getLogger(None) # get root logger
 _LOGGER.setLevel(logging.DEBUG)
 from types import SimpleNamespace
 
+global_hass = None
+
 class FakeConst:
     MAJOR_VERSION = 2024
     MINOR_VERSION = 10
@@ -32,6 +34,10 @@ class FakeCore:
         pass
     class EventStateChangedData:
         pass
+    @staticmethod
+    def async_get_hass_or_none():
+        global global_hass
+        return global_hass
 sys.modules['homeassistant.core'] = FakeCore
 class FakeExceptions:
     class TemplateError(Exception):
@@ -39,6 +45,11 @@ class FakeExceptions:
     class ServiceNotFound(Exception):
         pass
 sys.modules['homeassistant.exceptions'] = FakeExceptions
+class FakeConfigEntries:
+    class ConfigEntry:
+        pass
+sys.modules['homeassistant.config_entries'] = FakeConfigEntries
+
 class FakeHelpers:
     class template:
         @staticmethod
@@ -281,7 +292,9 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         print('setting up')
         self.oldTasks = asyncio.all_tasks()
         self.hass = FakeHass()
-        alert2.global_hass = self.hass
+        global global_hass
+        #assert global_hass is None
+        global_hass = self.hass
         self.gad = alert2.Alert2Data(self.hass, cfg)
         self.hass.data = { alert2.DOMAIN : self.gad }
         await self.gad.init2()
@@ -290,6 +303,9 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
                 self.gad.alerts[dom][name].startWatchingEv(None) # normally called when EVENT_HOMEASSISTANT_STARTED happens
     #def setup(self):
     #    pass
+    def tearDown(self):
+        global global_hass
+        global_hass = None
     async def test_badarg1(self):
         cfg = { 'alert2' : {
             'defaults' : {
@@ -820,6 +836,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(nfoo.await_args_list), fooCount)
         
         for tname in [ 't9a', 't9b', 't9c', 't9d', 't9e', 't9f', 't9g', 't9h', 't9i', 't9j', 't9k', 't9l', 't9m', 't9n' ]:
+            print(f'tname = {tname}')
             await doTst(tname, 0, 1)
             #alertEnt = self.gad.alerts['test'][tname]
             #doConditionUpdate(alertEnt, True)
@@ -937,8 +954,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         t16 = self.gad.alerts['test']['t16']
         t16a = self.gad.tracked['test']['t16a']
         allt = [ t10, t11, t12, t13, t14, t15, t16 ]
-        alert2.haConst.MAJOR_VERSION = 2024
-        alert2.haConst.MINOR_VERSION = 9
+        FakeConst.MAJOR_VERSION = 2024
+        FakeConst.MINOR_VERSION = 9
         for at in allt:
             doConditionUpdate(at, True)
             await asyncio.sleep(0.05) # so reminders are ordered
@@ -978,26 +995,26 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[20].args[0].data['message'], 'turned off after')
 
         # As of 2024.10, HA no longer does template interpretation of message arg to notify
-        alert2.haConst.MAJOR_VERSION = 2024
-        alert2.haConst.MINOR_VERSION = 9
+        FakeConst.MAJOR_VERSION = 2024
+        FakeConst.MINOR_VERSION = 9
         await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t16a', 'message': 'm1'})
         await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 22)
         self.assertEqual(nn.await_args_list[21].args[0].data['message'], '{% raw %}Alert2 test_t16a: m1{% endraw %}')
-        alert2.haConst.MAJOR_VERSION = 2023
-        alert2.haConst.MINOR_VERSION = 11
+        FakeConst.MAJOR_VERSION = 2023
+        FakeConst.MINOR_VERSION = 11
         await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t16a', 'message': 'm2'})
         await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 23)
         self.assertEqual(nn.await_args_list[22].args[0].data['message'], '{% raw %}Alert2 test_t16a: m2{% endraw %}')
-        alert2.haConst.MAJOR_VERSION = 2024
-        alert2.haConst.MINOR_VERSION = 10
+        FakeConst.MAJOR_VERSION = 2024
+        FakeConst.MINOR_VERSION = 10
         await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t16a', 'message': 'm3'})
         await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 24)
         self.assertEqual(nn.await_args_list[23].args[0].data['message'], 'Alert2 test_t16a: m3')
-        alert2.haConst.MAJOR_VERSION = 2025
-        alert2.haConst.MINOR_VERSION = 5
+        FakeConst.MAJOR_VERSION = 2025
+        FakeConst.MINOR_VERSION = 5
         await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t16a', 'message': 'm4'})
         await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 25)
@@ -1673,9 +1690,11 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         cfg = { 'alert2' : { 'tracked': [
             { 'domain': 'test', 'name': 't30', 'friendly_name': 'happyt30' },
             { 'domain': 'test', 'name': 't30' }, # duplicate
+            { 'domain': 'test', 'name': 't30a' }, # duplicate
         ], 'alerts' : [
             { 'domain': 'test', 'name': 't31', 'condition': 3 },
             { 'domain': 'test', 'name': 't31', 'condition': 3.1 }, # duplicate declaration
+            { 'domain': 'test', 'name': 't30a', 'condition': 3.1 }, # duplicate declaration
             { 'domain': 'test', 'name': 't32', 'condition': 3.2, 'trigger': 'fff' }, 
             { 'domain': 'test', 'name': 't32', 'condition': 3.3, 'trigger': 'fff2' },  # duplicate
             { 'domain': 'test', 'name': 't33', 'condition': 'foo.bar' },
@@ -1688,11 +1707,12 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.initCase(cfg)
         await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
-        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(len(nn.await_args_list), 5)
         self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'Duplicate.*t30')
         self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'Duplicate.*t31')
-        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Duplicate.*t32')
-        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'expected dictionary.*t35')
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Duplicate.*t30a')
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'Duplicate.*t32')
+        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'expected dictionary.*t35')
 
         self.assertEqual(self.gad.tracked['test']['t30']._friendly_name, 'happyt30')
         self.assertEqual(self.gad.alerts['test']['t31']._condition_template.template, '3')
@@ -1759,7 +1779,93 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         nn = self.hass.servHandlers['notify.persistent_notification']
         self.assertEqual(len(nn.await_args_list), 1)
         self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'expected a dictionary')
+        
+    async def test_unack(self):
+        # Check that default notifier is used
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': 't40', 'condition': '{{ true }}', 'reminder_frequency_mins': 0.01 },
+        ],  'tracked' : [
+            { 'domain': 'test', 'name': 't41', 'throttle_fires_per_mins': [1, 0.01] },
+        ] } }
+        await self.initCase(cfg)
+        t40 = self.gad.alerts['test']['t40']
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        perCount = 0
+        
+        doConditionUpdate(t40, True)
+        await asyncio.sleep(0.1)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't40.*turned on')
+        await t40.async_ack()
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        await t40.async_unack()
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), perCount)
 
+        # it should fire after 0.9 secs more of sleeping + 1 sec bufer time
+        await asyncio.sleep(2)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't40.*on for ')
+
+        # Ack and so no notification.
+        await t40.async_ack()
+        await asyncio.sleep(2)
+        self.assertEqual(len(nn.await_args_list), perCount)
+
+        # it's been a while since last notify, so unack'ing should result in immediate notify
+        await t40.async_unack()
+        await asyncio.sleep(0.1)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't40.*on for ')
+
+        # and also future reminders
+        await asyncio.sleep(2)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't40.*on for ')
+        
+        # Now turn off
+        await t40.async_ack()
+        await asyncio.sleep(0.1)
+        doConditionUpdate(t40, False)
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+
+        t41 = self.gad.tracked['test']['t41']
+        # First two should notify fine
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t41'})
+        await asyncio.sleep(0.1)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't41')
+
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t41'})
+        await asyncio.sleep(0.1)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Throttling started.*t41')
+
+        # Now should have notification built up
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t41'})
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        # Ack erases the unotififed firing (fires_since_last_notify).  and unack does not restore it
+        await t41.async_ack()
+        await asyncio.sleep(0.1)
+        await t41.async_unack()
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        await self.waitForAllBut(self.oldTasks)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Throttling ending.*t41.*Did not fire')
+
+
+        
         
 if __name__ == '__main__':
     unittest.main()
