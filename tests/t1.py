@@ -14,8 +14,6 @@ _LOGGER = logging.getLogger(None) # get root logger
 _LOGGER.setLevel(logging.DEBUG)
 from types import SimpleNamespace
 
-global_hass = None
-
 class FakeConst:
     MAJOR_VERSION = 2024
     MINOR_VERSION = 10
@@ -34,10 +32,6 @@ class FakeCore:
         pass
     class EventStateChangedData:
         pass
-    @staticmethod
-    def async_get_hass_or_none():
-        global global_hass
-        return global_hass
 sys.modules['homeassistant.core'] = FakeCore
 class FakeExceptions:
     class TemplateError(Exception):
@@ -69,7 +63,11 @@ class FakeHelpers:
             #return bool(rez)
         pass
     class discovery:
-        pass
+        @staticmethod
+        def async_load_platform(*args):
+            async def foo():
+                pass
+            return foo()
 sys.modules['homeassistant.helpers'] = FakeHelpers
 def fake_template(value):
     class FakeTemplate:
@@ -188,6 +186,7 @@ class FakeHass:
         self.servHandlers = { 'notify.persistent_notification': AsyncMock(name='persist', spec_set=[]) }
         self.loop = asyncio.get_running_loop()
         self.states = States()
+        self.data = {}
     def verify_event_loop_thread(self, msg):
         return True
     def service_async_register(self, dom, nm, fun):
@@ -221,8 +220,8 @@ import inspect
 import os.path
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(currentdir)
-sys.path.insert(0, parentdir)
-#sys.path.append('/home/redstone/home-monitoring/homeassistant')
+#sys.path.insert(0, parentdir)
+sys.path.append('/home/redstone/home-monitoring/homeassistant')
 import custom_components.alert2 as alert2
 alert2.kNotifierInitGraceSecs = 3
 alert2.kStartupWaitPollSecs   = 0.2
@@ -271,6 +270,7 @@ def setCondition(aler, rez):
 
 class FooTest(unittest.IsolatedAsyncioTestCase):
     async def waitForAllBut(self, oldTasks):
+        await asyncio.sleep(0) # let events fire
         count = 0
         while True:
             newTasks = asyncio.all_tasks()
@@ -292,20 +292,19 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         print('setting up')
         self.oldTasks = asyncio.all_tasks()
         self.hass = FakeHass()
-        global global_hass
-        #assert global_hass is None
-        global_hass = self.hass
-        self.gad = alert2.Alert2Data(self.hass, cfg)
-        self.hass.data = { alert2.DOMAIN : self.gad }
-        await self.gad.init2()
+        await alert2.async_setup(self.hass, cfg)
+        self.gad = self.hass.data[alert2.DOMAIN]
+        #self.gad = alert2.Alert2Data(self.hass, cfg)
+        #self.hass.data = { alert2.DOMAIN : self.gad }
+        #await self.gad.init2()
+        #await self.gad.haStartedEv(None)
         for dom in self.gad.alerts:
             for name in self.gad.alerts[dom]:
                 self.gad.alerts[dom][name].startWatchingEv(None) # normally called when EVENT_HOMEASSISTANT_STARTED happens
     #def setup(self):
     #    pass
-    def tearDown(self):
-        global global_hass
-        global_hass = None
+    #def tearDown(self):
+    #    pass
     async def test_badarg1(self):
         cfg = { 'alert2' : {
             'defaults' : {
