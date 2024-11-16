@@ -4,6 +4,7 @@
 import unittest
 import re
 from unittest.mock import AsyncMock, Mock
+from numbers import Number
 import sys
 import asyncio
 import datetime as dt
@@ -223,8 +224,7 @@ parentdir = os.path.dirname(currentdir)
 #sys.path.insert(0, parentdir)
 sys.path.append('/home/redstone/home-monitoring/homeassistant')
 import custom_components.alert2 as alert2
-alert2.kNotifierInitGraceSecs = 3
-alert2.kStartupWaitPollSecs   = 0.2
+alert2.kNotifierStartupGraceSecs = 3
 
 def doConditionUpdate(aler, rez):
     #assert isinstance(rez, bool)
@@ -568,7 +568,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.hass.servHandlers['notify.foo'] = AsyncMock(name='foo', spec_set=[])
         nfoo = self.hass.servHandlers['notify.foo']
         self.assertEqual(len(nfoo.await_args_list), 0)
-        await asyncio.sleep(1.2 * alert2.kStartupWaitPollSecs)
+        kStartupWaitPollSecs = alert2.kNotifierStartupGraceSecs / alert2.kStartupWaitPollFactor
+        await asyncio.sleep(1.2 * kStartupWaitPollSecs)
         self.assertEqual(len(nfoo.await_args_list), 2)
         self.assertEqual(len(nn.await_args_list), 1)
         self.assertEqual(nfoo.await_args_list[0].args[0].data['message'], 'Alert2 test_t7a: turned on')
@@ -577,7 +578,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         ###
         # Now let the rest of the grace period interval elapse. Should get errors finally
         # ( we already waited some, so waiting the full kNotifierInitGraceSecs should be adequate )
-        await asyncio.sleep(alert2.kNotifierInitGraceSecs)
+        await asyncio.sleep(alert2.kNotifierStartupGraceSecs)
         self.assertEqual(len(nfoo.await_args_list), 2)
         self.assertEqual(len(nn.await_args_list), 2)
         self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'notifiers are not known.*\'foo2\'')
@@ -656,7 +657,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.hass.servHandlers['notify.foo'] = AsyncMock(name='foo', spec_set=[])
         nfoo = self.hass.servHandlers['notify.foo']
         self.assertEqual(len(nfoo.await_args_list), 0)
-        await asyncio.sleep(1.2 * alert2.kStartupWaitPollSecs)
+        kStartupWaitPollSecs = alert2.kNotifierStartupGraceSecs / alert2.kStartupWaitPollFactor
+        await asyncio.sleep(1.2 * kStartupWaitPollSecs)
         self.assertEqual(len(nn.await_args_list), 3)
         self.assertEqual(len(nfoo.await_args_list), 3)
         self.assertEqual(nfoo.await_args_list[0].args[0].data['message'], 'Alert2 test_t7c: turned on')
@@ -664,7 +666,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nfoo.await_args_list[2].args[0].data['message'], 'Alert2 test_t7e: turned on')
 
         # Now let rest of startup grace period elapse.
-        await asyncio.sleep(alert2.kNotifierInitGraceSecs)
+        await asyncio.sleep(alert2.kNotifierStartupGraceSecs)
         self.assertEqual(len(nn.await_args_list), 4)
         self.assertEqual(len(nfoo.await_args_list), 3)
         self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'notifiers are not known.*\'foo2\'')
@@ -727,7 +729,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
 
         # Wait for end of startup period. Error reported, but since foo2 doesn't exist, it falls
         # back to persistent one
-        await asyncio.sleep(alert2.kNotifierInitGraceSecs + 0.3)
+        await asyncio.sleep(alert2.kNotifierStartupGraceSecs + 0.3)
         self.assertEqual(len(nn.await_args_list), 1)
         self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'notifiers are not known.*\'foo\'.*"foo2" is not known')
 
@@ -877,15 +879,15 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         
         self.hass.services.async_register('notify','bar', AsyncMock(name='bar', spec_set=[]))
         nbar = self.hass.servHandlers['notify.bar']
-        await asyncio.sleep(1.2 * alert2.kStartupWaitPollSecs)
+        kStartupWaitPollSecs = alert2.kNotifierStartupGraceSecs / alert2.kStartupWaitPollFactor
+        await asyncio.sleep(1.2 * kStartupWaitPollSecs)
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(nfoo.await_args_list), fooCount)
         self.assertEqual(len(nbar.await_args_list), 1)
         self.assertRegex(nbar.await_args_list[0].args[0].data['message'], f'test_t9w.*turned on')
-
         
         # Wait rest of startup grace period
-        await asyncio.sleep(alert2.kNotifierInitGraceSecs + 0.3)
+        await asyncio.sleep(alert2.kNotifierStartupGraceSecs + 0.3)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(nfoo.await_args_list), fooCount)
@@ -1863,7 +1865,173 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Throttling ending.*t41.*Did not fire')
 
+    async def test_grace(self):
+        # Test some invalid value, no defer, so notify soon
+        cfg = { 'alert2' : { 'notifier_startup_grace_secs': None, 'defer_startup_notifications': False } }
+        await self.initCase(cfg)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        await asyncio.sleep(0.1)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'expected float')
+        await self.waitForAllBut(self.oldTasks)  # will wait a default 3 secs
 
+        # Test some invalid value, with defer, so notify after grace expires
+        cfg = { 'alert2' : { 'notifier_startup_grace_secs': '', 'defer_startup_notifications': True } }
+        alert2.moduleLoadTime = dt.datetime.now()
+        await self.initCase(cfg)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        await self.waitForAllBut(self.oldTasks)  # will wait a default 3 secs
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'expected float')
+
+        # Test no grace, notify should be immediate
+        cfg = { 'alert2' : { 'notifier_startup_grace_secs': 0, 'defer_startup_notifications': False,
+                             'tracked': [ { 'domain': 'test', 'name': 't42', 'notifier': 'persistent_notification' },
+                                          { 'domain': 'test', 'name': 't43', 'notifier': 'foo' } ] } }
+        alert2.moduleLoadTime = dt.datetime.now()
+        await self.initCase(cfg)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t42'})
+        await asyncio.sleep(0.1)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t42')
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t43'})
+        await asyncio.sleep(0.1)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't43.*foo.*is not known')
+        await self.waitForAllBut(self.oldTasks)
+
+        # Test no grace, notify should be immediate, even with defer to True
+        cfg = { 'alert2' : { 'notifier_startup_grace_secs': 0, 'defer_startup_notifications': True,
+                             'tracked': [ { 'domain': 'test', 'name': 't44', 'notifier': 'persistent_notification' },
+                                         ] } }
+        alert2.moduleLoadTime = dt.datetime.now()
+        await self.initCase(cfg)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t44'})
+        await asyncio.sleep(0.1)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t44')
+        await self.waitForAllBut(self.oldTasks)
+
+        # Test some grace
+        cfg = { 'alert2' : { 'notifier_startup_grace_secs': 1.5, 'defer_startup_notifications': False,
+                             'tracked': [ { 'domain': 'test', 'name': 't45', 'notifier': 'persistent_notification' },
+                                          { 'domain': 'test', 'name': 't46', 'notifier': 'foo' } ] } }
+        alert2.moduleLoadTime = dt.datetime.now()
+        await self.initCase(cfg)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t45'})
+        await asyncio.sleep(0.1)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t45')
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t46'})
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        #   unknown notifier waits for grace period
+        await asyncio.sleep(2)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'not known to HA.*\'foo\'')
+        await self.waitForAllBut(self.oldTasks)
+
+        # Test some grace and defer
+        cfg = { 'alert2' : { 'notifier_startup_grace_secs': 1.5, 'defer_startup_notifications': True,
+                             'tracked': [ { 'domain': 'test', 'name': 't47', 'notifier': 'persistent_notification' },
+                                          { 'domain': 'test', 'name': 't48', 'notifier': 'foo' } ] } }
+        alert2.moduleLoadTime = dt.datetime.now()
+        await self.initCase(cfg)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t47'})
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t48'})
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        #   wait for rest of grace period
+        await asyncio.sleep(2)
+        self.assertEqual(len(nn.await_args_list), perCount + 2)
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t47')
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'not known to HA.*\'foo\'')
+        await self.waitForAllBut(self.oldTasks)
+
+        _LOGGER.warning('\n\n')
+        # Test defer naming specific list
+        cfg = { 'alert2' : { 'notifier_startup_grace_secs': 1.5, 'defer_startup_notifications': ['fooexist','foono'],
+                             'tracked': [ { 'domain': 'test', 'name': 't49', 'notifier': 'fooexist' },
+                                          { 'domain': 'test', 'name': 't50', 'notifier': 'foono' },
+                                          { 'domain': 'test', 'name': 't51', 'notifier': 'persistent_notification' },
+                                          { 'domain': 'test', 'name': 't52', 'notifier': 'foono2' } ] } }
+        alert2.moduleLoadTime = dt.datetime.now()
+        await self.initCase(cfg)
+        self.hass.services.async_register('notify','fooexist', AsyncMock(name='fooexist', spec_set=[]))
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        nfoo = self.hass.servHandlers['notify.fooexist']
+        
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t49'})
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t50'})
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t51'})
+        await asyncio.sleep(0.1)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t51')
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t52'})
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        fooCount = 0
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        #   wait for rest of grace period
+        await asyncio.sleep(2)
+        fooCount += 1
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], 'Alert2 test_t49')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'not known to HA.*\'foono\'.*\'foono2\'')
+        await self.waitForAllBut(self.oldTasks)
+
+    async def test_snooze(self):
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': 't50', 'condition': '{{ zzz }}', 'reminder_frequency_mins': 0.01 },
+        ],  'tracked' : [
+            { 'domain': 'test', 'name': 't51' },
+        ] } }
+        await self.initCase(cfg)
+        t50 = self.gad.alerts['test']['t50']
+        t51 = self.gad.tracked['test']['t51']
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        perCount = 0
+
+        uptimeSecs = (dt.now().total_seconds() + 1)
+
+        await t50.async_notification_control(True, )
+        
+        doConditionUpdate(t40, True)
+        await asyncio.sleep(0.1)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't40.*turned on')
         
         
 if __name__ == '__main__':
