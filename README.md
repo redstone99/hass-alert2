@@ -127,7 +127,7 @@ Each alert maintains a bit indicating whether it has been ack'd or not.  That bi
 
 ### Notifications
 
-Notifications are sent when an event alert fires, when a condition alert starts or stops firing, and periodically as a reminder that the condition alert is still firing.  You can optionally request that notifications be sent at the end of periods when notifications where snoozed or throttled if there was any alert acttivity in the interval. This is via the `summary_notifier` config option.
+Notifications are sent when an event alert fires, when a condition alert starts or stops firing, and periodically as a reminder that the condition alert is still firing.  You can optionally request that notifications be sent at the end of periods when notifications where snoozed or throttled if there was any alert activity in the interval. This is via the `summary_notifier` config option.
 
 Each notification by default includes some basic context information (detailed below).  An alert can also specify a template `message` to be sent  each time the alert fires. That message is sent out with notifications and also is viewable in the front-end UI.  Condition alerts can also specify a `done_message` to be sent when the alert stops firing.
 
@@ -176,10 +176,10 @@ The text of each notification by default includes some basic context information
 
 You can specify which notifiers are used for alerting via the `notifier` and `summary_notifier` config options. They may be a single notifier, a list of notifiers, a template resolving to a list of notifiers, or the name of an entity whose state is a list of notifiers. See [Notifier Config](#notifier-config) section, below.
 
-During HA startup, HA initializes notifiers independentaly of the rest of HA.  So notifiers may not be ready even when HA declares that it has fully started.  Alert2 will defer notifications during startup if a notifier does not yet exist. `notifier_startup_grace_secs` controls the length of the startup grace period.
+During HA startup, HA initializes notifiers independently of the rest of HA.  So notifiers may not be ready even when HA declares that it has fully started.  Alert2 will defer notifications during startup if a notifier does not yet exist. `notifier_startup_grace_secs` controls the length of the startup grace period.
 
 
-You may also specify a YAML [notify group](https://www.home-assistant.io/integrations/group/#notify-groups). We recommend setting `defer_startup_notifications` if you choose to use a notify group. The issue is that HA may initialize the notify group early during startup, before the member notifiers are ready. And Alert2 can not see which member notifiers are ready. So Alert2 may notify a group with missing members, resulitng in an internal error in the notify component. To avoid this, you can list your group names in `defer_startup_notifications` which will defer any notifications to those notifiers until `notifier_startup_grace_secs` has passed.
+You may also specify a YAML [notify group](https://www.home-assistant.io/integrations/group/#notify-groups). We recommend setting `defer_startup_notifications` if you choose to use a notify group. The issue is that HA may initialize the notify group early during startup, before the member notifiers are ready. And Alert2 can not see which member notifiers are ready. So Alert2 may notify a group with missing members, resulting in an internal error in the notify component. To avoid this, you can list your group names in `defer_startup_notifications` which will defer any notifications to those notifiers until `notifier_startup_grace_secs` has passed.
 
 The current recommended way to notify groups is to create an entity, such as a template entity (eg `sensor.high_pri_group`), and set the members of the group as the state of the entity (example in [Notifier Config](#notifier-config) section, below).  Alert2 will then automatically defer notifications to notifiers in the group that do not yet exist during startup, without having to set `defer_startup_notifications`.
 
@@ -205,7 +205,7 @@ All are optional.
 |---|---|---|
 |`skip_internal_errors` | bool | If true, an entity for `alert2.error` will not be created, you will not receive any notifications for problems with your config file or Alert2 internal errors, and such errors won't show up in the Alert2 UI card.  Errors will still appear in the log file. Default is `false` |
 | `notifier_startup_grace_secs` | float | Time to wait after HA starts for a notifier to be defined. See [Notifier Config](#notifier-config) section below for details |
-| `defer_startup_notifications` | bool or list | True means no notifications are sent until `notifier_startup_grace_secs` passes after startup. False means send notificaitons as soon as the notifier is defined in HA.  Or can be name of a single notifier or list of notifiers for those to defer during startup. Useful for notify groups. See See [Notifier Config](#notifier-config) section below for details |
+| `defer_startup_notifications` | bool or list | True means no notifications are sent until `notifier_startup_grace_secs` passes after startup. False means send notifications as soon as the notifier is defined in HA.  Or can be name of a single notifier or list of notifiers for those to defer during startup. Useful for notify groups. See See [Notifier Config](#notifier-config) section below for details |
 
 Example:
 
