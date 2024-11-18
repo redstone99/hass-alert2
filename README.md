@@ -123,11 +123,11 @@ An event alert can also specify a `condition` as a template or entity name. The 
 
 ### Common alert features
 
-Each alert maintains a bit indicating whether it has been ack'd or not.  That bit is reset each time the alert fires. Ack'ing is done by clicking a button in the UI (described below) or calling the `alert2.ack` service. Ack'ing stops reminder notifications (see below) and is indicated visually in the UI.
+Each alert maintains a bit indicating whether it has been ack'd or not.  That bit is reset each time the alert fires. Ack'ing is done by clicking a button in the UI (described below) or calling the `alert2.ack` service. Ack'ing stops reminder notifications (see below) and is indicated visually in the UI.  The `alert2.unack` service is also available.
 
 ### Notifications
 
-Notifications are sent when an event alert fires, and also when a condition alert starts firing, stops firing, and periodically as a reminder that the condition alert is still firing.
+Notifications are sent when an event alert fires, when a condition alert starts or stops firing, and periodically as a reminder that the condition alert is still firing.  You can optionally request that notifications be sent at the end of periods when notifications where snoozed or throttled if there was any alert acttivity in the interval. This is via the `summary_notifier` config option.
 
 Each notification by default includes some basic context information (detailed below).  An alert can also specify a template `message` to be sent  each time the alert fires. That message is sent out with notifications and also is viewable in the front-end UI.  Condition alerts can also specify a `done_message` to be sent when the alert stops firing.
 
@@ -137,7 +137,7 @@ There are a few mechanisms available for controlling when and whether notificati
 
 * `throttle_fires_per_mins` - this config parameter throttles notifications for an alert that fires frequently. It affects all notifications for the alert.
 
-* Ack'ing an alert prevents further reminders and the stop notification for the current firing of a condition alert. For both condition and event alerts, ack'ing also prevents any throttled notification of previous firings of the alert.
+* Ack'ing an alert prevents further reminders and the stop notification for the current firing of a condition alert. For both condition and event alerts, ack'ing also prevents any throttled notification of previous firings of the alert. Unack'ing an alert will restart notifications for a condition alert if it is still firing.
 
 * Snoozing notifications for an alert prevents any notifications from current or future firings of an alert for a specified period of time.
 
@@ -168,9 +168,16 @@ The text of each notification by default includes some basic context information
 
         [Throttling starts] Alert2 kitchen_door_open: turned on
 
-* Throttling ends for event or condition alert that specified `throttle_fires_per_mins`.  Message includes information on what happened while the alert was throttled:
+* Throttling ends for event or condition alert that specified `throttle_fires_per_mins` and `summary_notifier` was specified.  Message includes information on what happened while the alert was throttled:
 
-        [Throttling ends] Alert2 kitchen_door_open: fired 10x (most recently 15m ago): turned off 19s ago after being on for 3m
+        [Throttling ends] Summary: Alert2 kitchen_door_open: fired 10x (most recently 15m ago): turned off 19s ago after being on for 3m
+
+#### Notifiers
+
+Via the `notifier` and `summary_notifier` config option you can specify which notifiers are used for alerting. That may be a single notifier, a list of notifiers, a template resolving to a list of notifiers, or the name of an entity whose state is a list of notifiers.
+
+Legacy YAML notify groups 
+
 
 ### Alert2 internal errors
 
@@ -178,9 +185,30 @@ Alert2 automatically defines an alert, `alert2.error`. It fires and will notify 
 
 `alert2.error` may be configured. See example in the [Tracked](#tracked) section, below.  If you specify a notifier that doesn't exist for `alert2.error` itself, then it falls back to `persistent_notification`.
 
+Alert2 install a HA global handler to detect internal tasks that die and fires `alert2.error`. So you may see it fire for problems outside of Alert2.
+
 ## Configuration
 
 Alert configuration is done through the `alert2:` section of your `configuration.yaml` file.  There are three subsections: `defaults`, `alerts`, and  `tracked`.
+
+### Top-level config options
+
+All are optional.
+
+| Key | Type | Description |
+|---|---|---|
+|`skip_internal_errors` | bool | If true, an entity for `alert2.error` will not be created, you will not receive any notifications for problems with your config file or Alert2 internal errors, and such errors won't show up in the Alert2 UI card.  Errors will still appear in the log file. Default is `false` |
+| `notifier_startup_grace_secs` | float | Time to wait after HA starts for a notifier to be defined. See [Notifiers](#notifiers) section below for details |
+| `defer_startup_notifications` | bool or list | True means no notifications are sent until `notifier_startup_grace_secs` passes after startup. False means send notificaitons as soon as the notifier is defined in HA.  Or can be name of a single notifier or list of notifiers for those to defer during startup. Useful for notify groups. See See [Notifiers](#notifiers) section below for details |
+
+Example:
+
+     alert2:
+       skip_internal_errors: true
+       notifier_startup_grace_secs: 60
+       defer_startup_notifications: mygroup
+       defaults:
+         - ...
 
 ### Defaults
 
@@ -191,6 +219,7 @@ The `defaults:` subsection specifies default values for parameters common to eve
 |---|---|---|
 | `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. |
 | `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers, an entity name whose state is a list of notifiers, or a template that evaluates to either. See [Notifiers](#notifiers) section below for possibilities here.  |
+| `summary_notifier` | bool or template | True to send summaries (see [Notifiers](#notifiers) section for detail) using the same notifier as other notifications.  False to not send summaries.  Or can be a template similar to `notifier` parameter to specify notifier to use for summaries. Default is `False`. |
 | `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notification, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
 | `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on a list of two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, "[10, 60]" means you'll receive no more than 10 notifications of the alert firing every hour.<br>Default is no throttling. |
 
@@ -237,6 +266,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `annotate_messages` | bool | optional | Override the default value of `annotate_messages`.  |
 | `reminder_frequency_mins` | float | optional | Override the default `reminder_frequency_mins`|
 | `notifier` | template | optional | Override the default `notifier`. See [Notifiers](#notifiers) section below for examples. |
+| `summary_notifier` | template | optional | Override the default `summary_notifier`. See [Notifiers](#notifiers) section below for examples. |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts.  |
 
@@ -294,7 +324,7 @@ An alert can alternatively specify a threshold with hysteresis.  So the previous
 
 This alert would start firing if the temperature drops below 50 and won't stop firing until the temperature rises to at least 55.  A corresponding logic applies when a `maximum` is specified. Both `minimum` and `maximum` may be specified together.
 
-A `condition` may be specified along with a `threshold`. In this case, the alert fires when the condition is true AND the threshold value is out of bounds.  `delay_on_secs` is another form of hysteresis that may be specified to reduce false alarms. It requires an alert condition be true or threshold be exceed for at least the specified number of seconds before firing.
+A `condition` may be specified along with a `threshold`. In this case, the alert fires when the condition is true AND the threshold value is out of bounds.  `delay_on_secs` is another form of hysteresis that may be specified to reduce false alarms. It requires an alert condition be true or threshold be exceed for at least the specified number of seconds before firing. Note on a corner case: the count of seconds for delay_on_secs does not reset if the value switches instantaneously from exceeding the minimum to exceeding the maximum.
 
 #### Common alert features
 
@@ -448,6 +478,7 @@ A few other service calls are used internally by [Alert2 UI](https://github.com/
 `alert2.ack_all` acks all alerts.
 <br>`alert2.notification_control` adjust the notification settings.
 <br>`alert2.ack` acks a single alert.
+<br>`alert2.unack` unacks a single alert.
 
 More details on these calls are in the [`services.yaml`](https://github.com/redstone99/hass-alert2/blob/master/custom_components/alert2/services.yaml) file in this repo, or in the UI by going to "Developer tools" -> "Actions".
 
@@ -480,7 +511,7 @@ If you're developing python components, Alert2 is handy for alerting on unexpect
         if unexpected_thing_happens:
             alert2.report(DOMAIN, 'some err 1', 'optional message string')
 
-The alert2 module also offers a `create_task()` and `create_background_task()` method to create tasks. It's similar to `hass.async_create_task` except it also `report()`s uncaught exceptions - so your task doesn't die silently.  Example usage:
+The alert2 module also offers a `create_task()` and `create_background_task()` method to create tasks. It's similar to `hass.async_create_task` except it also `report()`s uncaught exceptions - so your task doesn't die silently.  Should only be called from the event loop. Example usage:
 
 ```
 async def testTask():
