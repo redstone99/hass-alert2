@@ -40,3 +40,17 @@ notification_control:
       required: false
       selector:
         text:
+
+ack:
+  target:
+    entity:
+      domain: alert2
+
+unack:
+  target:
+    entity:
+      domain: alert2
+
+ack_all:
+  name: Ack all
+  description: Ack all alert2 alerts

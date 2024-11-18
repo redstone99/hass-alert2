@@ -29,16 +29,19 @@ def jnotifier(afield):
     return alist
 DEFAULTS_SCHEMA = vol.Schema({
     vol.Optional('notifier'): vol.Any(cv.template, jnotifier),
+    # Can be truthy or template or list of notifiers
+    vol.Optional('summary_notifier'): vol.Any(cv.boolean, cv.template, jnotifier),
     vol.Optional('annotate_messages'): cv.boolean,
     vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
     vol.Optional('throttle_fires_per_mins'): vol.Schema(vol.All(vol.ExactSequence([int, vol.Coerce(float)]),
-                                                                 vol.ExactSequence([vol.Range(min=1.),vol.Range(min=0.01)])))
+                                                                 vol.ExactSequence([vol.Range(min=1.),vol.Range(min=0.01)]))),
 })
 SINGLE_TRACKED_SCHEMA = vol.Schema({
     vol.Required('domain'): cv.string,
     vol.Required('name'): cv.string,
     vol.Optional('friendly_name'): cv.string,
     vol.Optional('notifier'): vol.Any(cv.template, jnotifier),
+    vol.Optional('summary_notifier'): vol.Any(cv.boolean, cv.template, jnotifier),
     vol.Optional('title'): cv.template,
     vol.Optional('target'): cv.template,
     vol.Optional('data'): dict,
@@ -74,5 +77,7 @@ TOP_LEVEL_SCHEMA = vol.Schema({
     vol.Optional('tracked'): list,
     vol.Optional('alerts'): list,
     # cv.boolean here must match code in Alert2Data.init2()
-    vol.Optional('skip_internal_errors'): cv.boolean
+    vol.Optional('skip_internal_errors'): cv.boolean,
+    vol.Optional('notifier_startup_grace_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
+    vol.Optional('defer_startup_notifications'): vol.Any(cv.boolean, vol.All(cv.ensure_list, [cv.string])),
 })
