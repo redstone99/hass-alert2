@@ -1,6 +1,13 @@
 #!/usr/bin/python3
 #
 # run from repository root directory
+
+import logging
+logging.basicConfig(level=logging.DEBUG)
+_LOGGER = logging.getLogger(None) # get root logger
+_LOGGER.setLevel(logging.INFO)
+_LOGGER.handlers[0].setFormatter(logging.Formatter("%(message)s"))
+
 import unittest
 import re
 from unittest.mock import AsyncMock, Mock
@@ -9,10 +16,7 @@ import sys
 import asyncio
 import datetime as rawdt
 import voluptuous as vol
-import logging
 import jinja2
-_LOGGER = logging.getLogger(None) # get root logger
-_LOGGER.setLevel(logging.DEBUG)
 from types import SimpleNamespace
 
 class FakeConst:
@@ -308,8 +312,9 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
                 self.gad.alerts[dom][name].startWatchingEv(None) # normally called when EVENT_HOMEASSISTANT_STARTED happens
     #def setup(self):
     #    pass
-    #def tearDown(self):
-    #    pass
+    def tearDown(self):
+        #self.gad.shutdown()
+        pass
     async def test_badarg1(self):
         cfg = { 'alert2' : {
             'defaults' : {
@@ -883,17 +888,16 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         for tname in [ 't9a', 't9b', 't9c', 't9d', 't9e', 't9f', 't9g', 't9h', 't9i', 't9j', 't9k', 't9l', 't9m', 't9n' ]:
             print(f'tname = {tname}')
             await doTst(tname, 0, 1)
-            #alertEnt = self.gad.alerts['test'][tname]
-            #doConditionUpdate(alertEnt, True)
-            #await asyncio.sleep(0.05)
-            #self.assertEqual(len(nn.await_args_list), perCount)
-            #fooCount += 1
-            #self.assertEqual(len(nfoo.await_args_list), fooCount)
             self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_{tname}.*turned on')
+            await doTst(tname, 0, 1, onVal = False)
+            self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_{tname}.*turned off')
 
         await doTst('t9b2', 1, 1)
         self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_t9b2.*turned on')
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_t9b2.*turned on')
+        await doTst('t9b2', 1, 1, onVal = False)
+        self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_t9b2.*turned off')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_t9b2.*turned off')
 
         for tname in ['t9p', 't9q', 't9r' ]:
             await doTst(tname, 1, 0)
@@ -927,59 +931,109 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(1.2 * kStartupWaitPollSecs)
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(nfoo.await_args_list), fooCount)
-        self.assertEqual(len(nbar.await_args_list), 1)
-        self.assertRegex(nbar.await_args_list[0].args[0].data['message'], f'test_t9w.*turned on')
+        await doTst('t9w', 0, 1, onVal=False)
+        self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_t9w.*turned off')
+        self.assertEqual(len(nbar.await_args_list), 2)
+        self.assertRegex(nbar.await_args_list[1].args[0].data['message'], f'test_t9w.*turned off')
         
         # Wait rest of startup grace period
         await asyncio.sleep(alert2.kNotifierStartupGraceSecs + 0.3)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(nfoo.await_args_list), fooCount)
-        self.assertEqual(len(nbar.await_args_list), 1)
+        self.assertEqual(len(nbar.await_args_list), 2)
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'not known to HA.*\'unavailable\'.*\'\\[ "foo"\', \'sensor.testent\'.*\\[ foo \\].*malformed list')
 
         await doTst('t9x', 1, 0, False)
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_t9x.*unavailable" is not known.*sensor.unavailEnt')
         await doTst('t9x1', 1, 0, False)
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_t9x1.*is not known.*malformed list')
-        self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
+
+        # We leave lots of alerts on, so kill them
+        #self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
         
     async def test_throttle(self):
         # Check that default notifier is used
         cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
             { 'domain': 'test', 'name': 't9', 'condition': '{{ true }}', 'throttle_fires_per_mins': [2, 0.05], 'reminder_frequency_mins':0.01 },
+            { 'domain': 'test', 'name': 't9a', 'condition': '{{ true }}', 'throttle_fires_per_mins': [2, 0.05], 'reminder_frequency_mins':0.01, 'summary_notifier': True },
         ], } }
         await self.initCase(cfg)
         self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
-        tal = self.gad.alerts['test']['t9']
-
-        # 2 fires are fine
-        doConditionUpdate(tal, True)
-        doConditionUpdate(tal, False)
-        doConditionUpdate(tal, True)
-        doConditionUpdate(tal, False)
-        await self.waitForAllBut(self.oldTasks)
+        t9 = self.gad.alerts['test']['t9']
+        t9a = self.gad.alerts['test']['t9a']
         nn = self.hass.servHandlers['notify.persistent_notification']
-        self.assertEqual(len(nn.await_args_list), 4)
-        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'test_t9.*turned on')
-        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'test_t9.*turned off')
-        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'test_t9.*turned on')
-        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'test_t9.*turned off')
+        perCount = 0
+        #await self.waitForAllBut(self.oldTasks) # wait for delayed notifier thingy to expire
 
-        # 3rd fire should have throttle sign and no turn off or reminders
-        doConditionUpdate(tal, True)
-        await asyncio.sleep(2)
-        doConditionUpdate(tal, False)
-        self.assertEqual(len(nn.await_args_list), 5)
-        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'Throttling started.*test_t9.*turned on')
-        doConditionUpdate(tal, True)
-        doConditionUpdate(tal, False)
-        await asyncio.sleep(0.2)
-        self.assertEqual(len(nn.await_args_list), 5)
-        await asyncio.sleep(2)
-        # throttle window done
-        self.assertEqual(len(nn.await_args_list), 6)
-        self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'Throttling ending.*test_t9 fired 1x.*turned off.*after being on')
+        for summaryEnabled in [ True, False ]:
+            tal   =  t9a  if summaryEnabled else  t9
+            tname = 't9a' if summaryEnabled else 't9'
+            for onAtEnd in [ False, True ]:
+                for extraFire in [ False, True ]:
+                    _LOGGER.info(f'loop: summaryEnabled={summaryEnabled} onAtEnd={onAtEnd} extraFire={extraFire}')
+                    # 2 fires are fine
+                    doConditionUpdate(tal, True)
+                    doConditionUpdate(tal, False)
+                    doConditionUpdate(tal, True)
+                    doConditionUpdate(tal, False)
+                    await asyncio.sleep(0.1)
+                    perCount += 4
+                    self.assertEqual(len(nn.await_args_list), perCount)
+                    self.assertRegex(nn.await_args_list[perCount-4].args[0].data['message'], f'test_{tname}.*turned on')
+                    self.assertRegex(nn.await_args_list[perCount-3].args[0].data['message'], f'test_{tname}.*turned off')
+                    self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], f'test_{tname}.*turned on')
+                    self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_{tname}.*turned off')
+
+                    # 3rd fire should have throttle sign and no turn off or reminders
+                    doConditionUpdate(tal, True)
+                    await asyncio.sleep(0.05)
+                    perCount += 1
+                    self.assertEqual(len(nn.await_args_list), perCount)
+                    self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling started.*test_{tname}.*turned on')
+                    # no reminders
+                    await asyncio.sleep(2)
+                    self.assertEqual(len(nn.await_args_list), perCount)
+
+                    if extraFire:
+                        doConditionUpdate(tal, False)
+                        doConditionUpdate(tal, True)
+                    if not onAtEnd:
+                        doConditionUpdate(tal, False)
+                    await asyncio.sleep(0.1)
+                    self.assertEqual(len(nn.await_args_list), perCount)
+                    
+                    await asyncio.sleep(2)
+                    # throttle window done.
+                    if summaryEnabled:
+                        perCount += 1
+                        self.assertEqual(len(nn.await_args_list), perCount)
+                        if onAtEnd:
+                            if extraFire:
+                                self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling ending] Alert2 test_{tname} fired 1x.*: on for 2s$')
+                            else:
+                                self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling ending] Alert2 test_{tname}: on for 4s$')
+                        else:
+                            self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling ending] Summary.*test_{tname}.*turned off.*after being on')
+                    else:
+                        if onAtEnd:
+                            perCount += 1
+                            self.assertEqual(len(nn.await_args_list), perCount)
+                            if extraFire:
+                                self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling ending] Alert2 test_{tname} fired 1x.*on for 2s$')
+                            else:
+                                self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling ending] Alert2 test_{tname}: on for 4s$')
+                        else:
+                            self.assertEqual(len(nn.await_args_list), perCount)
+
+                    if onAtEnd:
+                        doConditionUpdate(tal, False)
+                        await asyncio.sleep(0.05)
+                        perCount += 1
+                        self.assertEqual(len(nn.await_args_list), perCount)
+                        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'test_{tname}.*turned off')
+                    self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
+        
     async def test_annotate(self):
         cfg = { 'alert2' : { 'defaults': { 'reminder_frequency_mins': 0.01 },  'alerts' : [
             { 'domain': 'test', 'name': 't10', 'condition': '{{ true }}' },
@@ -1029,7 +1083,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         for at in allt:
             doConditionUpdate(at, False)
             await asyncio.sleep(0.05) # so offs are ordered
-        await self.waitForAllBut(self.oldTasks)
+        await asyncio.sleep(1.2)  # Wait for startup delaymgr to expire
+        self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
         self.assertEqual(len(nn.await_args_list), 21)
 
         self.assertRegex(nn.await_args_list[14].args[0].data['message'], 'Alert2 test_t10: turned off after')
@@ -1065,6 +1120,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), 25)
         self.assertEqual(nn.await_args_list[24].args[0].data['message'], 'Alert2 test_t16a: m4')
+        self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
 
         
     async def test_delay_on(self):
@@ -1626,66 +1682,63 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_event2(self):
         # Check throttling
-        cfg = { 'alert2' : { 'tracked' : [
+        cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True }, 'tracked' : [
             { 'domain': 'test', 'name': 't27', 'throttle_fires_per_mins': [2, 0.01] },
-            { 'domain': 'test', 'name': 't27a', 'throttle_fires_per_mins': [2, 0.01] },
+            { 'domain': 'test', 'name': 't27a', 'throttle_fires_per_mins': [2, 0.01], 'summary_notifier': False },
         ], } }
         await self.initCase(cfg)
         t27 = self.gad.tracked['test']['t27']
         t27a = self.gad.tracked['test']['t27a']
         nn = self.hass.servHandlers['notify.persistent_notification']
+        perCount = 0
 
-        # First two should notify fine
-        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27'})
-        await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 1)
-        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'Alert2 test_t27')
-        #
-        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27'})
-        await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 2)
-        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'Alert2 test_t27')
+        isFirst = True
+        for summaryEnabled in [ True, False ]:
+            tal   =  t27  if summaryEnabled else  t27a
+            tname = 't27' if summaryEnabled else 't27a'
+            for extraFire in [ False, True ]:
+                _LOGGER.info(f'loop: summaryEnabled={summaryEnabled} extraFire={extraFire}')
+                # First two should notify fine
+                for i in range(2):
+                    await self.hass.services.async_call('alert2','report', {'domain':'test','name':tname})
+                    await asyncio.sleep(0.05)
+                    perCount += 1
+                    self.assertEqual(len(nn.await_args_list), perCount)
+                    self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Alert2 test_{tname}')
 
-        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27'})
-        await asyncio.sleep(0.1)
-        #await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 3)
-        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Throttling started.*test_t27')
+                # Start of throttling
+                await self.hass.services.async_call('alert2','report', {'domain':'test','name':tname})
+                await asyncio.sleep(0.1)
+                perCount += 1
+                self.assertEqual(len(nn.await_args_list), perCount)
+                self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling started] Alert2 test_{tname}')
 
-        # Two more fires shouldn't notify
-        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27'})
-        await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 3)
-        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27'})
-        await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 3)
+                if extraFire:
+                    # Two more fires shouldn't notify
+                    await self.hass.services.async_call('alert2','report', {'domain':'test','name':tname})
+                    await asyncio.sleep(0.1)
+                    self.assertEqual(len(nn.await_args_list), perCount)
+                    await self.hass.services.async_call('alert2','report', {'domain':'test','name':tname})
+                    await asyncio.sleep(0.1)
+                    self.assertEqual(len(nn.await_args_list), perCount)
 
-        await asyncio.sleep(2)
-        self.assertEqual(len(nn.await_args_list), 4)
-        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'Throttling ending.*test_t27 fired 2x')
+                # Wait for throttle to end
+                await asyncio.sleep(2)
+                if summaryEnabled:
+                    perCount += 1
+                    self.assertEqual(len(nn.await_args_list), perCount)
+                    if extraFire:
+                        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Throttling ending] Summary.*test_t27 fired 2x')
+                    else:
+                        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Throttling ending] Summary.*test_t27: Did not fire')
+                else:
+                    self.assertEqual(len(nn.await_args_list), perCount)
 
-
-        # Try again, now with no extra firings beyond necessary to start throttling
-        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27a'})
-        await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 5)
-        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'Alert2 test_t27a')
-        #
-        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27a'})
-        await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 6)
-        self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'Alert2 test_t27a')
-
-        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t27a'})
-        await asyncio.sleep(0.1)
-        #await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 7)
-        self.assertRegex(nn.await_args_list[6].args[0].data['message'], 'Throttling started.*test_t27a')
-
-        await asyncio.sleep(2)
-        self.assertEqual(len(nn.await_args_list), 8)
-        self.assertRegex(nn.await_args_list[7].args[0].data['message'], 'Throttling ending.*test_t27a: Did not fire')
-
+                if isFirst:
+                    isFirst = False
+                    await self.waitForAllBut(self.oldTasks)  # wait for delayed notifier mgr
+                else:
+                    self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
         
     async def test_event3(self):
         # Check throttling
@@ -1751,7 +1804,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             { 'domain': 'test', 'name': 't38', 'threshold': { 'value': '{{ ick2 }}', 'hysteresis': 10, 'minimum':11 } },
         ], } }
         await self.initCase(cfg)
-        await self.waitForAllBut(self.oldTasks)
+        await asyncio.sleep(0.1)
+        #await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
         self.assertEqual(len(nn.await_args_list), 5)
         self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'Duplicate.*t30')
@@ -1778,7 +1832,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.initCase(cfg)
         terr = self.gad.tracked['alert2']['error']
         nn = self.hass.servHandlers['notify.persistent_notification']
-        await self.waitForAllBut(self.oldTasks)
+        await asyncio.sleep(0.1)
+        #await self.waitForAllBut(self.oldTasks)
         
         await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t39'})
         #await asyncio.sleep(0.1)
@@ -1831,7 +1886,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         cfg = { 'alert2' : { 'alerts' : [
             { 'domain': 'test', 'name': 't40', 'condition': '{{ true }}', 'reminder_frequency_mins': 0.01 },
         ],  'tracked' : [
-            { 'domain': 'test', 'name': 't41', 'throttle_fires_per_mins': [1, 0.01] },
+            { 'domain': 'test', 'name': 't41', 'throttle_fires_per_mins': [1, 0.01], 'summary_notifier': True },
         ] } }
         await self.initCase(cfg)
         t40 = self.gad.alerts['test']['t40']
@@ -2057,52 +2112,144 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
 
     async def test_snooze(self):
-        cfg = { 'alert2' : { 'alerts' : [
+        cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True}, 'alerts' : [
             { 'domain': 'test', 'name': 't53', 'condition': '{{ zzz }}', 'reminder_frequency_mins': 0.01 },
+            { 'domain': 'test', 'name': 't53a', 'condition': '{{ zzz }}', 'reminder_frequency_mins': 0.01, 'summary_notifier': False },
+            { 'domain': 'test', 'name': 't53b', 'condition': '{{ zzz }}', 'reminder_frequency_mins': 0.01, 'summary_notifier': 'foo' },
         ],  'tracked' : [
             { 'domain': 'test', 'name': 't54' },
+            { 'domain': 'test', 'name': 't54a', 'summary_notifier': False },
+            { 'domain': 'test', 'name': 't54b', 'summary_notifier': 'foo' },
+            { 'domain': 'test', 'name': 't54c', 'summary_notifier': '{{ [ \"foo\" ] }}' },
         ] } }
         await self.initCase(cfg)
         t53 = self.gad.alerts['test']['t53']
+        t53a = self.gad.alerts['test']['t53a']
+        t53b = self.gad.alerts['test']['t53b']
         t54 = self.gad.tracked['test']['t54']
+        t54a = self.gad.tracked['test']['t54a']
+        t54b = self.gad.tracked['test']['t54b']
+        t54c = self.gad.tracked['test']['t54c']
         nn = self.hass.servHandlers['notify.persistent_notification']
+        self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
+        nfoo = self.hass.servHandlers['notify.foo']
         perCount = 0
+        fooCount = 0
 
         # Snoozed so no notification
-        snoozeUntil = rawdt.datetime.now(rawdt.timezone.utc) + rawdt.timedelta(seconds=1)
-        await t53.async_notification_control(True, snoozeUntil)
+        now = rawdt.datetime.now(rawdt.timezone.utc)
+        await t53.async_notification_control(True, now + rawdt.timedelta(seconds=1))
+        await asyncio.sleep(0.05)
+        await t53a.async_notification_control(True, now + rawdt.timedelta(seconds=1.1))
+        await asyncio.sleep(0.05)
+        await t53b.async_notification_control(True, now + rawdt.timedelta(seconds=1.2))
+        await asyncio.sleep(0.05)
         doConditionUpdate(t53, True)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
+        doConditionUpdate(t53a, True)
+        await asyncio.sleep(0.05)
+        doConditionUpdate(t53b, True)
+        await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        # snooze expires, get notification summary
+        await asyncio.sleep(2)
+        perCount += 3
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        self.assertRegex(nn.await_args_list[perCount-3].args[0].data['message'], 't53.*fired 1x.*on for')
+        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 't53a.*fired 1x.*on for')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't53b.*fired 1x.*on for')
+        # Should still get reminders after snooze expires
+        await asyncio.sleep(2)
+        perCount += 3
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-3].args[0].data['message'], 't53: on for')
+        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 't53a: on for')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't53b: on for')
+        # Set snooze again and turn off. No snooze summary (cuz acked?)
+        now = rawdt.datetime.now(rawdt.timezone.utc)
+        await t53.async_notification_control(True, now + rawdt.timedelta(seconds=1))
+        await t53a.async_notification_control(True, now + rawdt.timedelta(seconds=1.1))
+        await t53b.async_notification_control(True, now + rawdt.timedelta(seconds=1.2))
+        # No reminders cuz snooze is implicit ack
+        await asyncio.sleep(2)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        doConditionUpdate(t53, False)
+        await asyncio.sleep(0.05)
+        doConditionUpdate(t53a, False)
+        await asyncio.sleep(0.05)
+        doConditionUpdate(t53b, False)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        
+        # Snoozed so no notification
+        now = rawdt.datetime.now(rawdt.timezone.utc)
+        await t53.async_notification_control(True, now + rawdt.timedelta(seconds=1))
+        await asyncio.sleep(0.05)
+        await t53a.async_notification_control(True, now + rawdt.timedelta(seconds=1.1))
+        await asyncio.sleep(0.05)
+        await t53b.async_notification_control(True, now + rawdt.timedelta(seconds=1.2))
+        await asyncio.sleep(0.05)
+        doConditionUpdate(t53, True)
+        await asyncio.sleep(0.05)
+        doConditionUpdate(t53a, True)
+        await asyncio.sleep(0.05)
+        doConditionUpdate(t53b, True)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        doConditionUpdate(t53, False)
+        await asyncio.sleep(0.05)
+        doConditionUpdate(t53a, False)
+        await asyncio.sleep(0.05)
+        doConditionUpdate(t53b, False)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
         # snooze expires, get notification summary
         await asyncio.sleep(2)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't53.*fired 1x.*on for')
-        # Should still get reminders after snooze expires
-        await asyncio.sleep(2)
-        perCount += 1
-        self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't53: on for')
-        # Set snooze again and turn off. No snooze summary
-        snoozeUntil = rawdt.datetime.now(rawdt.timezone.utc) + rawdt.timedelta(seconds=1)
-        await t53.async_notification_control(True, snoozeUntil)
-        doConditionUpdate(t53, False)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't53 fired 1x')
+        fooCount += 1
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], 't53b fired 1x')
+
+        # Try events
+        now = rawdt.datetime.now(rawdt.timezone.utc)
+        await t54.async_notification_control(True, now + rawdt.timedelta(seconds=1))
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), perCount)
-        await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), perCount)
-        
-        snoozeUntil = rawdt.datetime.now(rawdt.timezone.utc) + rawdt.timedelta(seconds=1)
-        await t54.async_notification_control(True, snoozeUntil)
+        await t54a.async_notification_control(True, now + rawdt.timedelta(seconds=1.1))
+        await asyncio.sleep(0.1)
+        await t54b.async_notification_control(True, now + rawdt.timedelta(seconds=1.2))
+        await asyncio.sleep(0.1)
+        await t54c.async_notification_control(True, now + rawdt.timedelta(seconds=1.3))
+        await asyncio.sleep(0.05)
         await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t54'})
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t54a'})
+        await asyncio.sleep(0.05)
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t54b'})
+        await asyncio.sleep(0.05)
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t54c'})
+        await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
         # snooze expires, get notification summary
         await asyncio.sleep(2)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't54.*fired 1x.*ago\\)$')
+        fooCount += 2
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        self.assertRegex(nfoo.await_args_list[fooCount-2].args[0].data['message'], 't54b.*fired 1x.*ago\\)$')
+        self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], 't54c.*fired 1x.*ago\\)$')
 
         # Try disabled
         await t53.async_notification_control(False, None)
@@ -2119,6 +2266,20 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await t53.async_notification_control(False, None)
         await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), perCount)
+
+        # Try disabled event
+        await t54.async_notification_control(False, None)
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t54'})
+        await asyncio.sleep(0.1)
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t54'})
+        await asyncio.sleep(0.1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        # undo snooze, no summary
+        await t54.async_notification_control(False, None)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
         
 if __name__ == '__main__':
     unittest.main()
