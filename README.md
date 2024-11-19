@@ -106,7 +106,7 @@ Alert2 supports two kinds of alerts:
 
 - **Event-based alerts**. The alert waits for a specified trigger to occur and is "firing" for just that moment.  Example: a problematic MQTT message arrives.
 
-Configuration details and examples are in the [Configuration section]((#configuration)). Here is an overview:
+Configuration syntax and examples are in the [Configuration section]((#configuration)). Here is an overview:
 
 ### Condition alerts
 
@@ -127,7 +127,7 @@ Each alert maintains a bit indicating whether it has been ack'd or not.  That bi
 
 ### Notifications
 
-Notifications are sent when an event alert fires, when a condition alert starts or stops firing, and periodically as a reminder that the condition alert is still firing.  You can optionally request that notifications be sent at the end of periods when notifications where snoozed or throttled if there was any alert activity in the interval. This is via the `summary_notifier` config option.
+Notifications are sent when an event alert fires, when a condition alert starts or stops firing, and periodically as a reminder that a condition alert is still firing.  You can optionally request that notifications be sent at the end of periods when notifications where snoozed or throttled if there was any alert activity in the interval. This is via the `summary_notifier` config option.  We recommend setting `summary_notifier` to be notified when e.g., throttling ends.
 
 Each notification by default includes some basic context information (detailed below).  An alert can also specify a template `message` to be sent  each time the alert fires. That message is sent out with notifications and also is viewable in the front-end UI.  Condition alerts can also specify a `done_message` to be sent when the alert stops firing.
 
@@ -139,7 +139,7 @@ There are a few mechanisms available for controlling when and whether notificati
 
 * Ack'ing an alert prevents further reminders and the stop notification for the current firing of a condition alert. For both condition and event alerts, ack'ing also prevents any throttled notification of previous firings of the alert. Unack'ing an alert will restart notifications for a condition alert if it is still firing.
 
-* Snoozing notifications for an alert prevents any notifications from current or future firings of an alert for a specified period of time.
+* Snoozing notifications for an alert prevents any notifications from current or future firings of an alert for a specified period of time. The start of snoozing also implicitly ack's the alert.
 
 * Disabling notifications for an alert prevents any notifications until it is enabled again.  Snoozing & disabling affect only notifications. Alerts will still fire and be recorded for reviewing in your dashboard.
 
@@ -156,7 +156,7 @@ The text of each notification by default includes some basic context information
 
         Alert2 kitchen_door_open: turned on
 
-* Condition alert reminder:
+* Condition alert reminder that it's still on:
 
         Alert2 kitchen_door_open: on for 5m
 
@@ -176,14 +176,14 @@ The text of each notification by default includes some basic context information
 
 You can specify which notifiers are used for alerting via the `notifier` and `summary_notifier` config options. They may be a single notifier, a list of notifiers, a template resolving to a list of notifiers, or the name of an entity whose state is a list of notifiers. See [Notifier Config](#notifier-config) section, below.
 
-During HA startup, HA initializes notifiers independently of the rest of HA.  So notifiers may not be ready even when HA declares that it has fully started.  Alert2 will defer notifications during startup if a notifier does not yet exist. `notifier_startup_grace_secs` controls the length of the startup grace period.
+During HA startup, HA initializes notifiers independently of the rest of HA.  So notifiers may not be ready even when HA declares that it has fully started.  Alert2 will automatically defer notifications during startup if a notifier does not yet exist. `notifier_startup_grace_secs` controls the length of the startup grace period.
 
 
 You may also specify a YAML [notify group](https://www.home-assistant.io/integrations/group/#notify-groups). We recommend setting `defer_startup_notifications` if you choose to use a notify group. The issue is that HA may initialize the notify group early during startup, before the member notifiers are ready. And Alert2 can not see which member notifiers are ready. So Alert2 may notify a group with missing members, resulting in an internal error in the notify component. To avoid this, you can list your group names in `defer_startup_notifications` which will defer any notifications to those notifiers until `notifier_startup_grace_secs` has passed.
 
 The current recommended way to notify groups is to create an entity, such as a template entity (eg `sensor.high_pri_group`), and set the members of the group as the state of the entity (example in [Notifier Config](#notifier-config) section, below).  Alert2 will then automatically defer notifications to notifiers in the group that do not yet exist during startup, without having to set `defer_startup_notifications`.
 
-Alert2 does not yet support [Notify Entity Groups](https://www.home-assistant.io/integrations/group/#notify-entity-groups), but open an [discussion](https://github.com/redstone99/hass-alert2/discussions) and request the feature.
+Alert2 does not yet support [Notify Entity Groups](https://www.home-assistant.io/integrations/group/#notify-entity-groups), but open an [discussion](https://github.com/redstone99/hass-alert2/discussions) and request the feature if interested.
 
 ### Alert2 internal errors
 
@@ -191,21 +191,21 @@ Alert2 automatically defines an alert, `alert2.error`. It fires and will notify 
 
 `alert2.error` may be configured. See example in the [Tracked](#tracked) section, below.  If you specify a notifier that doesn't exist for `alert2.error` itself, then it falls back to `persistent_notification`.
 
-Alert2 install a HA global handler to detect internal tasks that die and fires `alert2.error`. So you may see it fire for problems outside of Alert2.
+Alert2 installs a HA global handler to detect internal tasks that die and fires `alert2.error`. So you may see it fire for problems outside of Alert2.
 
 ## Configuration
 
-Alert configuration is done through the `alert2:` section of your `configuration.yaml` file.  There are three subsections: `defaults`, `alerts`, and  `tracked`.
+Alert configuration is done through the `alert2:` section of your `configuration.yaml` file.  There are three subsections: `defaults`, `alerts`, and  `tracked`.  Examples are towards the end of this section.
 
 ### Top-level config options
 
-All are optional.
+The following are all optional.
 
 | Key | Type | Description |
 |---|---|---|
 |`skip_internal_errors` | bool | If true, an entity for `alert2.error` will not be created, you will not receive any notifications for problems with your config file or Alert2 internal errors, and such errors won't show up in the Alert2 UI card.  Errors will still appear in the log file. Default is `false` |
-| `notifier_startup_grace_secs` | float | Time to wait after HA starts for a notifier to be defined. See [Notifier Config](#notifier-config) section below for details |
-| `defer_startup_notifications` | bool or list | True means no notifications are sent until `notifier_startup_grace_secs` passes after startup. False means send notifications as soon as the notifier is defined in HA.  Or can be name of a single notifier or list of notifiers for those to defer during startup. Useful for notify groups. See See [Notifier Config](#notifier-config) section below for details |
+| `notifier_startup_grace_secs` | float | Time to wait after HA starts for a notifier to be defined. See [Notifiers](#notifiers) section above for detailed explanation |
+| `defer_startup_notifications` | bool or list | True means no notifications are sent until `notifier_startup_grace_secs` passes after startup. False means send notifications as soon as the notifier is defined in HA.  Or this parameter can be name of a single notifier or list of notifiers for those to defer during startup. Useful for notify groups. See [Notifiers](#notifiers) section above for more details |
 
 Example:
 
@@ -218,16 +218,16 @@ Example:
 
 ### Defaults
 
-The `defaults:` subsection specifies default values for parameters common to every alert. Each of these parameters may be specified either in this subsection or over-ridden on a per-alert basis.
+The `defaults:` subsection specifies optional default values for parameters common to every alert. Each of these parameters may be specified either in this subsection or over-ridden on a per-alert basis.
 
 
 | Key | Type | Description |
 |---|---|---|
 | `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. |
 | `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers, an entity name whose state is a list of notifiers, or a template that evaluates to either. See [Notifier Config](#notifier-config) section below for possibilities here.  |
-| `summary_notifier` | bool or template | True to send summaries (see [Notifier Config](#notifier-config) section for detail) using the same notifier as other notifications.  False to not send summaries.  Or can be a template similar to `notifier` parameter to specify notifier to use for summaries. Default is `False`. |
+| `summary_notifier` | bool or template | True to send summaries (see [Notifiers](#notifiers) section for detail) using the same notifier as other notifications.  False to not send summaries.  Or can be a template similar to `notifier` parameter to specify notifier to use for summaries. Default is `false`. |
 | `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notification, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
-| `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on a list of two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, "[10, 60]" means you'll receive no more than 10 notifications of the alert firing every hour.<br>Default is no throttling. |
+| `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on a list of two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, "[10, 60]" means you'll receive no more than 10 notifications of the alert firing every hour.<br><br>Default is no throttling. You can set `summary_notifier` to be notified when throttling ends (by default you won't be). |
 
 Example:
 
@@ -399,7 +399,7 @@ You can also specify a template that evaluates to either single notifier, a list
 A technical note on quoting and lists of notifiers:<br>
 Templates evaluate to a string, even if they have a list inside. An entity's state also produces a string.  Alert2 detects lists in such strings by evaluating the string as a python literal and seeing if a list results.  So notifiers in such lists need to be quoted or the eval mechanism will think you're trying to name a variable.
 
-An example of using an entity as an Alert2 native group.  Handles alerts fired during HA startup better than "notify groups".
+An example of using an entity as an Alert2 native group.  Handles alerts fired during HA startup better than ["notify groups"](https://www.home-assistant.io/integrations/group/#notify-groups).
 
     template:
       - sensor:
@@ -438,16 +438,6 @@ Example:
           ...
         - domain: dahua
           name: side_porch_fault
-
-### Additional top-level options
-
-`skip_internal_errors` is a optional top-level option. If true, an entity for `alert2.error` will not be created, you will not receive any notifications for problems with your config file or Alert2 internal errors, and such errors won't show up in the Alert2 UI card.  Errors will still appear in the log file.  Example config fragment:
-
-    alert2:
-      defaults:
-        reminder_frequency_mins: 60
-      skip_internal_errors: true
-
 
 ### Alert recommendations
 
