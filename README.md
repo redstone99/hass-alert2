@@ -48,7 +48,8 @@ Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-ale
 
 ## Installation
 
-### HACS install (recommended)
+<details>
+<summary>HACS install (recommended)</summary>
 
 1. If HACS is not installed, follow HACS installation and configuration instructions at https://hacs.xyz/.
 
@@ -64,7 +65,9 @@ Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-ale
 
 1. We strongly recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) card which is a compact way to view and manage Alert2 alerts.
 
-### Manual install
+</details>
+<details>
+<summary>Manual install</summary>
 
 1. Download the `Source code (zip)` link from the repository [release section](https://github.com/redstone99/hass-alert2/releases) under "Assets" and extract it.
 
@@ -84,6 +87,8 @@ Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-ale
          ... etc...
 
 1. We strongly recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) card which is a compact way to view and manage Alert2 alerts.
+
+</details>
 
 ## Setup
 
@@ -195,7 +200,18 @@ Alert2 installs a HA global handler to detect internal tasks that die and fires 
 
 ## Configuration
 
-Alert configuration is done through the `alert2:` section of your `configuration.yaml` file.  There are three subsections: `defaults`, `alerts`, and  `tracked`.  Examples are towards the end of this section.
+Alert configuration is done through the `alert2:` section of your `configuration.yaml` file.  There are three subsections: `defaults`, `alerts`, and  `tracked`.
+
+We recommend that your config specify at least the following parameters:
+
+```yaml
+alert2:
+  defaults:
+    notifier: foo # notifier name to use for most alerts
+    summary_notifier: foo # notifier to use for summaries (eg when throttling ends)
+    throttle_fires_per_mins: [ 10, 60 ] # throttle notifications for any alert that fires
+                                        # more than 10x in 60 minutes
+```
 
 ### Top-level config options
 
@@ -204,7 +220,7 @@ The following are all optional.
 | Key | Type | Description |
 |---|---|---|
 |`skip_internal_errors` | bool | If true, an entity for `alert2.error` will not be created, you will not receive any notifications for problems with your config file or Alert2 internal errors, and such errors won't show up in the Alert2 UI card.  Errors will still appear in the log file. Default is `false` |
-| `notifier_startup_grace_secs` | float | Time to wait after HA starts for a notifier to be defined. See [Notifiers](#notifiers) section above for detailed explanation |
+| `notifier_startup_grace_secs` | float | Time to wait after HA starts for a notifier to be defined. See [Notifiers](#notifiers) section above for detailed explanation. Default is 30 seconds |
 | `defer_startup_notifications` | bool or list | True means no notifications are sent until `notifier_startup_grace_secs` passes after startup. False means send notifications as soon as the notifier is defined in HA.  Or this parameter can be name of a single notifier or list of notifiers for those to defer during startup. Useful for notify groups. See [Notifiers](#notifiers) section above for more details |
 
 Example:
@@ -214,7 +230,7 @@ Example:
        notifier_startup_grace_secs: 60
        defer_startup_notifications: mygroup
        defaults:
-         - ...
+         ...
 
 ### Defaults
 
