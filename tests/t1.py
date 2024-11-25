@@ -53,7 +53,7 @@ class FakeTemplate:
     def __init__(self, value):
         self.hass = None
         self.template = value
-    def async_render(self, vvars=None, parse_result=False):
+    def async_render(self, variables=None, parse_result=False):
         rez = None
         try:
             rez = jinja2.Template(self.template).render()
@@ -140,6 +140,10 @@ class FakeHA:
                     pass
             class TrackTemplateResult:
                 pass
+        class entity:
+            class Entity:
+                def __init__(self):
+                    pass
         class restore_state:
             class RestoreEntity:
                 def __init__(self):
@@ -218,6 +222,7 @@ sys.modules['homeassistant.helpers.config_validation'] = FakeHA.helpers.config_v
 sys.modules['homeassistant.helpers.entity_component'] = FakeHA.helpers.entity_component
 sys.modules['homeassistant.helpers.event'] = FakeHA.helpers.event
 sys.modules['homeassistant.helpers.restore_state'] = FakeHA.helpers.restore_state
+sys.modules['homeassistant.helpers.entity'] = FakeHA.helpers.entity
 sys.modules['homeassistant.helpers.trigger'] = FakeHA.helpers.trigger
 sys.modules['homeassistant.helpers.typing'] = FakeHA.helpers.typing
 sys.modules['homeassistant.util.dt'] = FakeHA.util.dt
