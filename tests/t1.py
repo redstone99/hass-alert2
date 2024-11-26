@@ -8,11 +8,20 @@ _LOGGER = logging.getLogger(None) # get root logger
 _LOGGER.setLevel(logging.INFO)
 _LOGGER.handlers[0].setFormatter(logging.Formatter("%(message)s"))
 
+import sys
+import inspect
+import os.path
+import os
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parentdir = os.path.dirname(currentdir)
+if os.environ.get('JTESTDIR'):
+    sys.path.append(os.environ['JTESTDIR']) # parent dir of custom_components
+else:
+    sys.path.insert(0, parentdir)
 import unittest
 import re
 from unittest.mock import AsyncMock, Mock
 from numbers import Number
-import sys
 import asyncio
 import datetime as rawdt
 import voluptuous as vol
@@ -56,7 +65,10 @@ class FakeTemplate:
     def async_render(self, variables=None, parse_result=False):
         rez = None
         try:
-            rez = jinja2.Template(self.template).render()
+            if variables is None:
+                rez = jinja2.Template(self.template).render()
+            else:
+                rez = jinja2.Template(self.template).render(variables)
         except Exception as err:
             raise FakeExceptions.TemplateError(err) from err
         return rez
@@ -134,16 +146,27 @@ class FakeHA:
         class event:
             @staticmethod
             def async_track_template_result(hass, trackers, cb):
+                # fire initial result of templates
+                event = None
+                updates = [ SimpleNamespace(template=x.template, result=x.template.async_render(variables=x.variables)) for x in trackers ]
+                cb(event, updates)
                 return SimpleNamespace(async_refresh = lambda: None)
             class TrackTemplate:
-                def __init__(self, a, b):
-                    pass
+                def __init__(self, template, variables, rate_limit=None):
+                    self.template = template
+                    self.variables = variables
             class TrackTemplateResult:
                 pass
         class entity:
             class Entity:
                 def __init__(self):
                     pass
+                @property
+                def name(self):
+                    return self._attr_name
+                @property
+                def entity_id(self):
+                    return f'id={self._attr_name}'
         class restore_state:
             class RestoreEntity:
                 def __init__(self):
@@ -231,12 +254,6 @@ sys.modules['homeassistant.helpers'] = FakeHelpers
 def resetModuleLoadTime():
     alert2.moduleLoadTime = rawdt.datetime.now(rawdt.UTC)
 
-import inspect
-import os.path
-currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
-parentdir = os.path.dirname(currentdir)
-#sys.path.insert(0, parentdir)
-sys.path.append('/home/redstone/home-monitoring/homeassistant')
 import custom_components.alert2 as alert2
 alert2.kNotifierStartupGraceSecs = 3
 
@@ -2278,6 +2295,19 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(nfoo.await_args_list), fooCount)
+
+    async def test_generator(self):
+        cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True}, 'alerts' : [
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't55', 'condition': '{{ zzz }}',  },
+        ] } }
+        await self.initCase(cfg)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(self.gad.alerts['test']), 1)
+        self.assertTrue(not 'tracked' in self.gad.alerts)
+        t55 = self.gad.alerts['test']['t55']
+        #_LOGGER.warning(self.gad.alerts)
+        self.assertEqual(len(self.gad.generators['test']), 1)
+
         
 if __name__ == '__main__':
     unittest.main()
