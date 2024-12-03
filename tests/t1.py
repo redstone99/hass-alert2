@@ -164,24 +164,13 @@ class FakeHA:
                 @property
                 def name(self):
                     return self._attr_name
-                @property
-                def entity_id(self):
-                    return f'id={self._attr_name}'
+                entity_id = 'some id'
+                def async_set_context(self, context):
+                    pass
+                async def async_remove(self, *, force_remove = False):
+                    pass
         class restore_state:
-            class RestoreEntity:
-                def __init__(self):
-                    self.async_write_ha_state = Mock(name='write_ha_state', spec_set=[])
-                @property
-                def name(self):
-                    return self._attr_name
-                #def async_write_ha_state(self):
-                #    pass
-                def async_set_context(self, ctx):
-                    pass
-                async def async_added_to_hass(self):
-                    pass
-                async def async_get_last_state(self):
-                    return None
+            pass
         class trigger:
             @staticmethod
             async def async_initialize_triggers(*args):
@@ -198,6 +187,15 @@ class FakeHA:
             def as_local(atime):
                 return atime
 
+class RestoreEntity(FakeHA.helpers.entity.Entity):
+    def __init__(self):
+        self.async_write_ha_state = Mock(name='write_ha_state', spec_set=[])
+    async def async_added_to_hass(self):
+        pass
+    async def async_get_last_state(self):
+        return None
+FakeHA.helpers.restore_state.RestoreEntity = RestoreEntity
+            
 class States:
     def __init__(self):
         self.data = {}
@@ -2301,12 +2299,77 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't55', 'condition': '{{ zzz }}',  },
         ] } }
         await self.initCase(cfg)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), perCount)
+        # let first generation happen
         await asyncio.sleep(0.05)
         self.assertEqual(len(self.gad.alerts['test']), 1)
         self.assertTrue(not 'tracked' in self.gad.alerts)
         t55 = self.gad.alerts['test']['t55']
-        #_LOGGER.warning(self.gad.alerts)
         self.assertEqual(len(self.gad.generators['test']), 1)
+        g1 = self.gad.generators['test']['g1']
+        self.assertEqual(g1.state, 1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        
+        # And supose generator is a template and produces an error.  should not change generated alerts.
+        g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                                [ SimpleNamespace(template=None, result=FakeExceptions.TemplateError('bogus err')) ] )
+        await asyncio.sleep(0.05)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'alert2generator.test_g1 generator template threw error: bogus err')
+        self.assertEqual(self.gad.alerts['test']['t55'], t55)
+
+        # suppose template renders to empty string - it's an error
+        g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                                [ SimpleNamespace(template=None, result='fff') ] )
+        await asyncio.sleep(0.05)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'alert2generator.test_g1 generator template var is None')
+        self.assertEqual(self.gad.alerts['test']['t55'], t55)
+
+        # template producing same string should not recreate alert
+        g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                                [ SimpleNamespace(template=g1._generator_template, result='t55') ] )
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(self.gad.generators['test']), 1)
+        self.assertEqual(self.gad.alerts['test']['t55'], t55)
+        
+        # Now suppose template returns nothing, so alert should disappear
+        g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                                [ SimpleNamespace(template=g1._generator_template, result='') ] )
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(self.gad.alerts['test']), 0)
+
+        # what if name includes a trailing z in template
+        cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True}, 'alerts' : [
+            { 'domain': 'test', 'name': '{{ genElem }}z', 'generator_name': 'g1', 'generator': 't56', 'condition': '{{ zzz }}',  },
+        ] } }
+        resetModuleLoadTime()
+        await self.initCase(cfg)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), perCount)
+        # let first generation happen
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(self.gad.alerts['test']), 1)
+        self.assertTrue(not 'tracked' in self.gad.alerts)
+        t56z = self.gad.alerts['test']['t56z']
+        self.assertEqual(len(self.gad.generators['test']), 1)
+        g1 = self.gad.generators['test']['g1']
+        self.assertEqual(g1.state, 1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+                
+        # Now suppose template returns nothing, so alert should disappear
+        g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                                [ SimpleNamespace(template=g1._generator_template, result='') ] )
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(self.gad.alerts['test']), 0)
 
         
 if __name__ == '__main__':
