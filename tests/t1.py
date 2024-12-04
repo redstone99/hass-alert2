@@ -148,7 +148,14 @@ class FakeHA:
             def async_track_template_result(hass, trackers, cb):
                 # fire initial result of templates
                 event = None
-                updates = [ SimpleNamespace(template=x.template, result=x.template.async_render(variables=x.variables)) for x in trackers ]
+                updates = []
+                #updates = [ SimpleNamespace(template=x.template, result=x.template.async_render(variables=x.variables)) for x in trackers ]
+                for x in trackers:
+                    try:
+                        rez = SimpleNamespace(template=x.template, result=x.template.async_render(variables=x.variables))
+                    except FakeExceptions.TemplateError as err:
+                        rez = SimpleNamespace(template=x.template, result=err)
+                    updates.append(rez)
                 cb(event, updates)
                 return SimpleNamespace(async_refresh = lambda: None)
             class TrackTemplate:
@@ -906,7 +913,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(nfoo.await_args_list), fooCount)
         
         for tname in [ 't9a', 't9b', 't9c', 't9d', 't9e', 't9f', 't9g', 't9h', 't9i', 't9j', 't9k', 't9l', 't9m', 't9n' ]:
-            print(f'tname = {tname}')
+            #print(f'tname = {tname}')
             await doTst(tname, 0, 1)
             self.assertRegex(nfoo.await_args_list[fooCount-1].args[0].data['message'], f'test_{tname}.*turned on')
             await doTst(tname, 0, 1, onVal = False)
@@ -2363,6 +2370,14 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         g1 = self.gad.generators['test']['g1']
         self.assertEqual(g1.state, 1)
         self.assertEqual(len(nn.await_args_list), perCount)
+        # Now suppose a second alert appears
+        g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                                [ SimpleNamespace(template=g1._generator_template, result='[ "t56", "t57" ]') ] )
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(self.gad.alerts['test']), 2)
+        t57z = self.gad.alerts['test']['t57z']
+        self.assertEqual(g1.state, 2)
                 
         # Now suppose template returns nothing, so alert should disappear
         g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
@@ -2371,6 +2386,147 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(self.gad.alerts['test']), 0)
 
+    async def test_generator2(self):
+        # Try templating of genElem variable
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't57',
+              'condition': '{{ zzz }}',
+              # If genElem doesn't resolve to 't57', then we'll pick the wrong notifier
+              'notifier': '{% if genElem == "t57" %}persistent_notification{% else %}foo{% endif %}',
+              'title': '{{ genElem }}tt', 'target': '{{ genElem }}tar',
+              'message': '{{ genElem }}msg',
+              'done_message': '{{ genElem }}dmsg',
+             },
+            # duplicate g1
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't57zz',
+              'condition': '{{ zzz }}',
+             },
+            # In the real world, this would immediately alert, but our test harness
+            # isn't smart enough???
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g2', 'generator': 't58',
+              'condition': '{{ true }}',
+              'threshold': {
+                  'value': '{% if genElem == "zzz" %}10{% else %}5{% endif %}',
+                  'hysteresis': 2,
+                  'maximum': 9
+              },
+             },
+        ] } }
+        await self.initCase(cfg)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
+        nfoo = self.hass.servHandlers['notify.foo']
+        fooCount = 0
+        # let first generation happen
+        await asyncio.sleep(0.05)
+        perCount += 1
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Duplicate declaration.*domain=test name=g1')
+        self.assertEqual(len(self.gad.alerts['test']), 2)
+        self.assertTrue(not 'tracked' in self.gad.alerts)
+        t57 = self.gad.alerts['test']['t57']
+        t58 = self.gad.alerts['test']['t58']
+        self.assertEqual(len(self.gad.generators['test']), 2)
+        g1 = self.gad.generators['test']['g1']
+        g2 = self.gad.generators['test']['g2']
+        self.assertEqual(g1.state, 1)
+        self.assertEqual(g2.state, 1)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+
+        doConditionUpdate(t57, True)
+        await asyncio.sleep(0.05)
+        perCount += 1
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        #print(nn.await_args_list[perCount-1].args[0].data)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t57: t57msg')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['title'], 't57tt')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['target'], 't57tar')
+        # Check done_message
+        doConditionUpdate(t57, False)
+        await asyncio.sleep(0.05)
+        perCount += 1
+        self.assertEqual(len(nfoo.await_args_list), fooCount)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t57: t57dmsg')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['title'], 't57tt')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['target'], 't57tar')
+        # So we've tested genElem in name, title, target, message, done_message, notifier.
+
+        # Testing 'condition' is tricker cuz our test harness only evaluates that variables
+        # are passed during alert creation.  TODO - spiffy this testing up
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't59',
+              'condition': '{{ genElem == "t59" }}',
+              'early_start': True,  # so test harness evals template quickly
+             },
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g2', 'generator': 't60',
+              'condition': '{{ true }}',
+              'early_start': True,
+              'threshold': {
+                  'value': '{% if genElem == "t60" %}10{% else %}5{% endif %}',
+                  'hysteresis': 2,
+                  'maximum': 9
+              },
+             },
+        ] } }
+        resetModuleLoadTime()
+        await self.initCase(cfg)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
+        nfoo = self.hass.servHandlers['notify.foo']
+        fooCount = 0
+        await asyncio.sleep(0.05)
+        perCount += 2
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 'Alert2 test_t59: turned on')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t60: turned on')
+        # And now checked genElem in condition and value.
+        
+    async def test_generator3(self):
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't61',
+              'condition': '{{ zzz }}' },
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g2', 'generator': [ "t62", "t63" ],
+              'condition': '{{ zzz }}' },
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g3', 'generator': '[ "t64", "t65" ]',
+              'condition': '{{ zzz }}' },
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g4', 'generator': '{{ [ "t66", "t67" ] }}',
+              'condition': '{{ zzz }}' },
+        ] } }
+        await self.initCase(cfg)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(self.gad.alerts['test']), 7)
+        self.assertTrue(not 'tracked' in self.gad.alerts)
+        for id in [ 't61', 't62', 't63', 't64', 't65', 't66', 't67' ]:
+            self.assertTrue(self.gad.alerts['test'][id])
+        self.assertEqual(len(self.gad.generators['test']), 4)
+        for id in [ 'g1', 'g2', 'g3', 'g4' ]:
+            self.assertTrue(self.gad.generators['test'][id])
+
+        # Pick one and try adding another alert
+        g3 = self.gad.generators['test']['g3']
+        g3._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                                [ SimpleNamespace(template=g3._generator_template, result='[ "t64", "t65", "t65a" ]') ] )
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(self.gad.alerts['test']), 8)
+        self.assertTrue(self.gad.alerts['test']['t65a'])
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), perCount)
+
+        t63 = self.gad.alerts['test']['t63']
+        doConditionUpdate(t63, True)
+        await asyncio.sleep(0.05)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t63: turned on')
         
 if __name__ == '__main__':
     unittest.main()
