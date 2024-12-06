@@ -28,6 +28,7 @@ import voluptuous as vol
 import jinja2
 from types import SimpleNamespace
 
+gHass = None
 class FakeConst:
     MAJOR_VERSION = 2024
     MINOR_VERSION = 10
@@ -59,22 +60,32 @@ class FakeConfigEntries:
 sys.modules['homeassistant.config_entries'] = FakeConfigEntries
 
 class FakeTemplate:
-    def __init__(self, value):
-        self.hass = None
+    def __init__(self, value, hass=None):
+        self.hass = hass
         self.template = value
     def async_render(self, variables=None, parse_result=False):
         rez = None
+        variables = {"states": lambda x: x, **(variables or {})}
         try:
-            if variables is None:
-                rez = jinja2.Template(self.template).render()
-            else:
-                rez = jinja2.Template(self.template).render(variables)
+            rez = jinja2.Template(self.template).render(variables)
+            #if variables is None:
+            #    rez = jinja2.Template(self.template).render()
+            #else:
+            #    rez = jinja2.Template(self.template).render(variables)
         except Exception as err:
             raise FakeExceptions.TemplateError(err) from err
         return rez
         #return self.template
     def set_value(self, new):
         self.template = new
+    def ensure_valid(self):
+        try:
+            jinja2.Template(self.template) # try compiling
+        except Exception as err:
+            raise FakeExceptions.TemplateError(err) from err
+    def __repr__(self) -> str:
+        """Representation of Template."""
+        return f"FakeTemplate<template=({self.template})>"
 class FakeHelpers:
     class template:
         @staticmethod
@@ -130,6 +141,7 @@ class FakeHA:
             template = fake_template
             TRIGGER_SCHEMA = str
             datetime = rawdt.datetime
+            _async_get_hass_or_none = lambda : gHass
             pass
         class entity_component:
             class EntityComponent[_T]:
@@ -325,9 +337,11 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         return count
     
     async def initCase(self, cfg):
+        global gHass
         print('setting up')
         self.oldTasks = asyncio.all_tasks()
         self.hass = FakeHass()
+        gHass = self.hass
         await alert2.async_setup(self.hass, cfg)
         self.gad = self.hass.data[alert2.DOMAIN]
         #self.gad = alert2.Alert2Data(self.hass, cfg)
@@ -357,7 +371,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         
     async def test_ack(self):
         cfg = { 'alert2' : { 'alerts' : [
-            { 'domain': 'test', 'name': 't1', 'condition': '{{ true }}' },
+            { 'domain': 'test', 'name': 't1', 'condition': '{{ false }}' },
         ], } }
         await self.initCase(cfg)
         t1 = self.gad.alerts['test']['t1']
@@ -421,14 +435,17 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         
     async def test_badtemplate(self):
         cfg = { 'alert2' : { 'alerts' : [
-            { 'domain': 'test', 'name': 't2a', 'condition': '{{ true }}' },
-            { 'domain': 'test', 'name': 't2b', 'condition': '{{ true }}', 'trigger': 'zzz' },
+            { 'domain': 'test', 'name': 't2a', 'condition': '{{ false }}' },
+            { 'domain': 'test', 'name': 't2b', 'condition': '{{ false }}', 'trigger': 'zzz' },
         ], 'tracked': [ { 'domain': 'test', 'name': 't2c' } ] } }
         await self.initCase(cfg)
         nn = self.hass.servHandlers['notify.persistent_notification']
         t2a = self.gad.alerts['test']['t2a']
         t2b = self.gad.tracked['test']['t2b']
         perCount = 0
+        self.assertEqual(len(nn.await_args_list), perCount)
+
+        await asyncio.sleep(0.1)  # so startWatching is called
         self.assertEqual(len(nn.await_args_list), perCount)
         
         doConditionUpdate(t2a, '{{ foo')
@@ -471,7 +488,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
     async def test_reminder(self):
         cfg = { 'alert2' : { 'alerts' : [
             { 'domain': 'test', 'name': 't2', 'condition': '{{ true }}', 'reminder_frequency_mins': [0.01, 0.05] },
-            { 'domain': 'test', 'name': 't5', 'condition': '{{ true }}' },
+            { 'domain': 'test', 'name': 't5', 'condition': '{{ false }}' },
         ], } }
         await self.initCase(cfg)
 
@@ -479,9 +496,9 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         t2 = self.gad.alerts['test']['t2']
         nn = self.hass.servHandlers['notify.persistent_notification']
         perCount = 0
-        doConditionUpdate(t2, True)
-        self.assertEqual(t2.async_write_ha_state.call_count, 1)
+        #doConditionUpdate(t2, True). Since condition is true at startup, startWatching will trigger it
         await asyncio.sleep(0.1)
+        self.assertEqual(t2.async_write_ha_state.call_count, 1)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t2.*turned on')
@@ -539,8 +556,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         # Check that default value of reminder is overridden and is used
         cfg = { 'alert2' : { 'defaults': { 'reminder_frequency_mins': 10 },
                              'alerts' : [
-            { 'domain': 'test', 'name': 't3', 'condition': '{{ true }}', 'reminder_frequency_mins': [0.01, 0.05] },
-            { 'domain': 'test', 'name': 't4', 'condition': '{{ true }}' },
+            { 'domain': 'test', 'name': 't3', 'condition': '{{ false }}', 'reminder_frequency_mins': [0.01, 0.05] },
+            { 'domain': 'test', 'name': 't4', 'condition': '{{ false }}' },
         ], } }
         await self.initCase(cfg)
         nn = self.hass.servHandlers['notify.persistent_notification']
@@ -578,7 +595,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         # Check that default value of reminder is used
         cfg = { 'alert2' : { 'defaults': { 'reminder_frequency_mins': 0.01 },
                              'alerts' : [
-            { 'domain': 'test', 'name': 't6', 'condition': '{{ true }}' },
+            { 'domain': 'test', 'name': 't6', 'condition': '{{ false }}' },
         ], } }
         await self.initCase(cfg)
         t6 = self.gad.alerts['test']['t6']
@@ -604,11 +621,11 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
     async def test_notifiers1(self):
         cfg = { 'alert2' : { 'alerts' : [
             # notifier available immediately
-            { 'domain': 'test', 'name': 't7', 'condition': '{{ true }}', 'notifier': 'persistent_notification' },
+            { 'domain': 'test', 'name': 't7', 'condition': '{{ false }}', 'notifier': 'persistent_notification' },
             # notifier available in grace period
-            { 'domain': 'test', 'name': 't7a', 'condition': '{{ true }}', 'notifier': 'foo' },
+            { 'domain': 'test', 'name': 't7a', 'condition': '{{ false }}', 'notifier': 'foo' },
             # notifier available after grace period
-            { 'domain': 'test', 'name': 't7b', 'condition': '{{ true }}', 'notifier': 'foo2' },
+            { 'domain': 'test', 'name': 't7b', 'condition': '{{ false }}', 'notifier': 'foo2' },
         ], } }
         resetModuleLoadTime()
         await self.initCase(cfg)
@@ -701,10 +718,10 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         cfg = { 'alert2' : { 'alerts' : [
             # some combos
             # foo available soon after startup.  Foo2 not available till later
-            { 'domain': 'test', 'name': 't7c', 'condition': '{{ true }}', 'notifier': ['persistent_notification', 'foo'] },
-            { 'domain': 'test', 'name': 't7d', 'condition': '{{ true }}', 'notifier': ['foo', 'persistent_notification'] },
-            { 'domain': 'test', 'name': 't7e', 'condition': '{{ true }}', 'notifier': ['foo', 'foo2'] },
-            { 'domain': 'test', 'name': 't7f', 'condition': '{{ true }}', 'notifier': ['foo2', 'persistent_notification'] },
+            { 'domain': 'test', 'name': 't7c', 'condition': '{{ false }}', 'notifier': ['persistent_notification', 'foo'] },
+            { 'domain': 'test', 'name': 't7d', 'condition': '{{ false }}', 'notifier': ['foo', 'persistent_notification'] },
+            { 'domain': 'test', 'name': 't7e', 'condition': '{{ false }}', 'notifier': ['foo', 'foo2'] },
+            { 'domain': 'test', 'name': 't7f', 'condition': '{{ false }}', 'notifier': ['foo2', 'persistent_notification'] },
         ], } }
         resetModuleLoadTime()
         await self.initCase(cfg)
@@ -792,7 +809,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
     async def test_notifiers3(self):
         # Check if default notifier is bad
         cfg = { 'alert2' : { 'defaults': { 'notifier': 'foo2' }, 'alerts' : [
-            { 'domain': 'test', 'name': 't8a', 'condition': '{{ true }}', 'notifier': 'foo' },
+            { 'domain': 'test', 'name': 't8a', 'condition': '{{ false }}', 'notifier': 'foo' },
         ], } }
         resetModuleLoadTime()
         await self.initCase(cfg)
@@ -820,7 +837,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
     async def test_notifiers4(self):
         # Check that default notifier is used
         cfg = { 'alert2' : { 'defaults': { 'notifier': 'foo' }, 'alerts' : [
-            { 'domain': 'test', 'name': 't8', 'condition': '{{ true }}' },
+            { 'domain': 'test', 'name': 't8', 'condition': '{{ false }}' },
         ], } }
         await self.initCase(cfg)
         self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
@@ -847,43 +864,43 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             #
             # if notifier is single string, it either is name of notifier, or something that evaluates with json.loads
             # First singleton notifiers
-            { 'domain': 'test', 'name': 't9a', 'condition': '{{ true }}', 'notifier': 'foo' },
-            { 'domain': 'test', 'name': 't9b', 'condition': '{{ true }}', 'notifier': 'sensor.testent' },
-            { 'domain': 'test', 'name': 't9b2', 'condition': '{{ true }}', 'notifier': 'sensor.multient' },
-            { 'domain': 'test', 'name': 't9c', 'condition': '{{ true }}', 'notifier': '"foo"' },
-            { 'domain': 'test', 'name': 't9d', 'condition': '{{ true }}', 'notifier': '\'foo\'' },
-            { 'domain': 'test', 'name': 't9e', 'condition': '{{ true }}', 'notifier': '[ "foo" ]' },
-            { 'domain': 'test', 'name': 't9f', 'condition': '{{ true }}', 'notifier': '[ \'foo\' ]' },
+            { 'domain': 'test', 'name': 't9a', 'condition': '{{ false }}', 'notifier': 'foo' },
+            { 'domain': 'test', 'name': 't9b', 'condition': '{{ false }}', 'notifier': 'sensor.testent' },
+            { 'domain': 'test', 'name': 't9b2', 'condition': '{{ false }}', 'notifier': 'sensor.multient' },
+            { 'domain': 'test', 'name': 't9c', 'condition': '{{ false }}', 'notifier': '"foo"' },
+            { 'domain': 'test', 'name': 't9d', 'condition': '{{ false }}', 'notifier': '\'foo\'' },
+            { 'domain': 'test', 'name': 't9e', 'condition': '{{ false }}', 'notifier': '[ "foo" ]' },
+            { 'domain': 'test', 'name': 't9f', 'condition': '{{ false }}', 'notifier': '[ \'foo\' ]' },
             
-            { 'domain': 'test', 'name': 't9g', 'condition': '{{ true }}', 'notifier': '{{ \'foo\' }}' },
-            { 'domain': 'test', 'name': 't9h', 'condition': '{{ true }}', 'notifier': '{{ "foo" }}' },
+            { 'domain': 'test', 'name': 't9g', 'condition': '{{ false }}', 'notifier': '{{ \'foo\' }}' },
+            { 'domain': 'test', 'name': 't9h', 'condition': '{{ false }}', 'notifier': '{{ "foo" }}' },
 
-            { 'domain': 'test', 'name': 't9i', 'condition': '{{ true }}', 'notifier': '{{ ["foo"] }}' },
-            { 'domain': 'test', 'name': 't9j', 'condition': '{{ true }}', 'notifier': '{{ [\'foo\'] }}' },
+            { 'domain': 'test', 'name': 't9i', 'condition': '{{ false }}', 'notifier': '{{ ["foo"] }}' },
+            { 'domain': 'test', 'name': 't9j', 'condition': '{{ false }}', 'notifier': '{{ [\'foo\'] }}' },
 
-            { 'domain': 'test', 'name': 't9k', 'condition': '{{ true }}', 'notifier': '{{ "a" if false else "foo" }}' },
-            { 'domain': 'test', 'name': 't9l', 'condition': '{{ true }}', 'notifier': '{{ "a" if false else "sensor.testent" }}' },
+            { 'domain': 'test', 'name': 't9k', 'condition': '{{ false }}', 'notifier': '{{ "a" if false else "foo" }}' },
+            { 'domain': 'test', 'name': 't9l', 'condition': '{{ false }}', 'notifier': '{{ "a" if false else "sensor.testent" }}' },
 
-            { 'domain': 'test', 'name': 't9m', 'condition': '{{ true }}', 'notifier': '{% if true %}foo{% endif %}' },
-            { 'domain': 'test', 'name': 't9n', 'condition': '{{ true }}', 'notifier': '{% if true %}{{ ["foo"]}}{% endif %}' },
+            { 'domain': 'test', 'name': 't9m', 'condition': '{{ false }}', 'notifier': '{% if true %}foo{% endif %}' },
+            { 'domain': 'test', 'name': 't9n', 'condition': '{{ false }}', 'notifier': '{% if true %}{{ ["foo"]}}{% endif %}' },
 
             # And let's test some error cases
             # notifier evals to something other than string
-            { 'domain': 'test', 'name': 't9p', 'condition': '{{ true }}', 'notifier': '3' },
-            { 'domain': 'test', 'name': 't9q', 'condition': '{{ true }}', 'notifier': '{ "a": 4 }' },
-            { 'domain': 'test', 'name': 't9r', 'condition': '{{ true }}', 'notifier': '[ 4 ]' },
-            { 'domain': 'test', 'name': 't9s', 'condition': '{{ true }}', 'notifier': '{{ "foo"' },
-            { 'domain': 'test', 'name': 't9t', 'condition': '{{ true }}', 'notifier': '{{ ["foo", 5] }}' },
-            { 'domain': 'test', 'name': 't9u', 'condition': '{{ true }}', 'notifier': '{% if true %}{% endif %}' },
-            { 'domain': 'test', 'name': 't9v', 'condition': '{{ true }}', 'notifier': 'sensor.unavailEnt2' },
+            { 'domain': 'test', 'name': 't9p', 'condition': '{{ false }}', 'notifier': '3' },
+            { 'domain': 'test', 'name': 't9q', 'condition': '{{ false }}', 'notifier': '{ "a": 4 }' },
+            { 'domain': 'test', 'name': 't9r', 'condition': '{{ false }}', 'notifier': '[ 4 ]' },
+            { 'domain': 'test', 'name': 't9s', 'condition': '{{ false }}', 'notifier': '{{ "foo"' },
+            { 'domain': 'test', 'name': 't9t', 'condition': '{{ false }}', 'notifier': '{{ ["foo", 5] }}' },
+            { 'domain': 'test', 'name': 't9u', 'condition': '{{ false }}', 'notifier': '{% if true %}{% endif %}' },
+            { 'domain': 'test', 'name': 't9v', 'condition': '{{ false }}', 'notifier': 'sensor.unavailEnt2' },
             
-            { 'domain': 'test', 'name': 't9w', 'condition': '{{ true }}', 'notifier': '{{ ["foo", "bar"] }}' },
-            { 'domain': 'test', 'name': 't9x', 'condition': '{{ true }}', 'notifier': 'sensor.unavailEnt' },
-            { 'domain': 'test', 'name': 't9x1', 'condition': '{{ true }}', 'notifier': '[ foo ]' },
-            { 'domain': 'test', 'name': 't9y', 'condition': '{{ true }}', 'notifier': '[ "foo" ' },
+            { 'domain': 'test', 'name': 't9w', 'condition': '{{ false }}', 'notifier': '{{ ["foo", "bar"] }}' },
+            { 'domain': 'test', 'name': 't9x', 'condition': '{{ false }}', 'notifier': 'sensor.unavailEnt' },
+            { 'domain': 'test', 'name': 't9x1', 'condition': '{{ false }}', 'notifier': '[ foo ]' },
+            { 'domain': 'test', 'name': 't9y', 'condition': '{{ false }}', 'notifier': '[ "foo" ' },
 
             # we don't support ent in a list
-            { 'domain': 'test', 'name': 't9z', 'condition': '{{ true }}', 'notifier': '{{ ["sensor.testent"] }}' },
+            { 'domain': 'test', 'name': 't9z', 'condition': '{{ false }}', 'notifier': '{{ ["sensor.testent"] }}' },
 
         ], } }
         resetModuleLoadTime()
@@ -982,8 +999,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
     async def test_throttle(self):
         # Check that default notifier is used
         cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
-            { 'domain': 'test', 'name': 't9', 'condition': '{{ true }}', 'throttle_fires_per_mins': [2, 0.05], 'reminder_frequency_mins':0.01 },
-            { 'domain': 'test', 'name': 't9a', 'condition': '{{ true }}', 'throttle_fires_per_mins': [2, 0.05], 'reminder_frequency_mins':0.01, 'summary_notifier': True },
+            { 'domain': 'test', 'name': 't9', 'condition': '{{ false }}', 'throttle_fires_per_mins': [2, 0.05], 'reminder_frequency_mins':0.01 },
+            { 'domain': 'test', 'name': 't9a', 'condition': '{{ false }}', 'throttle_fires_per_mins': [2, 0.05], 'reminder_frequency_mins':0.01, 'summary_notifier': True },
         ], } }
         await self.initCase(cfg)
         self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
@@ -1063,13 +1080,13 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         
     async def test_annotate(self):
         cfg = { 'alert2' : { 'defaults': { 'reminder_frequency_mins': 0.01 },  'alerts' : [
-            { 'domain': 'test', 'name': 't10', 'condition': '{{ true }}' },
-            { 'domain': 'test', 'name': 't11', 'condition': '{{ true }}', 'message': 'ick-t11' },
-            { 'domain': 'test', 'name': 't12', 'condition': '{{ true }}', 'message': 'ick-t12', 'done_message': 'ick-t12 done' },
-            { 'domain': 'test', 'name': 't13', 'condition': '{{ true }}', 'message': 'ick-t13', 'annotate_messages': False },
-            { 'domain': 'test', 'name': 't14', 'condition': '{{ true }}', 'message': 'ick-t14', 'annotate_messages': False, 'done_message': 'ick-t14 done' },
-            { 'domain': 'test', 'name': 't15', 'condition': '{{ true }}', 'friendly_name': 'friend_t15' },
-            { 'domain': 'test', 'name': 't16', 'condition': '{{ true }}', 'message': 'ick-t16', 'annotate_messages': False, 'friendly_name': 'friend_t16' },
+            { 'domain': 'test', 'name': 't10', 'condition': '{{ false }}' },
+            { 'domain': 'test', 'name': 't11', 'condition': '{{ false }}', 'message': 'ick-t11' },
+            { 'domain': 'test', 'name': 't12', 'condition': '{{ false }}', 'message': 'ick-t12', 'done_message': 'ick-t12 done' },
+            { 'domain': 'test', 'name': 't13', 'condition': '{{ false }}', 'message': 'ick-t13', 'annotate_messages': False },
+            { 'domain': 'test', 'name': 't14', 'condition': '{{ false }}', 'message': 'ick-t14', 'annotate_messages': False, 'done_message': 'ick-t14 done' },
+            { 'domain': 'test', 'name': 't15', 'condition': '{{ false }}', 'friendly_name': 'friend_t15' },
+            { 'domain': 'test', 'name': 't16', 'condition': '{{ false }}', 'message': 'ick-t16', 'annotate_messages': False, 'friendly_name': 'friend_t16' },
         ], 'tracked': [ { 'domain': 'test', 'name': 't16a' } ] } }
         await self.initCase(cfg)
         t10 = self.gad.alerts['test']['t10']
@@ -1153,7 +1170,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
     async def test_delay_on(self):
         # Check that default notifier is used
         cfg = { 'alert2' : { 'alerts' : [
-            { 'domain': 'test', 'name': 't17', 'condition': '{{ true }}', 'delay_on_secs': 1, 'reminder_frequency_mins': 0.01 },
+            { 'domain': 'test', 'name': 't17', 'condition': '{{ false }}', 'delay_on_secs': 1, 'reminder_frequency_mins': 0.01 },
         ], } }
         await self.initCase(cfg)
         t17 = self.gad.alerts['test']['t17']
@@ -1191,44 +1208,57 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
     async def test_threshold(self):
         # Check that default notifier is used
         cfg = { 'alert2' : { 'alerts' : [
-            { 'domain': 'test', 'name': 't18', 'condition': '{{ xxx }}', 'threshold': { 'value': "{{ 'zzz' }}", 'hysteresis': 3, 'minimum': 0 } },
-            { 'domain': 'test', 'name': 't19', 'condition': '{{ xxx }}', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'maximum': 10 } },
-            { 'domain': 'test', 'name': 't20', 'condition': '{{ xxx }}', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'minimum': 0, 'maximum': 10 } },
+            { 'domain': 'test', 'name': 't18', 'condition': '{{ "xxx" }}', 'threshold': { 'value': "{{ 'zzz' }}", 'hysteresis': 3, 'minimum': 0 } },
+            { 'domain': 'test', 'name': 't19', 'condition': '{{ true }}', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'maximum': 10 } },
+            { 'domain': 'test', 'name': 't20', 'condition': '{{ true }}', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'minimum': 0, 'maximum': 10 } },
         ], } }
         await self.initCase(cfg)
         t18 = self.gad.alerts['test']['t18']
         t19 = self.gad.alerts['test']['t19']
         t20 = self.gad.alerts['test']['t20']
         nn = self.hass.servHandlers['notify.persistent_notification']
+        perCount = 0
         self.assertEqual(t18.state, 'off')
         self.assertEqual(t19.state, 'off')
         self.assertEqual(t20.state, 'off')
 
+        await asyncio.sleep(0.1)
+        await self.waitForAllBut(self.oldTasks)
+        perCount += 3
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-3].args[0].data['message'], 't18.*xxx.*truthy')
+        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 't19.*Threshold.*"" rather than a float')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't20.*Threshold.*"" rather than a float')
+        self.assertEqual(t18.state, 'off')
+        
         doConditionUpdate(t18, True)  # cond updating causes value to be evaluated, which returns zzz:
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 1)
-        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'Threshold.*zzz.*rather than a float')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Threshold.*zzz.*rather than a float')
         self.assertEqual(t18.state, 'off')
 
         doConditionUpdate(t18, True)  # cond updating causes value to be evaluated, which returns zzz:
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 2)
-        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'Threshold.*zzz.*rather than a float')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Threshold.*zzz.*rather than a float')
         self.assertEqual(t18.state, 'off')
 
         # condition updates can never fail - i.e., helpers.result_as_boolean never fails
         setValue(t18, '3')
         doConditionUpdate(t18, True)
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t18.state, 'off')
 
         # Now try value update with false condition
         setCondition(t18, False)
         doValueUpdate(t18, 'zz2')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 3)
-        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Threshold.*zz2.*rather than a float')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Threshold.*zz2.*rather than a float')
         self.assertEqual(t18.state, 'off')
         
         # Now try false, false in various combinations
@@ -1236,18 +1266,18 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         setCondition(t18, False)
         doValueUpdate(t18, '1')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t18.state, 'off')
         #
         setValue(t18, '3')
         doConditionUpdate(t18, False)
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t18.state, 'off')
         #
         doCondValueUpdate(t18, False, '3')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t18.state, 'off')
 
         # Now try cond true, val false
@@ -1255,18 +1285,18 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         setCondition(t18, True)
         doValueUpdate(t18, '1')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t18.state, 'off')
         #
         setValue(t18, '3')
         doConditionUpdate(t18, True)
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t18.state, 'off')
         #
         doCondValueUpdate(t18, True, '3')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t18.state, 'off')
 
         # Now try false, True in various combinations
@@ -1274,222 +1304,243 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         setCondition(t18, False)
         doValueUpdate(t18, '-1')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t18.state, 'off')
         #
         setValue(t18, '-1')
         doConditionUpdate(t18, False)
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t18.state, 'off')
         #
         doCondValueUpdate(t18, False, '-1')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 3)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t18.state, 'off')
 
         # Now try with both true
         setCondition(t18, True)
         doValueUpdate(t18, '-1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 4)
-        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'test_t18: turned on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t18: turned on')
         self.assertEqual(t18.state, 'on')
         doConditionUpdate(t18, False)
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 5)
-        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'test_t18: turned off')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t18: turned off')
         self.assertEqual(t18.state, 'off')
         #
         setValue(t18, '-1')
         doConditionUpdate(t18, True)
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 6)
-        self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'test_t18: turned on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t18: turned on')
         self.assertEqual(t18.state, 'on')
         doConditionUpdate(t18, False)
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 7)
-        self.assertRegex(nn.await_args_list[6].args[0].data['message'], 'test_t18: turned off')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t18: turned off')
         self.assertEqual(t18.state, 'off')
         #
         doCondValueUpdate(t18, True, '-1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 8)
-        self.assertRegex(nn.await_args_list[7].args[0].data['message'], 'test_t18: turned on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t18: turned on')
         self.assertEqual(t18.state, 'on')
         doConditionUpdate(t18, False)
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 9)
-        self.assertRegex(nn.await_args_list[8].args[0].data['message'], 'test_t18: turned off')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t18: turned off')
         self.assertEqual(t18.state, 'off')
         
         # Now check hysteresis
         doCondValueUpdate(t18, True, '-1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 10)
-        self.assertRegex(nn.await_args_list[9].args[0].data['message'], 'test_t18: turned on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t18: turned on')
         self.assertEqual(t18.state, 'on')
         # going positive but still less than 3
         doValueUpdate(t18, '1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 10)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t18.state, 'on')
         # 3 counts from 0, not -1
         doValueUpdate(t18, '2.5')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 10)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t18.state, 'on')
         # now turns off
         doValueUpdate(t18, '3')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 11)
-        self.assertRegex(nn.await_args_list[10].args[0].data['message'], 'test_t18: turned off')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t18: turned off')
         self.assertEqual(t18.state, 'off')
 
         # Check turning off due to condition going false
         setValue(t18, '-2')
         doCondValueUpdate(t18, True, '-1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 12)
-        self.assertRegex(nn.await_args_list[11].args[0].data['message'], 'test_t18: turned on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t18: turned on')
         self.assertEqual(t18.state, 'on')
         doConditionUpdate(t18, False)
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 13)
-        self.assertRegex(nn.await_args_list[12].args[0].data['message'], 'test_t18: turned off')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t18: turned off')
         self.assertEqual(t18.state, 'off')
         
         # Check max hysteresis
         doCondValueUpdate(t19, True, '9')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 13)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t19.state, 'off')
         doCondValueUpdate(t19, True, '10')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 13)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t19.state, 'off')
         # turn on
         doCondValueUpdate(t19, True, '11')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 14)
-        self.assertRegex(nn.await_args_list[13].args[0].data['message'], 'test_t19: turned on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t19: turned on')
         self.assertEqual(t19.state, 'on')
         doValueUpdate(t19, '10')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 14)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t19.state, 'on')
         doValueUpdate(t19, '8')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 14)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t19.state, 'on')
         doValueUpdate(t19, '7')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 15)
-        self.assertRegex(nn.await_args_list[14].args[0].data['message'], 'test_t19: turned off')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t19: turned off')
         self.assertEqual(t19.state, 'off')
         
         # Check min,max hysteresis
         doCondValueUpdate(t20, True, '10')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 15)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t20.state, 'off')
         doValueUpdate(t20, '11')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 16)
-        self.assertRegex(nn.await_args_list[15].args[0].data['message'], 'test_t20: turned on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t20: turned on')
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '8')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 16)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '7')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 17)
-        self.assertRegex(nn.await_args_list[16].args[0].data['message'], 'test_t20: turned off')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t20: turned off')
         self.assertEqual(t20.state, 'off')
         doValueUpdate(t20, '0')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 17)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t20.state, 'off')
         doValueUpdate(t20, '-1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 18)
-        self.assertRegex(nn.await_args_list[17].args[0].data['message'], 'test_t20: turned on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t20: turned on')
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '2')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 18)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '3')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 19)
-        self.assertRegex(nn.await_args_list[18].args[0].data['message'], 'test_t20: turned off')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t20: turned off')
         self.assertEqual(t20.state, 'off')
 
         # Check if turn off by going into hysteresis region of opposite side
         doValueUpdate(t20, '-1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 20)
-        self.assertRegex(nn.await_args_list[19].args[0].data['message'], 'test_t20: turned on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t20: turned on')
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '9')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 21)
-        self.assertRegex(nn.await_args_list[20].args[0].data['message'], 'test_t20: turned off')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t20: turned off')
         self.assertEqual(t20.state, 'off')
         # and in other direction
         doValueUpdate(t20, '11')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 22)
-        self.assertRegex(nn.await_args_list[21].args[0].data['message'], 'test_t20: turned on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t20: turned on')
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '1')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 23)
-        self.assertRegex(nn.await_args_list[22].args[0].data['message'], 'test_t20: turned off')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t20: turned off')
         self.assertEqual(t20.state, 'off')
 
         # And test if jump from pole to pole
         doValueUpdate(t20, '-1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 24)
-        self.assertRegex(nn.await_args_list[23].args[0].data['message'], 'test_t20: turned on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t20: turned on')
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '11')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 24)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '9')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 24)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '-1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 24)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t20.state, 'on')
         doValueUpdate(t20, '5')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 25)
-        self.assertRegex(nn.await_args_list[24].args[0].data['message'], 'test_t20: turned off')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t20: turned off')
         self.assertEqual(t20.state, 'off')
 
         # No threshold tracking even when condition is false
         setCondition(t20, False)
         doValueUpdate(t20, '-1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 25)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t20.state, 'off')
         doValueUpdate(t20, '1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 25)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t20.state, 'off')
         doConditionUpdate(t20, True)
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 25)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t20.state, 'off')
 
-        perCount = 25
         doCondValueUpdate(t20, False, '11')
         await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), perCount)
@@ -1522,126 +1573,146 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
     async def test_threshold2(self):
         # Check that default notifier is used
         cfg = { 'alert2' : { 'alerts' : [
-            { 'domain': 'test', 'name': 't21',  'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'minimum': 0 } },
-            { 'domain': 'test', 'name': 't21a', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'maximum': 10 }, 'delay_on_secs': 0.5 },
-            { 'domain': 'test', 'name': 't21b', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'minimum': 0 }, 'delay_on_secs': 0.5 },
-            { 'domain': 'test', 'name': 't21c', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'minimum':0, 'maximum': 10 }, 'delay_on_secs': 0.5 },
+            { 'domain': 'test', 'name': 't21',  'threshold': { 'value': "{{ 2 }}", 'hysteresis': 3, 'minimum': 0 } },
+            { 'domain': 'test', 'name': 't21a', 'threshold': { 'value': "{{ 2.1 }}", 'hysteresis': 3, 'maximum': 10 }, 'delay_on_secs': 0.5 },
+            { 'domain': 'test', 'name': 't21b', 'threshold': { 'value': "{{ 2.2 }}", 'hysteresis': 3, 'minimum': 0 }, 'delay_on_secs': 0.5 },
+            { 'domain': 'test', 'name': 't21c', 'threshold': { 'value': "{{ 2.3 }}", 'hysteresis': 3, 'minimum':0, 'maximum': 10 }, 'delay_on_secs': 0.5 },
+            { 'domain': 'test', 'name': 't21d', 'threshold': { 'value': "{{ -1 }}", 'hysteresis': 3, 'minimum':0 } },
         ], } }
         await self.initCase(cfg)
         t21 = self.gad.alerts['test']['t21']
         t21a = self.gad.alerts['test']['t21a']
         t21b = self.gad.alerts['test']['t21b']
         t21c = self.gad.alerts['test']['t21c']
+        t21d = self.gad.alerts['test']['t21d']
         nn = self.hass.servHandlers['notify.persistent_notification']
+        perCount = 0
         self.assertEqual(t21.state, 'off')
         self.assertEqual(t21a.state, 'off')
 
+        await asyncio.sleep(0.1)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t21d: turned on')
+        doValueUpdate(t21d, '4')
+        await self.waitForAllBut(self.oldTasks)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t21d: turned off')
+
+        
         # Test hysteresis without a condition
         doValueUpdate(t21, '1')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 0)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t21.state, 'off')
 
         doValueUpdate(t21, '-1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 1)
-        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'test_t21: turned on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t21: turned on')
         self.assertEqual(t21.state, 'on')
 
         doValueUpdate(t21, '-1.1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t21.state, 'on')
         
         doValueUpdate(t21, '1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 1)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t21.state, 'on')
 
         doValueUpdate(t21, '3')
         await self.waitForAllBut(self.oldTasks)
-        self.assertEqual(len(nn.await_args_list), 2)
-        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'test_t21: turned off')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t21: turned off')
         self.assertEqual(t21.state, 'off')
         await self.waitForAllBut(self.oldTasks)
 
         # Test thresh with delay_on, so we get multiple updates while it's firing.
         doValueUpdate(t21a, '11')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t21a.state, 'off')
         doValueUpdate(t21a, '12')
         await asyncio.sleep(0.1)
         self.assertEqual(t21a.state, 'off')
-        self.assertEqual(len(nn.await_args_list), 2)
+        self.assertEqual(len(nn.await_args_list), perCount)
         await asyncio.sleep(1)
         self.assertEqual(t21a.state, 'on')
-        self.assertEqual(len(nn.await_args_list), 3)
-        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'test_t21a: turned on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t21a: turned on')
         doValueUpdate(t21a, '1')
         await asyncio.sleep(0.1)
         self.assertEqual(t21a.state, 'off')
-        self.assertEqual(len(nn.await_args_list), 4)
-        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'test_t21a: turned off')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t21a: turned off')
         await self.waitForAllBut(self.oldTasks)
 
         # Try again, with multiple ticks on past threshold, but turn off before it fully turns on
         doValueUpdate(t21a, '11')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t21a.state, 'off')
         doValueUpdate(t21a, '12')
         await asyncio.sleep(0.1)
         self.assertEqual(t21a.state, 'off')
-        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(len(nn.await_args_list), perCount)
         doValueUpdate(t21a, '10')
         await asyncio.sleep(0.1)
         self.assertEqual(t21a.state, 'off')
-        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(len(nn.await_args_list), perCount)
         await asyncio.sleep(1)
         self.assertEqual(t21a.state, 'off')
-        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(len(nn.await_args_list), perCount)
         await self.waitForAllBut(self.oldTasks)
 
         # Same with minimum
         doValueUpdate(t21b, '-1')
         await asyncio.sleep(0.1)
-        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t21b.state, 'off')
         doValueUpdate(t21b, '-2')
         await asyncio.sleep(0.1)
         self.assertEqual(t21b.state, 'off')
-        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(len(nn.await_args_list), perCount)
         doValueUpdate(t21b, '0')
         await asyncio.sleep(0.1)
         self.assertEqual(t21b.state, 'off')
-        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(len(nn.await_args_list), perCount)
         await asyncio.sleep(1)
         self.assertEqual(t21b.state, 'off')
-        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(len(nn.await_args_list), perCount)
         await self.waitForAllBut(self.oldTasks)
 
         # Same with max+min
         doValueUpdate(t21c, '-1')
         await asyncio.sleep(0.2)
-        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(t21c.state, 'off')
         doValueUpdate(t21c, '-2')
         await asyncio.sleep(0.2)
         self.assertEqual(t21c.state, 'off')
-        self.assertEqual(len(nn.await_args_list), 4)
+        self.assertEqual(len(nn.await_args_list), perCount)
         # we're close to 0.5 secs to turn on.  Now switch poles.
         # so 0.3 should be enough to turn it on
         doValueUpdate(t21c, '11')
         await asyncio.sleep(0.3)
         self.assertEqual(t21c.state, 'on')
-        self.assertEqual(len(nn.await_args_list), 5)
-        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'test_t21c: turned on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t21c: turned on')
         doValueUpdate(t21c, '5')
         await asyncio.sleep(1)
         self.assertEqual(t21c.state, 'off')
-        self.assertEqual(len(nn.await_args_list), 6)
-        self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'test_t21c: turned off')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_t21c: turned off')
         await self.waitForAllBut(self.oldTasks)
 
         
@@ -1818,32 +1889,42 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             { 'domain': 'test', 'name': 't30' }, # duplicate
             { 'domain': 'test', 'name': 't30a' }, # duplicate
         ], 'alerts' : [
-            { 'domain': 'test', 'name': 't31', 'condition': 3 },
-            { 'domain': 'test', 'name': 't31', 'condition': 3.1 }, # duplicate declaration
-            { 'domain': 'test', 'name': 't30a', 'condition': 3.1 }, # duplicate declaration
-            { 'domain': 'test', 'name': 't32', 'condition': 3.2, 'trigger': 'fff' }, 
-            { 'domain': 'test', 'name': 't32', 'condition': 3.3, 'trigger': 'fff2' },  # duplicate
+            { 'domain': 'test', 'name': 't31', 'condition': 'off' },
+            { 'domain': 'test', 'name': 't31', 'condition': '{{ false }}' }, # duplicate declaration
+            { 'domain': 'test', 'name': 't30a', 'condition':'{{ true }}'  }, # duplicate declaration
+            { 'domain': 'test', 'name': 't32', 'condition': 'no', 'trigger': 'fff' }, 
+            { 'domain': 'test', 'name': 't32', 'condition': '{{ true }}', 'trigger': 'fff2' },  # duplicate
             { 'domain': 'test', 'name': 't33', 'condition': 'foo.bar' },
             { 'domain': 'test', 'name': 't34', 'condition': '{{ ick }}' },
+            { 'domain': 'test', 'name': 't34a', 'condition': '{{ 3 }}' },
             { 'domain': 'test', 'name': 't35', 'threshold': 4 },
-            { 'domain': 'test', 'name': 't36', 'threshold': { 'value': 5, 'hysteresis': 6, 'minimum':7 } },
+            { 'domain': 'test', 'name': 't36', 'threshold': { 'value': 5, 'hysteresis': 6, 'minimum':4 } },
             { 'domain': 'test', 'name': 't37', 'threshold': { 'value': 'foo.bar2', 'hysteresis': 8, 'minimum':9 } },
             { 'domain': 'test', 'name': 't38', 'threshold': { 'value': '{{ ick2 }}', 'hysteresis': 10, 'minimum':11 } },
+            { 'domain': 'test', 'name': 't38a', 'condition': 'on' },
+            { 'domain': 'test', 'name': 't38b', 'condition': '{{ "on" }}' },
         ], } }
         await self.initCase(cfg)
         await asyncio.sleep(0.1)
         #await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
-        self.assertEqual(len(nn.await_args_list), 5)
-        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 'Duplicate.*t30')
-        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 'Duplicate.*t31')
-        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Duplicate.*t30a')
-        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'Duplicate.*t32')
-        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'expected dictionary.*t35')
+        self.assertEqual(len(nn.await_args_list), 12)
+        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 't38a.*turned on')
+        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 't38b.*turned on')
+        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Duplicate.*t30')
+        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'Duplicate.*t31')
+        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'Duplicate.*t30a')
+        self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'Duplicate.*t32')
+        self.assertRegex(nn.await_args_list[6].args[0].data['message'], 'expected dictionary.*t35')
+        self.assertRegex(nn.await_args_list[7].args[0].data['message'], 't33.*rendered to "foo.bar".*not truthy')
+        self.assertRegex(nn.await_args_list[8].args[0].data['message'], 't34.*rendered to "".*not truthy')
+        self.assertRegex(nn.await_args_list[9].args[0].data['message'], 't34a.*rendered to "3".*not truthy')
+        self.assertRegex(nn.await_args_list[10].args[0].data['message'], 't37.*Threshold value returned "foo.bar2".*a float')
+        self.assertRegex(nn.await_args_list[11].args[0].data['message'], 't38.*Threshold value returned "".*a float')
 
         self.assertEqual(self.gad.tracked['test']['t30']._friendly_name, 'happyt30')
-        self.assertEqual(self.gad.alerts['test']['t31']._condition_template.template, '3')
-        self.assertEqual(self.gad.tracked['test']['t32']._condition_template.template, '3.2')
+        self.assertEqual(self.gad.alerts['test']['t31']._condition_template.template, 'off')
+        self.assertEqual(self.gad.tracked['test']['t32']._condition_template.template, 'no')
         self.assertEqual(self.gad.alerts['test']['t33']._condition_template.template, '{{ states("foo.bar") }}')
         self.assertEqual(self.gad.alerts['test']['t34']._condition_template.template, '{{ ick }}')
         self.assertNotIn('35', self.gad.alerts['test'])
@@ -1911,7 +1992,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
     async def test_unack(self):
         # Check that default notifier is used
         cfg = { 'alert2' : { 'alerts' : [
-            { 'domain': 'test', 'name': 't40', 'condition': '{{ true }}', 'reminder_frequency_mins': 0.01 },
+            { 'domain': 'test', 'name': 't40', 'condition': '{{ false }}', 'reminder_frequency_mins': 0.01 },
         ],  'tracked' : [
             { 'domain': 'test', 'name': 't41', 'throttle_fires_per_mins': [1, 0.01], 'summary_notifier': True },
         ] } }
@@ -2140,9 +2221,9 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_snooze(self):
         cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True}, 'alerts' : [
-            { 'domain': 'test', 'name': 't53', 'condition': '{{ zzz }}', 'reminder_frequency_mins': 0.01 },
-            { 'domain': 'test', 'name': 't53a', 'condition': '{{ zzz }}', 'reminder_frequency_mins': 0.01, 'summary_notifier': False },
-            { 'domain': 'test', 'name': 't53b', 'condition': '{{ zzz }}', 'reminder_frequency_mins': 0.01, 'summary_notifier': 'foo' },
+            { 'domain': 'test', 'name': 't53', 'condition': '{{ false }}', 'reminder_frequency_mins': 0.01 },
+            { 'domain': 'test', 'name': 't53a', 'condition': '{{ false }}', 'reminder_frequency_mins': 0.01, 'summary_notifier': False },
+            { 'domain': 'test', 'name': 't53b', 'condition': '{{ false }}', 'reminder_frequency_mins': 0.01, 'summary_notifier': 'foo' },
         ],  'tracked' : [
             { 'domain': 'test', 'name': 't54' },
             { 'domain': 'test', 'name': 't54a', 'summary_notifier': False },
@@ -2527,6 +2608,23 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t63: turned on')
+
+    async def test_generator4(self):
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g5', 'generator': '{{ foo ',
+              'condition': 'off' } ]}}
+        await self.initCase(cfg)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        await asyncio.sleep(0.05)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'invalid template.*g5')
+        self.assertEqual(len(self.gad.generators), 0)
+        #g5 = self.gad.generators['test']['g5']
+        #self.assertEqual(g5.state, 0)
+        self.assertEqual(len(self.gad.alerts), 0)
+
         
 if __name__ == '__main__':
     unittest.main()
