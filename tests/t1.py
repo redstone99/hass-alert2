@@ -59,6 +59,16 @@ class FakeConfigEntries:
         pass
 sys.modules['homeassistant.config_entries'] = FakeConfigEntries
 
+class FakeBinarySensor:
+    class BinarySensorDeviceClass:
+        PROBLEM = 'problem'
+sys.modules['homeassistant.components.binary_sensor'] = FakeBinarySensor
+class FakeSensor:
+    class SensorDeviceClass:
+        DATA_SIZE = 'data_size'
+sys.modules['homeassistant.components.sensor'] = FakeSensor
+
+
 class FakeTemplate:
     def __init__(self, value, hass=None):
         self.hass = hass
@@ -187,6 +197,8 @@ class FakeHA:
                 def async_set_context(self, context):
                     pass
                 async def async_remove(self, *, force_remove = False):
+                    pass
+                async def async_added_to_hass(self):
                     pass
         class restore_state:
             pass
@@ -2625,6 +2637,39 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         #self.assertEqual(g5.state, 0)
         self.assertEqual(len(self.gad.alerts), 0)
 
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': '{{ genElem ', 'generator_name': 'g6', 'generator': 'foo',
+              'condition': 'off' },
+            { 'domain': 'test', 'name': '{{ zz() }}', 'generator_name': 'g7', 'generator': 'foo',
+              'condition': 'off' },
+            { 'domain': '{{ genElem', 'name': 'yay', 'generator_name': 'g8', 'generator': 'foo',
+              'condition': 'off' },
+            { 'domain': '{{ zz() }}', 'name': 'yay', 'generator_name': 'g9', 'generator': 'foo',
+              'condition': 'off' },
+            { 'domain': '{{ genElem }}dd', 'name': '{{genElem}}nn', 'generator_name': 'g10', 'generator': 'foo',
+              'condition': 'off' } ]}}
+        resetModuleLoadTime()
+        await self.initCase(cfg)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        await asyncio.sleep(0.05)
+        perCount += 4
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-4].args[0].data['message'], 'g6 Name template returned err.*unexpected')
+        self.assertRegex(nn.await_args_list[perCount-3].args[0].data['message'], 'g7 Name template returned err.*zz.*undefined')
+        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 'g8 Domain template returned err.*unexpected')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'g9 Domain template returned err.*zz.*undefined')
+        self.assertEqual(len(self.gad.generators), 5)
+        self.assertEqual(len(self.gad.alerts), 1)
+        self.assertEqual(self.gad.generators['g6'].state, 0)
+        self.assertEqual(self.gad.generators['g7'].state, 0)
+        self.assertEqual(self.gad.generators['g8'].state, 0)
+        self.assertEqual(self.gad.generators['g9'].state, 0)
+        self.assertEqual(self.gad.generators['g10'].state, 1)
+        self.assertEqual(self.gad.alerts['foodd']['foonn'].state, 'off')
+        _LOGGER.warning(self.hass.states.get('alert2.foodd_foonn'))
+
+        
         
 if __name__ == '__main__':
     unittest.main()
