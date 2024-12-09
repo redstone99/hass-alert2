@@ -284,6 +284,7 @@ def resetModuleLoadTime():
     alert2.moduleLoadTime = rawdt.datetime.now(rawdt.UTC)
 
 import custom_components.alert2 as alert2
+import custom_components.alert2.entities as a2Entities
 alert2.kNotifierStartupGraceSecs = 3
 
 def doConditionUpdate(aler, rez):
@@ -2255,6 +2256,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         nfoo = self.hass.servHandlers['notify.foo']
         perCount = 0
         fooCount = 0
+        await asyncio.sleep(0.05)
+        self.assertEqual(t53.notification_control, a2Entities.NOTIFICATIONS_ENABLED)
 
         # Snoozed so no notification
         now = rawdt.datetime.now(rawdt.timezone.utc)
@@ -2262,6 +2265,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await t53a.async_notification_control(True, now + rawdt.timedelta(seconds=1.1))
         await t53b.async_notification_control(True, now + rawdt.timedelta(seconds=1.2))
         await asyncio.sleep(0.05)
+        self.assertTrue(isinstance(t53.notification_control, rawdt.datetime))
         doConditionUpdate(t53, True)
         await asyncio.sleep(0.05)
         doConditionUpdate(t53a, True)
@@ -2273,6 +2277,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         # snooze expires, get notification summary
         await asyncio.sleep(2)
         perCount += 3
+        self.assertEqual(t53.notification_control, a2Entities.NOTIFICATIONS_ENABLED)
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(nfoo.await_args_list), fooCount)
         self.assertRegex(nn.await_args_list[perCount-3].args[0].data['message'], 't53.*fired 1x.*on for')
@@ -2393,6 +2398,61 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(nfoo.await_args_list), fooCount)
+
+    async def test_snooze2(self):
+        # Test what happens if snooze ends while alarm is not firing
+        cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True}, 'alerts' : [
+            { 'domain': 'test', 'name': 't54a', 'condition': '{{ false }}', 'reminder_frequency_mins': 0.01 },
+            { 'domain': 'test', 'name': 't54c', 'condition': '{{ false }}', 'reminder_frequency_mins': 0.01 }, # will ack
+            { 'domain': 'test', 'name': 't54b', 'condition': '{{ false }}', 'reminder_frequency_mins': 0.01, 'summary_notifier': False },
+        ] } }
+        await self.initCase(cfg)
+        t54a = self.gad.alerts['test']['t54a']
+        t54b = self.gad.alerts['test']['t54b']
+        t54c = self.gad.alerts['test']['t54c']
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        perCount = 0
+
+        # Alert is on
+        doConditionUpdate(t54a, True)
+        await asyncio.sleep(0.05)
+        doConditionUpdate(t54b, True)
+        await asyncio.sleep(0.05)
+        doConditionUpdate(t54c, True)
+        await asyncio.sleep(0.05)
+        perCount += 3
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-3].args[0].data['message'], 't54a: turned on')
+        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 't54b: turned on')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't54c: turned on')
+        self.assertEqual(t54a.notification_control, a2Entities.NOTIFICATIONS_ENABLED)
+        self.assertEqual(t54b.notification_control, a2Entities.NOTIFICATIONS_ENABLED)
+        self.assertEqual(t54c.notification_control, a2Entities.NOTIFICATIONS_ENABLED)
+        # then we snooze it
+        now = rawdt.datetime.now(rawdt.timezone.utc)
+        await t54a.async_notification_control(True, now + rawdt.timedelta(seconds=1))
+        await t54b.async_notification_control(True, now + rawdt.timedelta(seconds=1))
+        await t54c.async_notification_control(True, now + rawdt.timedelta(seconds=1))
+        await asyncio.sleep(0.05)
+        self.assertTrue(isinstance(t54a.notification_control, rawdt.datetime))
+        self.assertTrue(isinstance(t54b.notification_control, rawdt.datetime))
+        self.assertTrue(isinstance(t54c.notification_control, rawdt.datetime))
+        self.assertEqual(len(nn.await_args_list), perCount)
+        await t54c.async_ack()  # snooze implicitly acks, but try explicit ack
+        await asyncio.sleep(0.05)
+        # then turn alert off
+        doConditionUpdate(t54a, False)
+        doConditionUpdate(t54b, False)
+        doConditionUpdate(t54c, False)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        # snooze expires.  Snooze should turn off
+        # should not get any notifications since snooze is implicit ack
+        await asyncio.sleep(2)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(t54a.notification_control, a2Entities.NOTIFICATIONS_ENABLED)
+        self.assertEqual(t54b.notification_control, a2Entities.NOTIFICATIONS_ENABLED)
+        self.assertEqual(t54c.notification_control, a2Entities.NOTIFICATIONS_ENABLED)
 
     async def test_generator(self):
         cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True}, 'alerts' : [
