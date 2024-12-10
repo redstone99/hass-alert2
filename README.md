@@ -43,6 +43,7 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - **Custom frontend card**. Makes it easier to view and manage recent alerts.
 - **Hysteresis**. Reduce spurious alerts as sensors fluctuate.
 - **Template notifiers**. Dynamically specify who gets notified.
+- **Generator patterns**. Dynamically define multiple similar alerts, optionally based on wildcards.
 
 Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-alert2/discussions) or file an [Issue](https://github.com/redstone99/hass-alert2/issues).
 
@@ -269,7 +270,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 
 | Key | Type | Required | Description |
 |---|---|---|---|
-|`domain` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `domain` is typically the object causing the alert (e.g., garage door). |
+|`domain` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `domain` is typically the object causing the alert (e.g., garage door).<br>Note the domain "generator" is used by Alert2 for [generator patterns](#generator-patterns). |
 | `name` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `name` is typically the particular fault occurring (e.g., open_too_long)  |
 | `friendly_name` | string | optional | Name to display instead of the entity name. Surfaces in the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) overview card |
 | `condition` | string | optional | Template string or entity name. Alert is firing if the template or entity state evaluates to truthy AND any other alert options specified below are also true.  |
@@ -291,6 +292,8 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `summary_notifier` | template | optional | Override the default `summary_notifier`. See [Notifier Config](#notifier-config) section below for examples. |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts.  |
+| `generator` | template | optional | If specified, this alert is a [generator pattern](#generator-patterns). |
+| `generator_name` | string | optional | The name used with the domain "generator" for [generator patterns](#generator-patterns). |
 
 Alert names are split into `domain` and `name`. The reason is partly for semantic clarity and also for future management features, like grouping alerts by domain.
 
@@ -474,6 +477,54 @@ As described above in `early_start`, alerts by default don't start being monitor
 If you have high-priority alerts, you might consider setting `notifier` to be a high-priority notifier and `summary_notifier` to be a low-priority notifier.
 
 Also, alert2 entities are built on `RestoreEntity`, which backs itself up every 15 minutes. This means, alert firing may not be remembered across HA restarts if the alert fired within 15 minutes of HA restarting.
+
+## Generator patterns
+
+Generator patterns let you create multiple, similar alerts dynamically, and can be based on a wild-card search of entities.  Here's an example of a generator watching for low temperatur on three floors:
+
+```yaml
+alert2:
+  alerts:
+    - generator_name: low_temp
+      generator: [ fl1, fl2, fl3 ]
+      domain: thermostat
+      name: "{{genElem}}_too_low"
+      condition: "{{ states('sensor.nest_therm_'+ genElem +'_temperature')|float(55) <= 50 }}"
+      message: "Temp: {{ states('sensor.nest_therm_'+ genElem + "_temperature') }}"
+```
+
+The above generator creates three condition alerts, `alert2.thermostat_fl1_too_low`, `alert2.thermostat_fl2_too_low`, and `alert2.thermostat_fl3_too_low`.  Each alert watches the corresponding temperature sensor. So `alert2.thermostat_fl1_too_low` watches `sensor.nest_therm_fl1_temperature` and so forth.
+
+`generator` is a list of strings. It can also be a template that produces a list of strings.  One alert will be produced for each string.
+
+`genElem` is a variable containing a single string from `generator`. `genElem` is available in any template config parameter. When using generators, `domain` and `name` accept templates.
+
+Each alert generator also create a generator entity whose state contains the number of alerts created by the generator.  The generator entity will be named `alert2.generator_[generator_name]`, so in the above example, `alert2.generator_low_temp`.
+
+### Wild-cards
+
+A generator can also be specified based on which other entities exist, using a wild card.  Here's an example of a generator creating one alert for each battery_plus entity:
+
+```yaml
+alert2:
+  alerts:
+    - generator_name: low_bat
+      generator: "{{ states.sensor|selectattr('entity_id', 'match',
+                          'sensor.(.*)_battery_plus')
+                     |map(attribute='entity_id') |list }}"
+      domain: battery
+      name: "{{ genElem|
+                regex_replace('sensor.(.*)_battery_plus','\\1')  }}_is_low"
+      condition: "{{ state_attr(genItem, 'battery_low') }}"
+```
+
+So for example, if the entity `sensor.foo_battery_plus` exists, then an alert will be created with the entity id `alert2.battery_foo_is_low` that fires whenever the "battery_low" attribute of the sensor turns on.
+
+Generators update dynamically so alerts can be created or destroyed as the set of entities produced by `generator` changes.  The alert entity `alert2.generator_low_bat` may
+
+hrm, generator entity is really a sensor not an alert.
+
+
 
 ## Front-end UI
 

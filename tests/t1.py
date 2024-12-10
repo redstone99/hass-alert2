@@ -27,6 +27,7 @@ import datetime as rawdt
 import voluptuous as vol
 import jinja2
 from types import SimpleNamespace
+#from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 gHass = None
 class FakeConst:
@@ -71,13 +72,21 @@ sys.modules['homeassistant.components.sensor'] = FakeSensor
 
 class FakeTemplate:
     def __init__(self, value, hass=None):
-        self.hass = hass
+        self.hass = hass or gHass
         self.template = value
+        #self.env = jinja2.Environment
+    @property
+    def _env(self):
+        e = jinja2.Environment()
+        e.globals['states'] = self.hass.states
+        return e
     def async_render(self, variables=None, parse_result=False):
         rez = None
-        variables = {"states": lambda x: x, **(variables or {})}
+        #variables = {"states": lambda x: x, **(variables or {})}
+        variables = { **(variables or {}) }
         try:
-            rez = jinja2.Template(self.template).render(variables)
+            #rez = jinja2.Template(self.template).render(variables)
+            rez = self._env.from_string(self.template).render(variables)
             #if variables is None:
             #    rez = jinja2.Template(self.template).render()
             #else:
@@ -90,7 +99,8 @@ class FakeTemplate:
         self.template = new
     def ensure_valid(self):
         try:
-            jinja2.Template(self.template) # try compiling
+            self._env.from_string(self.template) # try compiling
+            #jinja2.Template(self.template) # try compiling
         except Exception as err:
             raise FakeExceptions.TemplateError(err) from err
     def __repr__(self) -> str:
@@ -234,6 +244,10 @@ class States:
         self.data[n] = v
     def get(self, n):
         return self.data[n] if n in self.data else None
+    def __iter__(self):
+        for x in self.data:
+            yield SimpleNamespace(entity_id=x)
+
 class FakeHass:
     def __init__(self):
         self.bus = SimpleNamespace(async_listen_once = lambda a,b: None,
@@ -349,11 +363,14 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
                 break
         return count
     
-    async def initCase(self, cfg):
+    async def initCase(self, cfg, ahass=None):
         global gHass
         print('setting up')
         self.oldTasks = asyncio.all_tasks()
-        self.hass = FakeHass()
+        if ahass:
+            self.hass = ahass
+        else:
+            self.hass = FakeHass()
         gHass = self.hass
         await alert2.async_setup(self.hass, cfg)
         self.gad = self.hass.data[alert2.DOMAIN]
@@ -2467,8 +2484,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.gad.alerts['test']), 1)
         self.assertTrue(not 'tracked' in self.gad.alerts)
         t55 = self.gad.alerts['test']['t55']
-        self.assertEqual(len(self.gad.generators['test']), 1)
-        g1 = self.gad.generators['test']['g1']
+        self.assertEqual(len(self.gad.generators), 1)
+        g1 = self.gad.generators['g1']
         self.assertEqual(g1.state, 1)
         self.assertEqual(len(nn.await_args_list), perCount)
         
@@ -2478,7 +2495,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'alert2generator.test_g1 generator template threw error: bogus err')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'generator_g1 generator template threw error: bogus err')
         self.assertEqual(self.gad.alerts['test']['t55'], t55)
 
         # suppose template renders to empty string - it's an error
@@ -2487,7 +2504,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'alert2generator.test_g1 generator template var is None')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'generator_g1 generator template var is None')
         self.assertEqual(self.gad.alerts['test']['t55'], t55)
 
         # template producing same string should not recreate alert
@@ -2495,7 +2512,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
                                 [ SimpleNamespace(template=g1._generator_template, result='t55') ] )
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertEqual(len(self.gad.generators['test']), 1)
+        self.assertEqual(len(self.gad.generators), 1)
         self.assertEqual(self.gad.alerts['test']['t55'], t55)
         
         # Now suppose template returns nothing, so alert should disappear
@@ -2519,8 +2536,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.gad.alerts['test']), 1)
         self.assertTrue(not 'tracked' in self.gad.alerts)
         t56z = self.gad.alerts['test']['t56z']
-        self.assertEqual(len(self.gad.generators['test']), 1)
-        g1 = self.gad.generators['test']['g1']
+        self.assertEqual(len(self.gad.generators), 1)
+        g1 = self.gad.generators['g1']
         self.assertEqual(g1.state, 1)
         self.assertEqual(len(nn.await_args_list), perCount)
         # Now suppose a second alert appears
@@ -2576,14 +2593,14 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         perCount += 1
         self.assertEqual(len(nfoo.await_args_list), fooCount)
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Duplicate declaration.*domain=test name=g1')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Duplicate generator name=g1')
         self.assertEqual(len(self.gad.alerts['test']), 2)
         self.assertTrue(not 'tracked' in self.gad.alerts)
         t57 = self.gad.alerts['test']['t57']
         t58 = self.gad.alerts['test']['t58']
-        self.assertEqual(len(self.gad.generators['test']), 2)
-        g1 = self.gad.generators['test']['g1']
-        g2 = self.gad.generators['test']['g2']
+        self.assertEqual(len(self.gad.generators), 2)
+        g1 = self.gad.generators['g1']
+        g2 = self.gad.generators['g2']
         self.assertEqual(g1.state, 1)
         self.assertEqual(g2.state, 1)
         self.assertEqual(len(nn.await_args_list), perCount)
@@ -2660,12 +2677,12 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(not 'tracked' in self.gad.alerts)
         for id in [ 't61', 't62', 't63', 't64', 't65', 't66', 't67' ]:
             self.assertTrue(self.gad.alerts['test'][id])
-        self.assertEqual(len(self.gad.generators['test']), 4)
+        self.assertEqual(len(self.gad.generators), 4)
         for id in [ 'g1', 'g2', 'g3', 'g4' ]:
-            self.assertTrue(self.gad.generators['test'][id])
+            self.assertTrue(self.gad.generators[id])
 
         # Pick one and try adding another alert
-        g3 = self.gad.generators['test']['g3']
+        g3 = self.gad.generators['g3']
         g3._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                 [ SimpleNamespace(template=g3._generator_template, result='[ "t64", "t65", "t65a" ]') ] )
         await asyncio.sleep(0.05)
@@ -2729,6 +2746,25 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.gad.alerts['foodd']['foonn'].state, 'off')
         _LOGGER.warning(self.hass.states.get('alert2.foodd_foonn'))
 
+    async def test_generator5(self):
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g11',
+              'generator': "{{ states|entity_id_regex_extract('sensor.(.*)_bar', '\\\\1')|list }}",
+              'condition': 'off' } ]}}
+        ahass = FakeHass()
+        ahass.states.set('sensor.ickbar', SimpleNamespace(state='foo'))
+        ahass.states.set('sensor.foo1_bar', SimpleNamespace(state='foo'))
+        ahass.states.set('sensor.foo2_bar', SimpleNamespace(state='foo'))
+        await self.initCase(cfg, ahass)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(self.gad.generators), 1)
+        g11 = self.gad.generators['g11']
+        self.assertEqual(g11.state, 2)
+        self.assertEqual(self.gad.alerts['test']['foo1'].state, 'off')
+        self.assertEqual(self.gad.alerts['test']['foo2'].state, 'off')
         
         
 if __name__ == '__main__':
