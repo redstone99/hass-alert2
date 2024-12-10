@@ -250,6 +250,8 @@ class States:
     def __iter__(self):
         for x in self.data:
             yield SimpleNamespace(entity_id=x)
+    def __call__(self, entity_id):
+        return self.get(entity_id).state
 
 class FakeHass:
     def __init__(self):
@@ -2752,24 +2754,36 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
     async def test_generator5(self):
         cfg = { 'alert2' : { 'alerts' : [
             { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g11',
-              'generator': "{{ states|entity_id_regex_extract('sensor.(.*)_bar', '\\\\1')|list }}",
+              'generator': "{{ states|entity_regex('sensor.(.*)_bar', '\\\\1')|list }}",
               'condition': 'off' },
             { 'domain': 'test', 'name': '{{ genElem }}a', 'generator_name': 'g12',
-              'generator': "{{ states|entity_id_regex_extract('sensor.(.*)_bar')|list }}",
+              'generator': "{{ states|entity_regex('sensor.(.*)_bar')|list }}",
+              'message': 'aa={{genElem}} and bb={{genEntityId}}',
               'condition': 'off' },
+            # No group
             { 'domain': 'test', 'name': '{{ genElem }}b', 'generator_name': 'g13',
-              'generator': "{{ states|entity_id_regex_extract('sensor..*_bar')|list }}",
-              'condition': 'off' } ]}}
+              'generator': "{{ states|entity_regex('sensor..*_bar')|list }}",
+              'condition': 'off' },
+            { 'domain': 'test', 'name': '{{ genElem }}c', 'generator_name': 'g14',
+              'generator': "{{ states|entity_regex('sensor.(.*)_bar')|list }}",
+              'early_start': True,
+              'condition': '{{ states(genEntityId) }}' },
+            #{ 'domain': 'test', 'name': '{{ genElem }}d', 'generator_name': 'g15',
+            #  'generator': "{{ [ 'foo1', 'foo2' ]|entity_regex('sensor.(.*)_bar')|list }}",
+            #  'early_start': True,
+            #  'condition': '{{ states(genEntityId) }}' }
+        ]}}
         ahass = FakeHass()
         ahass.states.set('sensor.ickbar', SimpleNamespace(state='foo'))
-        ahass.states.set('sensor.foo1_bar', SimpleNamespace(state='foo'))
-        ahass.states.set('sensor.foo2_bar', SimpleNamespace(state='foo'))
+        ahass.states.set('sensor.foo1_bar', SimpleNamespace(state='on'))
+        ahass.states.set('sensor.foo2_bar', SimpleNamespace(state='off'))
         await self.initCase(cfg, ahass)
-        perCount = 0
+        perCount = 1
         nn = self.hass.servHandlers['notify.persistent_notification']
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertEqual(len(self.gad.generators), 2)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_foo1c: turned on')
+        self.assertEqual(len(self.gad.generators), 4)
         g11 = self.gad.generators['g11']
         self.assertEqual(g11.state, 2)
         self.assertEqual(self.gad.alerts['test']['foo1'].state, 'off')
@@ -2778,11 +2792,21 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(g12.state, 2)
         self.assertEqual(self.gad.alerts['test']['foo1a'].state, 'off')
         self.assertEqual(self.gad.alerts['test']['foo2a'].state, 'off')
+        tfoo1a = self.gad.alerts['test']['foo1a']
+        doConditionUpdate(tfoo1a, True)
+        await asyncio.sleep(0.05)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'aa=foo1.*bb=sensor.foo1_bar')
+        
         g13 = self.gad.generators['g13']
         #fuck should error
-        self.assertEqual(g13.state, 2)
-        self.assertEqual(self.gad.alerts['test']['foo1b'].state, 'off')
-        self.assertEqual(self.gad.alerts['test']['foo2b'].state, 'off')
+        self.assertEqual(g13.state, 1)
+        self.assertEqual(self.gad.alerts['test']['b'].state, 'off')
+        g14 = self.gad.generators['g14']
+        self.assertEqual(g14.state, 2)
+        self.assertEqual(self.gad.alerts['test']['foo1c'].state, 'on')
+        self.assertEqual(self.gad.alerts['test']['foo2c'].state, 'off')
         
         
 if __name__ == '__main__':

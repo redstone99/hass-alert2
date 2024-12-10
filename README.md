@@ -480,9 +480,96 @@ Also, alert2 entities are built on `RestoreEntity`, which backs itself up every 
 
 ## Generator patterns
 
-Generator patterns let you create multiple, similar alerts dynamically, and can be based on a wild-card search of entities.  Here's an example of a generator watching for low temperatur on three floors:
+Generator patterns let you create multiple, similar alerts dynamically, and can be based on a wild-card search of entities.  Here's an example of a generator watching for any battery_plus entity reporting a low battery:
 
 ```yaml
+alert2:
+  alerts:
+    - generator_name: low_bat
+      generator: "{{ states.sensor|entity_regex('sensor.(.*)_battery_plus')|list }}"
+      domain: battery
+      name: "{{ genElem }}_is_low"
+      condition: "{{ state_attr(genEntityId, 'battery_low') }}"
+```
+
+Suppose there are three battery_plus entities:
+
+    sensor.dev1_battery_plus
+    sensor.dev2_battery_plus
+    sensor.dev3_battery_plus
+
+Then the above generator will create three condition alerts:
+
+    alert2.dev1_is_low
+    alert2.dev2_is_low
+    alert2.dev3_is_low
+
+where `alert2.dev1_is_low` will fire if the "battery_low" attribute of `sensor.dev1_battery_plus` becomes true, and similarly for the other two alerts.
+
+Here's how the above example is working:
+
+1. `generator` specifies a template.
+1. The template starts with the set of all sensosr entities and feeds that set to the `entity_regex` filter
+1. `entity_regex` is a filter available only in the `generator` config field. It filters the list of sensor entities by matching the regex provided to the entity_id.
+1. `entity_regex` maps each matching entity to a dictionary. The dictionary maps `genEntityId` to the entity_id, and `genElem` to the first group in the regex, if a group is specified.
+1. The result of `generator` is a list of dictionaries for the matching entities. (Technically, templates evaluate to strings, so it's a string that looks like "[ { ... }, {...}, ...]" and is interpreted back into a native list internally in Alert2)
+1. Alert2 creates an alert for each element in the list. All template parameters in the alert can access the genElem and genEntityId variables. `domain` and `name` also accept templates for generator alerts.
+1. A sensor will also be created, `sensor.alert2generator_low_bat`, whose state will be the number of alerts created by the generator.  This could be useful if you wanted to verify the generator is producing the expected number of alerts.
+
+Generators track HA entity lifecycles and so will dynamically create or destroy alerts as the set of entities changes. Technical note: by default in HA, using "states.sensor|" in a tempate causes the template to be reevaluated evertime the state of any entity in HA changes. For generator templates, we changes this behavior so it only updates on entity lifecycle events.
+
+### Reference
+
+`generator` can take multiple forms. Each is a list of some sort and an alert is created for each element of the list.
+````yaml
+    # A native YAML list.
+    # genElem is defined to be each element in the list
+    # genEntityId is not defined.
+    generator: [ foo1, foo2 ] # YAML flow sequence
+    generator:
+       - foo1
+       - foo2
+
+    # A template evaluating to a list of strings.
+    # genElem is defined to be each element in the list.
+    # genEntityId is not defined.
+    generator: "{{ [ 'foo1', 'foo2' ] }}"
+
+    # A template evaluating to list of dictionaries
+    # The keys of the dictionary are available as variables in all Alert2
+    # template fields
+    generator: "{{ {'a','foo'}, {'a','bar'} }}"
+````
+
+`entity_regex` 
+
+
+, but basically specifies a list of strings that result
+
+There's a lot going on in the above generator, let's break it down.
+
+First, an alert2 spec that includes `
+
+`generator` can be m is a list of strings. It can also be a template that produces a list of strings.  One alert will be produced for each string.
+
+`genElem` is a variable containing a single string from `generator`. `genElem` is available in any template config parameter. When using generators, `domain` and `name` accept templates.
+
+Each alert generator also create a generator entity whose state contains the number of alerts created by the generator.  The generator entity will be named `alert2.generator_[generator_name]`, so in the above example, `alert2.generator_low_temp`.
+
+
+
+
+
+
+
+
+```
+- generator_name: low_temp
+      generator: [ fl1, fl2, fl3 ]
+      domain: thermostat
+      name: "{{genElem}}_too_low"
+      condition: "{{ states('sensor.nest_therm_'+ genElem +'_temperature')|float(55) <= 50 }}"
+      message: "Temp: {{ states('sensor.nest_therm_'+ genElem + "_temperature') }}"
 alert2:
   alerts:
     - generator_name: low_temp
@@ -506,6 +593,13 @@ Each alert generator also create a generator entity whose state contains the num
 A generator can also be specified based on which other entities exist, using a wild card.  Here's an example of a generator creating one alert for each battery_plus entity:
 
 ```yaml
+alert2:
+  alerts:
+    - generator_name: low_bat
+      generator: "{{ states.sensor|entity_regex('sensor.(.*)_battery_plus')|list }}"
+      domain: battery
+      name: "{{ genElem }}_is_low
+      condition: "{{ state_attr(genEntityId, 'battery_low') }}"
 alert2:
   alerts:
     - generator_name: low_bat
