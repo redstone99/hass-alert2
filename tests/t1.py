@@ -64,10 +64,6 @@ class FakeBinarySensor:
     class BinarySensorDeviceClass:
         PROBLEM = 'problem'
 sys.modules['homeassistant.components.binary_sensor'] = FakeBinarySensor
-class FakeSensor:
-    class SensorDeviceClass:
-        DATA_SIZE = 'data_size'
-sys.modules['homeassistant.components.sensor'] = FakeSensor
 
 
 class FakeTemplate:
@@ -199,7 +195,7 @@ class FakeHA:
         class entity:
             class Entity:
                 def __init__(self):
-                    pass
+                    self.async_write_ha_state = Mock(name='write_ha_state', spec_set=[])
                 @property
                 def name(self):
                     return self._attr_name
@@ -227,10 +223,17 @@ class FakeHA:
             @staticmethod
             def as_local(atime):
                 return atime
-
+class FakeSensor:
+    class SensorDeviceClass:
+        DATA_SIZE = 'data_size'
+    class SensorEntity(FakeHA.helpers.entity.Entity):
+        def __init__(self):
+            super().__init__()
+sys.modules['homeassistant.components.sensor'] = FakeSensor
+            
 class RestoreEntity(FakeHA.helpers.entity.Entity):
     def __init__(self):
-        self.async_write_ha_state = Mock(name='write_ha_state', spec_set=[])
+        super().__init__()
     async def async_added_to_hass(self):
         pass
     async def async_get_last_state(self):
@@ -2750,6 +2753,12 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         cfg = { 'alert2' : { 'alerts' : [
             { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g11',
               'generator': "{{ states|entity_id_regex_extract('sensor.(.*)_bar', '\\\\1')|list }}",
+              'condition': 'off' },
+            { 'domain': 'test', 'name': '{{ genElem }}a', 'generator_name': 'g12',
+              'generator': "{{ states|entity_id_regex_extract('sensor.(.*)_bar')|list }}",
+              'condition': 'off' },
+            { 'domain': 'test', 'name': '{{ genElem }}a', 'generator_name': 'g13',
+              'generator': "{{ states|entity_id_regex_extract('sensor..*_bar')|list }}",
               'condition': 'off' } ]}}
         ahass = FakeHass()
         ahass.states.set('sensor.ickbar', SimpleNamespace(state='foo'))
@@ -2760,11 +2769,20 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         nn = self.hass.servHandlers['notify.persistent_notification']
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertEqual(len(self.gad.generators), 1)
+        self.assertEqual(len(self.gad.generators), 2)
         g11 = self.gad.generators['g11']
         self.assertEqual(g11.state, 2)
         self.assertEqual(self.gad.alerts['test']['foo1'].state, 'off')
         self.assertEqual(self.gad.alerts['test']['foo2'].state, 'off')
+        g12 = self.gad.generators['g12']
+        self.assertEqual(g12.state, 2)
+        self.assertEqual(self.gad.alerts['test']['foo1a'].state, 'off')
+        self.assertEqual(self.gad.alerts['test']['foo2a'].state, 'off')
+        g13 = self.gad.generators['g13']
+        #fuck should error
+        self.assertEqual(g13.state, 2)
+        self.assertEqual(self.gad.alerts['test']['foo1a'].state, 'off')
+        self.assertEqual(self.gad.alerts['test']['foo2a'].state, 'off')
         
         
 if __name__ == '__main__':
