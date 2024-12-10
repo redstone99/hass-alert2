@@ -2757,7 +2757,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             { 'domain': 'test', 'name': '{{ genElem }}a', 'generator_name': 'g12',
               'generator': "{{ states|entity_id_regex_extract('sensor.(.*)_bar')|list }}",
               'condition': 'off' },
-            { 'domain': 'test', 'name': '{{ genElem }}a', 'generator_name': 'g13',
+            { 'domain': 'test', 'name': '{{ genElem }}b', 'generator_name': 'g13',
               'generator': "{{ states|entity_id_regex_extract('sensor..*_bar')|list }}",
               'condition': 'off' } ]}}
         ahass = FakeHass()
@@ -2781,8 +2781,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         g13 = self.gad.generators['g13']
         #fuck should error
         self.assertEqual(g13.state, 2)
-        self.assertEqual(self.gad.alerts['test']['foo1a'].state, 'off')
-        self.assertEqual(self.gad.alerts['test']['foo2a'].state, 'off')
+        self.assertEqual(self.gad.alerts['test']['foo1b'].state, 'off')
+        self.assertEqual(self.gad.alerts['test']['foo2b'].state, 'off')
         
         
 if __name__ == '__main__':
