@@ -44,7 +44,7 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - **Custom frontend card**. Makes it easier to view and manage recent alerts.
 - **Hysteresis**. Reduce spurious alerts as sensors fluctuate.
 - **Template notifiers**. Dynamically specify who gets notified.
-- **Generator patterns**. Dynamically define multiple similar alerts, optionally based on wildcards.
+- **Generator patterns**. Dynamically define multiple similar alerts, with wildcard support.
 
 Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-alert2/discussions) or file an [Issue](https://github.com/redstone99/hass-alert2/issues).
 
