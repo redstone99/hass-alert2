@@ -29,6 +29,7 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - [Setup](#setup)
 - [Description](#description)
 - [Configuration](#configuration)
+- [Generator patterns (Advanced)](#generator-patterns)
 - [Front-end UI](#front-end-ui)
 - [Service calls](#service-calls)
 - [Python alerting](#python-alerting)
@@ -187,7 +188,7 @@ During HA startup, HA initializes notifiers independently of the rest of HA.  So
 
 You may also specify a YAML [notify group](https://www.home-assistant.io/integrations/group/#notify-groups). We recommend setting `defer_startup_notifications` if you choose to use a notify group. The issue is that HA may initialize the notify group early during startup, before the member notifiers are ready. And Alert2 can not see which member notifiers are ready. So Alert2 may notify a group with missing members, resulting in an internal error in the notify component. To avoid this, you can list your group names in `defer_startup_notifications` which will defer any notifications to those notifiers until `notifier_startup_grace_secs` has passed.
 
-The current recommended way to notify groups is to create an entity, such as a template entity (eg `sensor.high_pri_group`), and set the members of the group as the state of the entity (example in [Notifier Config](#notifier-config) section, below).  Alert2 will then automatically defer notifications to notifiers in the group that do not yet exist during startup, without having to set `defer_startup_notifications`.
+The current recommended way to notify groups is to create an entity, such as a template entity (e.g. `sensor.high_pri_group`), and set the members of the group as the state of the entity (example in [Notifier Config](#notifier-config) section, below).  Alert2 will then automatically defer notifications to notifiers in the group that do not yet exist during startup, without having to set `defer_startup_notifications`.
 
 Alert2 does not yet support [Notify Entity Groups](https://www.home-assistant.io/integrations/group/#notify-entity-groups), but open an [discussion](https://github.com/redstone99/hass-alert2/discussions) and request the feature if interested.
 
@@ -209,7 +210,7 @@ We recommend that your config specify at least the following parameters:
 alert2:
   defaults:
     notifier: foo # notifier name to use for most alerts
-    summary_notifier: foo # notifier to use for summaries (eg when throttling ends)
+    summary_notifier: foo # notifier to use for summaries (e.g. when throttling ends)
     throttle_fires_per_mins: [ 10, 60 ] # throttle notifications for any alert that fires
                                         # more than 10x in 60 minutes
 ```
@@ -270,8 +271,8 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 
 | Key | Type | Required | Description |
 |---|---|---|---|
-|`domain` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `domain` is typically the object causing the alert (e.g., garage door).<br>Note the domain "generator" is used by Alert2 for [generator patterns](#generator-patterns). |
-| `name` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `name` is typically the particular fault occurring (e.g., open_too_long)  |
+|`domain` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `domain` is typically the object causing the alert (e.g., garage door).<br>Can be a template when used with [generator patterns](#generator-patterns). |
+| `name` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `name` is typically the particular fault occurring (e.g., open_too_long).<br>Can be a template when used with [generator patterns](#generator-patterns). |
 | `friendly_name` | string | optional | Name to display instead of the entity name. Surfaces in the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) overview card |
 | `condition` | string | optional | Template string or entity name. Alert is firing if the template or entity state evaluates to truthy AND any other alert options specified below are also true.  |
 | `trigger` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Indicates an event-based alert. Alert fires when the trigger does, if also any `condition` specified is truthy. |
@@ -293,7 +294,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts.  |
 | `generator` | template | optional | If specified, this alert is a [generator pattern](#generator-patterns). |
-| `generator_name` | string | optional | The name used with the domain "generator" for [generator patterns](#generator-patterns). |
+| `generator_name` | string | optional | Each generator creates a sensor entity with the name `sensor.alert2generator_[generator_name]`. See [generator patterns](#generator-patterns). |
 
 Alert names are split into `domain` and `name`. The reason is partly for semantic clarity and also for future management features, like grouping alerts by domain.
 
@@ -480,6 +481,8 @@ Also, alert2 entities are built on `RestoreEntity`, which backs itself up every 
 
 ## Generator patterns
 
+EXPERIMENTAL - Any changes will posted at https://community.home-assistant.io/t/alert2-a-new-alerting-component
+
 Generator patterns let you create multiple, similar alerts dynamically, and can be based on a wild-card search of entities.  Here's an example of a generator watching for any battery_plus entity reporting a low battery:
 
 ```yaml
@@ -509,18 +512,20 @@ where `alert2.dev1_is_low` will fire if the "battery_low" attribute of `sensor.d
 Here's how the above example is working:
 
 1. `generator` specifies a template.
-1. The template starts with the set of all sensosr entities and feeds that set to the `entity_regex` filter
-1. `entity_regex` is a filter available only in the `generator` config field. It filters the list of sensor entities by matching the regex provided to the entity_id.
-1. `entity_regex` maps each matching entity to a dictionary. The dictionary maps `genEntityId` to the entity_id, and `genElem` to the first group in the regex, if a group is specified.
-1. The result of `generator` is a list of dictionaries for the matching entities. (Technically, templates evaluate to strings, so it's a string that looks like "[ { ... }, {...}, ...]" and is interpreted back into a native list internally in Alert2)
+1. The template starts with the set of all sensor entities and feeds that set to the `entity_regex` filter
+1. `entity_regex` is a filter available only in the `generator` config field. It filters the list of sensor entities by matching the regex provided to the entity_id property.
+1. `entity_regex` maps each matching entity to a dictionary. The dictionary maps `genEntityId` to the entity_id, and `genElem` to the first group in the regex (i.e., "dev1", "dev2", ...)
+1. The `generator` template renders to a list of dictionaries for the matching entities. (Technically, templates render to strings, so it renders to a string that looks like "[ { ... }, {...}, ...]" and is interpreted back into a native list internally in Alert2)
 1. Alert2 creates an alert for each element in the list. All template parameters in the alert can access the genElem and genEntityId variables. `domain` and `name` also accept templates for generator alerts.
-1. A sensor will also be created, `sensor.alert2generator_low_bat`, whose state will be the number of alerts created by the generator.  This could be useful if you wanted to verify the generator is producing the expected number of alerts.
+1. A sensor will also be created, `sensor.alert2generator_low_bat`, whose state will be the number of alerts created by the generator.  This is useful for verifying that the generator is producing the expected number of alerts.
 
-Generators track HA entity lifecycles and so will dynamically create or destroy alerts as the set of entities changes. Technical note: by default in HA, using "states.sensor|" in a tempate causes the template to be reevaluated evertime the state of any entity in HA changes. For generator templates, we changes this behavior so it only updates on entity lifecycle events.
+Generators track HA entity life cycles and so will dynamically create or destroy alerts as the set of entities changes. Technical note: by default in HA, using "states|" or "states.sensor|" in a template causes the template to be reevaluated every time the state of any entity in HA changes. For generator templates, we change this behavior so it only updates on entity life cycle events (to reduce unnecessary re-renderings).
 
 ### Reference
 
-`generator` can take multiple forms. Each is a list of some sort and an alert is created for each element of the list.
+#### `generator` 
+
+`generator` can take multiple forms. Each is a list of some sort, and an alert is created for each element of the list.
 ````yaml
     # A native YAML list.
     # genElem is defined to be each element in the list
@@ -538,85 +543,74 @@ Generators track HA entity lifecycles and so will dynamically create or destroy 
     # A template evaluating to list of dictionaries
     # The keys of the dictionary are available as variables in all Alert2
     # template fields
-    generator: "{{ {'a','foo'}, {'a','bar'} }}"
+    generator: "{{ {'a':'foo'}, {'a':'bar'} }}"
 ````
 
-`entity_regex` 
+#### `entity_regex` 
 
+`entity_regex` is a filter function that consumes a list of entities, filters them and generates a list of dictionaries.  It has the following signature:
 
-, but basically specifies a list of strings that result
+````python
+entity_regex( find_regex, replace_regex=None, ignorecase=False )
+````
 
-There's a lot going on in the above generator, let's break it down.
+`find_regex` specifies the regex test to apply to the entity_id of each entity. For each entity that matches, the output list includes a dictionary that maps "genEntityId" to the matched entity_id.
 
-First, an alert2 spec that includes `
+`replace_regex` is applied to the matched regex and the result of the replacement is added to the dictionary under the key "genElem".
 
-`generator` can be m is a list of strings. It can also be a template that produces a list of strings.  One alert will be produced for each string.
+If replace_regex is not specified and find_regex specifies a group (i.e., a parenthesized expression), then replace_regex defaults to "\\1" - i.e. the first group.
 
-`genElem` is a variable containing a single string from `generator`. `genElem` is available in any template config parameter. When using generators, `domain` and `name` accept templates.
+If replace_regex is not specified and find_regex does not specify a group, then "genElem" is not defined.
 
-Each alert generator also create a generator entity whose state contains the number of alerts created by the generator.  The generator entity will be named `alert2.generator_[generator_name]`, so in the above example, `alert2.generator_low_temp`.
+Here are some examples intended to match temperature sensors such as `sensor.temp_fl1`, `sensor.temp_fl2` and so forth.
 
+````python
+# Default behavior with group present in regex
+# genEntityId = sensor entity_id
+# genElem     = "fl1" then "fl2" ...
+generator: "{{ states.sensor|entity_regex('sensor.temp_(.*)')|list }}"
+#
+# Same as above, but explicitly specifying the replacement regex
+generator: "{{ states.sensor|entity_regex('sensor.temp_(.*)', '\\\\1')|list }}"
 
+# No regex group
+# genEntityId = sensor entity_id
+# genElem     = undefined
+generator: "{{ states.sensor|entity_regex('sensor.temp_.*')|list }}"
 
+# No regex group yet still specifying a replacement
+# genEntityId = sensor entity_id
+# genElem     = 'foo' then 'foo' ... (probably not what you want)
+generator: "{{ states.sensor|entity_regex('sensor.temp_.*', 'foo')|list }}"
+````
 
+Instead of `states.sensor`, you could use `states` or `states.binary_sensor` and so forth in the above examples.
 
-
-
-
-```
-- generator_name: low_temp
-      generator: [ fl1, fl2, fl3 ]
-      domain: thermostat
-      name: "{{genElem}}_too_low"
-      condition: "{{ states('sensor.nest_therm_'+ genElem +'_temperature')|float(55) <= 50 }}"
-      message: "Temp: {{ states('sensor.nest_therm_'+ genElem + "_temperature') }}"
+If you wanted to alert on low temperature, but don't want to use `entity_regex`, you could alternatively say something like:
+````yaml
 alert2:
   alerts:
     - generator_name: low_temp
-      generator: [ fl1, fl2, fl3 ]
+      # genElem will be the entity_id
+      generator: "{{ states.sensor|selectattr('entity_id', 'match', 'sensor.temp_.*')
+                                  |map(attribute='entity_id')|list }}"
       domain: thermostat
-      name: "{{genElem}}_too_low"
-      condition: "{{ states('sensor.nest_therm_'+ genElem +'_temperature')|float(55) <= 50 }}"
-      message: "Temp: {{ states('sensor.nest_therm_'+ genElem + "_temperature') }}"
-```
-
-The above generator creates three condition alerts, `alert2.thermostat_fl1_too_low`, `alert2.thermostat_fl2_too_low`, and `alert2.thermostat_fl3_too_low`.  Each alert watches the corresponding temperature sensor. So `alert2.thermostat_fl1_too_low` watches `sensor.nest_therm_fl1_temperature` and so forth.
-
-`generator` is a list of strings. It can also be a template that produces a list of strings.  One alert will be produced for each string.
-
-`genElem` is a variable containing a single string from `generator`. `genElem` is available in any template config parameter. When using generators, `domain` and `name` accept templates.
-
-Each alert generator also create a generator entity whose state contains the number of alerts created by the generator.  The generator entity will be named `alert2.generator_[generator_name]`, so in the above example, `alert2.generator_low_temp`.
-
-### Wild-cards
-
-A generator can also be specified based on which other entities exist, using a wild card.  Here's an example of a generator creating one alert for each battery_plus entity:
-
-```yaml
-alert2:
-  alerts:
-    - generator_name: low_bat
-      generator: "{{ states.sensor|entity_regex('sensor.(.*)_battery_plus')|list }}"
-      domain: battery
-      name: "{{ genElem }}_is_low
-      condition: "{{ state_attr(genEntityId, 'battery_low') }}"
-alert2:
-  alerts:
-    - generator_name: low_bat
-      generator: "{{ states.sensor|selectattr('entity_id', 'match',
-                          'sensor.(.*)_battery_plus')
-                     |map(attribute='entity_id') |list }}"
-      domain: battery
-      name: "{{ genElem|
-                regex_replace('sensor.(.*)_battery_plus','\\1')  }}_is_low"
-      condition: "{{ state_attr(genItem, 'battery_low') }}"
-```
-
-So for example, if the entity `sensor.foo_battery_plus` exists, then an alert will be created with the entity id `alert2.battery_foo_is_low` that fires whenever the "battery_low" attribute of the sensor turns on.
-
-Generators update dynamically so alerts can be created or destroyed as the set of entities produced by `generator` changes.  The alert entity `alert2.generator_low_bat` may
-
-hrm, generator entity is really a sensor not an alert.
+      name: "{{ genElem
+                |regex_replace('sensor.temp_(.*)','\\\\1') }}_is_low"
+      condition: "{{ states(genItem)|float < 40 }}"
+    #
+    # or equivalently
+    #
+    - generator_name: low_temp
+      # genElem will be "fl1", "fl2", ...
+      generator: "{{ states.sensor|selectattr('entity_id', 'match', 'sensor.temp_.*')
+                                  |map(attribute='entity_id')
+                                  |regex_replace('sensor.temp_(.*)', '\\\\1')
+                                  |list }}"
+      domain: thermostat
+      name: "{{ genElem }}"
+      condition: "{{ states('sensor.temp_'+genItem)|float < 40 }}"
+````
 
 
 

@@ -28,14 +28,12 @@ import homeassistant.util.dt as dt
 from .config import (
     DEFAULTS_SCHEMA,
     SINGLE_TRACKED_SCHEMA,
-    SINGLE_ALERT_SCHEMA_BASE,
     SINGLE_ALERT_SCHEMA_EVENT,
     SINGLE_ALERT_SCHEMA_CONDITION,
     TOP_LEVEL_SCHEMA,
-    jnotifier
 )
 from .entities import (
-    EventAlert, ConditionAlert, ConditionAlertManual
+    EventAlert, ConditionAlert, ConditionAlertManual, AlertGenerator
 )
 from .util import (
     report,
@@ -43,10 +41,12 @@ from .util import (
     create_background_task,
     cancel_task,
     DOMAIN,
+    GENERATOR_DOMAIN,
     EVENT_TYPE,
     set_global_hass,
     get_global_hass,
-    global_tasks
+    global_tasks,
+    gAssertMsg
 )
 
 # The notify component loads asynchronously, so we don't know when the notify legacy platforms
@@ -99,17 +99,6 @@ async def async_setup(hass, config: ConfigType):
     data = Alert2Data(hass, config)
     hass.data[DOMAIN] = data
 
-    # Load sensor.py wtihout requiring users put an extra line in their configuuration.yaml
-    platform_domain = 'sensor'
-    hass.async_create_task(
-        discovery.async_load_platform(
-            hass,
-            platform_domain,
-            DOMAIN,
-            { 'happy': 7 },  # can be None? I think this is the config that gets passed to the sensor module.
-            config,
-        )
-        , eager_start=True)
     # Load binary_sensor.py wtihout requiring users put an extra line in their configuuration.yaml
     platform_domain = 'binary_sensor'
     hass.async_create_task(
@@ -207,10 +196,11 @@ class Alert2Data:
         self._rawConfig = config[DOMAIN]
         self.tracked = {}
         self.alerts = {}
+        self.generators = {}
         self.component = EntityComponent[EventAlert](_LOGGER, DOMAIN, hass)
+        self.sensorComponent = EntityComponent[AlertGenerator](_LOGGER, 'sensor', hass)
         self.sensorDict = None
         self.binarySensorDict = None
-        self.evCount = 0
         self.haStarted = False
         self.defaultsError = None
         self.delayedNotifierMgr = None
@@ -353,6 +343,7 @@ class Alert2Data:
                 obj[name] = '{{ states("' + cond.strip() + '") }}'
             
         entities = []
+        sensorEntities = []
         if 'tracked' in self._rawConfig and isinstance(self._rawConfig['tracked'], list):
             for obj in self._rawConfig['tracked']:
                 newEnt = None
@@ -379,13 +370,20 @@ class Alert2Data:
                         newEnt = self.declareEventInt(aCfg)
                     else:
                         aCfg = SINGLE_ALERT_SCHEMA_CONDITION(obj)
-                        newEnt = self.declareCondition(aCfg, False)
+                        if 'generator' in aCfg:
+                            newEnt = self.declareGenerator(aCfg)
+                        else:
+                            newEnt = self.declareCondition(aCfg, False)
                 except vol.Invalid as v:
                     report(DOMAIN, 'error', f'alerts section of config: {v}. Relevant section: {obj}')
                 if newEnt is not None:
-                    entities.append(newEnt)
+                    if isinstance(newEnt, AlertGenerator):
+                        sensorEntities.append(newEnt)
+                    else:
+                        entities.append(newEnt)
                     
         await self.component.async_add_entities(entities)
+        await self.sensorComponent.async_add_entities(sensorEntities)
 
         # Now check the rest of the config
         # TODO - this is redoing a bunch of work parsing templates.
@@ -410,6 +408,8 @@ class Alert2Data:
             for alName in self.tracked[adomain]:
                 entity = self.tracked[adomain][alName]
                 entity.shutdown()
+        for aName in self.generators:
+            self.generators[aName].shutdown()
         for atask in global_tasks:
             atask.cancel()
     #async def slowStartup(self):
@@ -427,12 +427,6 @@ class Alert2Data:
     def setBinarySensorDict(self, adict):
         _LOGGER.debug(f'called setBinarySensorDict')
         self.binarySensorDict = adict
-    # noteChange is really more just counting changes in state of any alert, so lovelace alert overview card can efficiently update.
-    def noteChange(self):
-        self.evCount += 1
-        if self.sensorDict:
-            self.sensorDict['evCount']._attr_native_value = self.evCount
-            self.sensorDict['evCount'].async_write_ha_state()
 
     def checkNewName(self, domain, name):
         if domain in self.alerts:
@@ -443,6 +437,15 @@ class Alert2Data:
             if name in self.tracked[domain]:
                 report(DOMAIN, 'error', f'Duplicate declaration of alert for domain={domain} name={name} (tracked)')
                 return False
+        if domain == GENERATOR_DOMAIN and name in self.generators:
+            report(DOMAIN, 'error', f'Duplicate generator name={name}')
+            return False
+        if len(domain) == 0:
+            report(DOMAIN, 'error', f'zero length domain with name="{name}"')
+            return False
+        if len(name) == 0:
+            report(DOMAIN, 'error', f'zero length name with domain="{domain}"')
+            return False
         return True
             
     # Declare a single event alert
@@ -464,7 +467,7 @@ class Alert2Data:
         #self.notifiers.add(entity.notifier)
         return entity
     # declare single condition alert
-    def declareCondition(self, config, isManual=False):
+    def declareCondition(self, config, isManual=False, genVars=None):
         domain = config['domain']
         name = config['name']
         if not domain in self.alerts:
@@ -474,10 +477,27 @@ class Alert2Data:
         if isManual:
             entity = ConditionAlertManual(self._hass, self, config, self.defaults)
         else:
-            entity = ConditionAlert(self._hass, self, config, self.defaults)
+            entity = ConditionAlert(self._hass, self, config, self.defaults, genVars=genVars)
         self.alerts[domain][name] = entity
         #self.notifiers.add(entity.notifier)
         return entity
+    def undeclareCondition(self, domain, name):
+        if not domain in self.alerts or not name in self.alerts[domain]:
+            report(DOMAIN, 'error', f'{gAssertMsg} Trying to remove unknown alert domain={domain} name={name}')
+            return
+        ent = self.alerts[domain][name]
+        del self.alerts[domain][name]
+        ent.destroy()
+        
+    def declareGenerator(self, config):
+        domain = GENERATOR_DOMAIN
+        name = config['generator_name']
+        if not self.checkNewName(domain, name):
+            return None
+        entity = AlertGenerator(self._hass, self, config)
+        self.generators[name] = entity
+        return entity
+        
     # declare multiple event alerts, and also unhandled_exception
     async def declareEventMulti(self, arr):
         entities = []
@@ -505,7 +525,6 @@ class Alert2Data:
             for alName in self.alerts[adomain]:
                 entity = self.alerts[adomain][alName]
                 entity.ack_int(now)
-        self.noteChange()
         
 
     async def handle_service_report(self, call):

@@ -7,6 +7,7 @@ _LOGGER = logging.getLogger(__name__)
 global_tasks = set()
 global_hass = None
 DOMAIN = "alert2"
+GENERATOR_DOMAIN = "alert2generator"
 EVENT_TYPE = 'alert2_report'
 gAssertMsg = 'Internal error. Please report to Alert2 maintainers (github.com/redstone99/hass-alert2). Details:'
 

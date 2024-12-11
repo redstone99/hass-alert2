@@ -6,10 +6,10 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, _config_entry, async_add_entities):
-    _LOGGER.warning(f'async_setup_entry for binary_sensor called')
+    _LOGGER.debug(f'async_setup_entry for binary_sensor called')
 
 async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
-    _LOGGER.warning(f'async_setup_platform for binary_sensor called')
+    _LOGGER.debug(f'async_setup_platform for binary_sensor called')
     aSensor = BinarySensorEntity()
     aSensor._attr_is_on = False
     aSensor._attr_name = 'alert2 ha_startup_done'

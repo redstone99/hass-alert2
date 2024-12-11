@@ -162,11 +162,14 @@ class FakeHA:
         class entity_component:
             class EntityComponent[_T]:
                 def __init__(self, logger, domain, hass):
+                    self.domain = domain
+                    self.hass = hass
                     pass
                 async def async_add_entities(self, ents):
                     for ent in ents: # usualy done by Entity::_async_process_registry_update_or_remove
                         assert ent is not None
-                        ent.entity_id = f'alert2.{ent.name}'
+                        ent.entity_id = f'{self.domain}.{ent.name}'
+                        self.hass.states.set(ent.entity_id, ent)
                         await ent.async_added_to_hass()
                     pass
                 def async_register_entity_service(self, n1, ss, n2):
@@ -206,6 +209,10 @@ class FakeHA:
                     pass
                 async def async_added_to_hass(self):
                     pass
+                def as_dict(self):
+                    # Hack - this is needed only because we don't model States accurately,
+                    # storing the ent in it rather than a real State object.
+                    return { 'entity_id': self.entity_id, 'state': self.state }
         class restore_state:
             pass
         class trigger:
@@ -249,8 +256,11 @@ class States:
         return self.data[n] if n in self.data else None
     def __iter__(self):
         for x in self.data:
-            yield SimpleNamespace(entity_id=x)
+            #yield SimpleNamespace(entity_id=x)
+            yield self.data[x]
     def __call__(self, entity_id):
+        # Hack, this is not it actually works in HA. In HA uses AllStates with tolerates
+        # a missing entity
         return self.get(entity_id).state
 
 class FakeHass:
@@ -1951,10 +1961,14 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'Duplicate.*t30a')
         self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'Duplicate.*t32')
         self.assertRegex(nn.await_args_list[6].args[0].data['message'], 'expected dictionary.*t35')
-        self.assertRegex(nn.await_args_list[7].args[0].data['message'], 't33.*rendered to "foo.bar".*not truthy')
+        # t33 test here is a hack cuz we don't implement AllStates when looking up states that don't exist.
+        # Real HA would return unknown.
+        self.assertRegex(nn.await_args_list[7].args[0].data['message'], 't33.*NoneType.*has no attribute \'state\'')
         self.assertRegex(nn.await_args_list[8].args[0].data['message'], 't34.*rendered to "".*not truthy')
         self.assertRegex(nn.await_args_list[9].args[0].data['message'], 't34a.*rendered to "3".*not truthy')
-        self.assertRegex(nn.await_args_list[10].args[0].data['message'], 't37.*Threshold value returned "foo.bar2".*a float')
+        # t37 test here is a hack cuz we don't implement AllStates when looking up states that don't exist.
+        # Real HA would return unknown.
+        self.assertRegex(nn.await_args_list[10].args[0].data['message'], 't37.*NoneType.*has no attribute')
         self.assertRegex(nn.await_args_list[11].args[0].data['message'], 't38.*Threshold value returned "".*a float')
 
         self.assertEqual(self.gad.tracked['test']['t30']._friendly_name, 'happyt30')
@@ -2492,7 +2506,10 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.gad.generators), 1)
         g1 = self.gad.generators['g1']
         self.assertEqual(g1.state, 1)
+        self.assertEqual(g1.entity_id, 'sensor.alert2generator_g1')
+        self.assertTrue(self.hass.states.get(g1.entity_id))
         self.assertEqual(len(nn.await_args_list), perCount)
+
         
         # And supose generator is a template and produces an error.  should not change generated alerts.
         g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
@@ -2774,9 +2791,9 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             #  'condition': '{{ states(genEntityId) }}' }
         ]}}
         ahass = FakeHass()
-        ahass.states.set('sensor.ickbar', SimpleNamespace(state='foo'))
-        ahass.states.set('sensor.foo1_bar', SimpleNamespace(state='on'))
-        ahass.states.set('sensor.foo2_bar', SimpleNamespace(state='off'))
+        ahass.states.set('sensor.ickbar', SimpleNamespace(entity_id='sensor.ickbar', state='foo'))
+        ahass.states.set('sensor.foo1_bar', SimpleNamespace(entity_id='sensor.foo1_bar', state='on'))
+        ahass.states.set('sensor.foo2_bar', SimpleNamespace(entity_id='sensor.foo2_bar', state='off'))
         await self.initCase(cfg, ahass)
         perCount = 1
         nn = self.hass.servHandlers['notify.persistent_notification']
