@@ -493,7 +493,7 @@ alert2:
                                   |map(attribute='entity_id')
                                   |list }}"
       domain: battery
-      name: "{{ genEntityId.regex_replace('sensor.(.*)_battery_plus', '\\\\1') }}_is_low"
+      name: "{{ genEntityId|regex_replace('sensor.(.*)_battery_plus', '\\\\1') }}_is_low"
       condition: "{{ state_attr(genEntityId, 'battery_low') }}"
     #
     # or, slightly more succinctly using entity_regex()
