@@ -483,16 +483,35 @@ Also, alert2 entities are built on `RestoreEntity`, which backs itself up every 
 
 EXPERIMENTAL - Any changes will posted at https://community.home-assistant.io/t/alert2-a-new-alerting-component
 
-Generator patterns let you create multiple, similar alerts dynamically, and can be based on a wild-card search of entities.  Here's an example of a generator watching for any battery_plus entity reporting a low battery:
+Generator patterns let you create multiple, similar alerts dynamically, and can be based on a wild-card search of entities.  Here's an example of a generator watching for battery_plus entities reporting a low battery:
 
 ```yaml
 alert2:
   alerts:
     - generator_name: low_bat
+      generator: "{{ states.sensor|selectattr('entity_id','match','sensor.*_battery_plus')
+                                  |map(attribute='entity_id')
+                                  |list }}"
+      domain: battery
+      name: "{{ genEntityId.regex_replace('sensor.(.*)_battery_plus', '\\\\1') }}_is_low"
+      condition: "{{ state_attr(genEntityId, 'battery_low') }}"
+    #
+    # or, slightly more succinctly using entity_regex()
+    #
+    - generator_name: low_bat
       generator: "{{ states.sensor|entity_regex('sensor.(.*)_battery_plus')|list }}"
       domain: battery
-      name: "{{ genElem }}_is_low"
+      name: "{{ genGroups[0] }}_is_low"
       condition: "{{ state_attr(genEntityId, 'battery_low') }}"
+    #
+    # or, with an explicit list of names
+    #
+    - generator_name: low_bat
+      generator: [ 'dev1', 'dev2', 'dev3' ]
+      domain: battery
+      name: "{{ genElem }}_is_low"
+      condition: "{{ state_attr('sensor.'+genElem+'_battery_plus'), 'battery_low') }}"
+    
 ```
 
 Suppose there are three battery_plus entities:
@@ -501,7 +520,7 @@ Suppose there are three battery_plus entities:
     sensor.dev2_battery_plus
     sensor.dev3_battery_plus
 
-Then the above generator will create three condition alerts:
+Then any of the above generators will create three condition alerts:
 
     alert2.dev1_is_low
     alert2.dev2_is_low
@@ -509,17 +528,30 @@ Then the above generator will create three condition alerts:
 
 where `alert2.dev1_is_low` will fire if the "battery_low" attribute of `sensor.dev1_battery_plus` becomes true, and similarly for the other two alerts.
 
-Here's how the above example is working:
+Here's how the first generator, above, is working:
 
 1. `generator` specifies a template.
-1. The template starts with the set of all sensor entities and feeds that set to the `entity_regex` filter
-1. `entity_regex` is a filter available only in the `generator` config field. It filters the list of sensor entities by matching the regex provided to the entity_id property.
-1. `entity_regex` maps each matching entity to a dictionary. The dictionary maps `genEntityId` to the entity_id, and `genElem` to the first group in the regex (i.e., "dev1", "dev2", ...)
-1. The `generator` template renders to a list of dictionaries for the matching entities. (Technically, templates render to strings, so it renders to a string that looks like "[ { ... }, {...}, ...]" and is interpreted back into a native list internally in Alert2)
-1. Alert2 creates an alert for each element in the list. All template parameters in the alert can access the genElem and genEntityId variables. `domain` and `name` also accept templates for generator alerts.
+1. The template starts with the set of all sensor entities, filters for those whose entity_id matches the regex, and returns the list of matching entity_ids.
+1. Alert2 creates an alert for each entity_id in the list. That entity_id is made available to all template config fields via the `genEntityId` variable. `domain` and `name` also accept templates for generator alerts.
 1. A sensor will also be created, `sensor.alert2generator_low_bat`, whose state will be the number of alerts created by the generator.  This is useful for verifying that the generator is producing the expected number of alerts.
 
+The second generator example, above uses the `entity_regex` filter. Using that filter makes available to all template config fields the variable `genEntityId` with the entity_id as well as the variable `genGroups` with the regex groups that matched.
+
+The third generator lists strings that are not entity_ids.  In this case, those strings are available as `genElem` to template config fields and `genEntityId` is not defined.
+
+See the [Reference](#reference) section below for a complete list of possibilities.
+
+#### How it works
+
+`generator` template produces a list of objects. An alert is created for each object. If that object is a string and the string is an entity_id, then it is put in the variable `genEntityId`. If the string is not an entity_id, then it is put in the variable `genElem`.  If the object is a dictionary, then the keys of the dictionary are defined as variables.  `entity_regex()` returns a list of dictionaries with `genEntityId` and `genGroups` as keys.
+
+As a fallback, for any object in the list, `genRaw` is defined as the object.
+
 Generators track HA entity life cycles and so will dynamically create or destroy alerts as the set of entities changes. Technical note: by default in HA, using "states|" or "states.sensor|" in a template causes the template to be reevaluated every time the state of any entity in HA changes. For generator templates, we change this behavior so it only updates on entity life cycle events (to reduce unnecessary re-renderings).
+
+Last implementation detail:  templates actually render to strings. So "{{ [ 1, 2 ] }}" renders to the string "[1, 2]".  Alert2 internally does a literal_eval to convert the string back into a list.
+
+
 
 ### Reference
 
@@ -528,21 +560,24 @@ Generators track HA entity life cycles and so will dynamically create or destroy
 `generator` can take multiple forms. Each is a list of some sort, and an alert is created for each element of the list.
 ````yaml
     # A native YAML list.
-    # genElem is defined to be each element in the list
-    # genEntityId is not defined.
+    # genEntityId is defined to be each element in the list if the element is an entity_id
+    # genElem is defined otherwise.
+    # genRaw is defined to be each element regardless.
     generator: [ foo1, foo2 ] # YAML flow sequence
     generator:
        - foo1
        - foo2
 
     # A template evaluating to a list of strings.
-    # genElem is defined to be each element in the list.
-    # genEntityId is not defined.
-    generator: "{{ [ 'foo1', 'foo2' ] }}"
+    # genEntityId is defined to be each element in the list if the element is an entity_id
+    # genElem is defined otherwise.
+    # genRaw is defined to be each element regardless.
+    generator: "{{ [ 'sensor.foo1', 'sensor.foo2' ] }}"
 
     # A template evaluating to list of dictionaries
     # The keys of the dictionary are available as variables in all Alert2
     # template fields
+    # genRaw is defined as the raw dictionary object.
     generator: "{{ {'a':'foo'}, {'a':'bar'} }}"
 ````
 
@@ -551,37 +586,23 @@ Generators track HA entity life cycles and so will dynamically create or destroy
 `entity_regex` is a filter function that consumes a list of entities, filters them and generates a list of dictionaries.  It has the following signature:
 
 ````python
-entity_regex( find_regex, replace_regex=None, ignorecase=False )
+entity_regex( find_regex, ignorecase=False )
 ````
 
-`find_regex` specifies the regex test to apply to the entity_id of each entity. For each entity that matches, the output list includes a dictionary that maps "genEntityId" to the matched entity_id.
-
-`replace_regex` is applied to the matched regex and the result of the replacement is added to the dictionary under the key "genElem".
-
-If replace_regex is not specified and find_regex specifies a group (i.e., a parenthesized expression), then replace_regex defaults to "\\1" - i.e. the first group.
-
-If replace_regex is not specified and find_regex does not specify a group, then "genElem" is not defined.
+`find_regex` specifies the regex test to apply to the entity_id of each entity. For each entity that matches, the output list includes a dictionary that maps "genEntityId" to the matched entity_id and `genGroups` to the list of regex groups (using match.groups())
 
 Here are some examples intended to match temperature sensors such as `sensor.temp_fl1`, `sensor.temp_fl2` and so forth.
 
 ````python
 # Default behavior with group present in regex
 # genEntityId = sensor entity_id
-# genElem     = "fl1" then "fl2" ...
+# genGroups   = ["fl1"] then ["fl2"] ...
 generator: "{{ states.sensor|entity_regex('sensor.temp_(.*)')|list }}"
-#
-# Same as above, but explicitly specifying the replacement regex
-generator: "{{ states.sensor|entity_regex('sensor.temp_(.*)', '\\\\1')|list }}"
 
 # No regex group
 # genEntityId = sensor entity_id
-# genElem     = undefined
+# genGroups   = []
 generator: "{{ states.sensor|entity_regex('sensor.temp_.*')|list }}"
-
-# No regex group yet still specifying a replacement
-# genEntityId = sensor entity_id
-# genElem     = 'foo' then 'foo' ... (probably not what you want)
-generator: "{{ states.sensor|entity_regex('sensor.temp_.*', 'foo')|list }}"
 ````
 
 Instead of `states.sensor`, you could use `states` or `states.binary_sensor` and so forth in the above examples.
@@ -595,9 +616,9 @@ alert2:
       generator: "{{ states.sensor|selectattr('entity_id', 'match', 'sensor.temp_.*')
                                   |map(attribute='entity_id')|list }}"
       domain: thermostat
-      name: "{{ genElem
+      name: "{{ genEntityId
                 |regex_replace('sensor.temp_(.*)','\\\\1') }}_is_low"
-      condition: "{{ states(genItem)|float < 40 }}"
+      condition: "{{ states(genEntityId)|float < 40 }}"
     #
     # or equivalently
     #
@@ -609,7 +630,7 @@ alert2:
                                   |list }}"
       domain: thermostat
       name: "{{ genElem }}"
-      condition: "{{ states('sensor.temp_'+genItem)|float < 40 }}"
+      condition: "{{ states('sensor.temp_'+genElem)|float < 40 }}"
 ````
 
 

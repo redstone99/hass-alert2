@@ -263,13 +263,13 @@ class AlertGenerator(SensorEntity):
         newEntities = []
         currNames = set() # entity names (ie the part after alert2.)
         for elem in alist:
+            svars = { 'genRaw': elem }
             if isinstance(elem, dict):
-                if not 'genEntityId' in elem:
-                    report(DOMAIN, 'error', f'{self.name} generator template returned dict missing genEntityId {result}')
-                    break
-                svars = elem
+                svars.update(elem)
+            elif self.hass.states.get(elem):
+                svars['genEntityId'] = elem
             else:
-                svars = {'genElem': elem}
+                svars['genElem'] = elem
             
             try:
                 nameStr = self.config['name'].async_render(variables=svars, parse_result=False).strip()

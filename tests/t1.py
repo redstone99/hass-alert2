@@ -2511,7 +2511,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), perCount)
 
         
-        # And supose generator is a template and produces an error.  should not change generated alerts.
+        # And suppose generator is a template and produces an error.  should not change generated alerts.
         g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                 [ SimpleNamespace(template=None, result=FakeExceptions.TemplateError('bogus err')) ] )
         await asyncio.sleep(0.05)
@@ -2586,7 +2586,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
               # If genElem doesn't resolve to 't57', then we'll pick the wrong notifier
               'notifier': '{% if genElem == "t57" %}persistent_notification{% else %}foo{% endif %}',
               'title': '{{ genElem }}tt', 'target': '{{ genElem }}tar',
-              'message': '{{ genElem }}msg',
+              'message': '{{ genElem }}msg{{ genEntityId}}z', # genEntityId should be empty
               'done_message': '{{ genElem }}dmsg',
              },
             # duplicate g1
@@ -2634,7 +2634,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nfoo.await_args_list), fooCount)
         self.assertEqual(len(nn.await_args_list), perCount)
         #print(nn.await_args_list[perCount-1].args[0].data)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t57: t57msg')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t57: t57msgz')
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['title'], 't57tt')
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['target'], 't57tar')
         # Check done_message
@@ -2683,6 +2683,8 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         cfg = { 'alert2' : { 'alerts' : [
             { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't61',
               'condition': '{{ zzz }}' },
+            { 'domain': 'test', 'name': '{{ genRaw }}', 'generator_name': 'g1a', 'generator': 't61a',
+              'condition': '{{ zzz }}' },
             { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g2', 'generator': [ "t62", "t63" ],
               'condition': '{{ zzz }}' },
             { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g3', 'generator': '[ "t64", "t65" ]',
@@ -2695,12 +2697,12 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         nn = self.hass.servHandlers['notify.persistent_notification']
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertEqual(len(self.gad.alerts['test']), 7)
+        self.assertEqual(len(self.gad.alerts['test']), 8)
         self.assertTrue(not 'tracked' in self.gad.alerts)
-        for id in [ 't61', 't62', 't63', 't64', 't65', 't66', 't67' ]:
+        for id in [ 't61', 't61a', 't62', 't63', 't64', 't65', 't66', 't67' ]:
             self.assertTrue(self.gad.alerts['test'][id])
-        self.assertEqual(len(self.gad.generators), 4)
-        for id in [ 'g1', 'g2', 'g3', 'g4' ]:
+        self.assertEqual(len(self.gad.generators), 5)
+        for id in [ 'g1', 'g1a', 'g2', 'g3', 'g4' ]:
             self.assertTrue(self.gad.generators[id])
 
         # Pick one and try adding another alert
@@ -2708,7 +2710,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         g3._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                 [ SimpleNamespace(template=g3._generator_template, result='[ "t64", "t65", "t65a" ]') ] )
         await asyncio.sleep(0.05)
-        self.assertEqual(len(self.gad.alerts['test']), 8)
+        self.assertEqual(len(self.gad.alerts['test']), 9)
         self.assertTrue(self.gad.alerts['test']['t65a'])
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
@@ -2770,37 +2772,40 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_generator5(self):
         cfg = { 'alert2' : { 'alerts' : [
-            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g11',
-              'generator': "{{ states|entity_regex('sensor.(.*)_bar', '\\\\1')|list }}",
-              'condition': 'off' },
-            { 'domain': 'test', 'name': '{{ genElem }}a', 'generator_name': 'g12',
+            { 'domain': 'test', 'name': '{{ genGroups[0] }}', 'generator_name': 'g11',
               'generator': "{{ states|entity_regex('sensor.(.*)_bar')|list }}",
-              'message': 'aa={{genElem}} and bb={{genEntityId}}',
+              'condition': 'off' },
+            { 'domain': 'test', 'name': '{{ genGroups[0] }}a', 'generator_name': 'g12',
+              'generator': "{{ states|entity_regex('sensor.(.*)_bar')|list }}",
+              'message': 'aa={{genGroups[0]}} and bb={{genEntityId}} and cc={{genRaw}}',
               'condition': 'off' },
             # No group
-            { 'domain': 'test', 'name': '{{ genElem }}b', 'generator_name': 'g13',
+            { 'domain': 'test', 'name': '{{ genGroups[0] }}b', 'generator_name': 'g13',
               'generator': "{{ states|entity_regex('sensor..*_bar')|list }}",
               'condition': 'off' },
-            { 'domain': 'test', 'name': '{{ genElem }}c', 'generator_name': 'g14',
+            { 'domain': 'test', 'name': '{{ genGroups[0] }}c', 'generator_name': 'g14',
               'generator': "{{ states|entity_regex('sensor.(.*)_bar')|list }}",
               'early_start': True,
               'condition': '{{ states(genEntityId) }}' },
-            #{ 'domain': 'test', 'name': '{{ genElem }}d', 'generator_name': 'g15',
-            #  'generator': "{{ [ 'foo1', 'foo2' ]|entity_regex('sensor.(.*)_bar')|list }}",
-            #  'early_start': True,
-            #  'condition': '{{ states(genEntityId) }}' }
+            # Check genEntityId auto-populates
+            { 'domain': 'test', 'name': '{{ genEntityId|replace("sensor.foo1_bar","foo1") }}d', 'generator_name': 'g15',
+              'generator': "{{ states|selectattr('entity_id','equalto','sensor.foo1_bar')|map(attribute='entity_id')|list }}",
+              'early_start': True,
+              'message': 'ee={{genRaw}}',
+              'condition': '{{ states(genEntityId) }}' }
         ]}}
         ahass = FakeHass()
         ahass.states.set('sensor.ickbar', SimpleNamespace(entity_id='sensor.ickbar', state='foo'))
         ahass.states.set('sensor.foo1_bar', SimpleNamespace(entity_id='sensor.foo1_bar', state='on'))
         ahass.states.set('sensor.foo2_bar', SimpleNamespace(entity_id='sensor.foo2_bar', state='off'))
         await self.initCase(cfg, ahass)
-        perCount = 1
+        perCount = 2
         nn = self.hass.servHandlers['notify.persistent_notification']
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test_foo1c: turned on')
-        self.assertEqual(len(self.gad.generators), 4)
+        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 'test_foo1c: turned on')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'test.foo1d: ee=sensor.foo1_bar')
+        self.assertEqual(len(self.gad.generators), 5)
         g11 = self.gad.generators['g11']
         self.assertEqual(g11.state, 2)
         self.assertEqual(self.gad.alerts['test']['foo1'].state, 'off')
@@ -2810,11 +2815,6 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.gad.alerts['test']['foo1a'].state, 'off')
         self.assertEqual(self.gad.alerts['test']['foo2a'].state, 'off')
         tfoo1a = self.gad.alerts['test']['foo1a']
-        doConditionUpdate(tfoo1a, True)
-        await asyncio.sleep(0.05)
-        perCount += 1
-        self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'aa=foo1.*bb=sensor.foo1_bar')
         
         g13 = self.gad.generators['g13']
         #fuck should error
@@ -2824,6 +2824,15 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(g14.state, 2)
         self.assertEqual(self.gad.alerts['test']['foo1c'].state, 'on')
         self.assertEqual(self.gad.alerts['test']['foo2c'].state, 'off')
+        doConditionUpdate(tfoo1a, True)
+        await asyncio.sleep(0.05)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'aa=foo1.*bb=sensor.foo1_bar.*cc={\'genEntityId')
+
+        g15 = self.gad.generators['g15']
+        self.assertEqual(g15.state, 1)
+        self.assertEqual(self.gad.alerts['test']['foo1d'].state, 'on')
         
         
 if __name__ == '__main__':

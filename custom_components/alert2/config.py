@@ -14,7 +14,7 @@ RenderInfo = None
 
 _regex_cache = lru_cache(maxsize=128)(re.compile)
 
-def entity_id_regex_extract(seq, find, replace=None, ignorecase=False):
+def entity_id_regex_extract(seq, find, ignorecase=False):
     """Match value using regex."""
     flags = re.IGNORECASE if ignorecase else 0
     regex = _regex_cache(find, flags)
@@ -22,15 +22,7 @@ def entity_id_regex_extract(seq, find, replace=None, ignorecase=False):
         entity_id = item.entity_id
         m = regex.match(entity_id)
         if bool(m):
-            numGroups = len(m.groups())
-            if replace is None and numGroups > 0:
-                replace = '\\1'
-            if replace is None:
-                yield { "genEntityId": entity_id }
-            else:
-                aret = regex.sub(replace, entity_id)
-                #_LOGGER.warning(f'substituiont "{entity_id}" -> "{aret}" with replace="{replace}"')
-                yield { "genEntityId": entity_id, "genElem": aret }
+            yield  { "genEntityId": entity_id, "genGroups": list(m.groups()) }
                 
 class JTemplate(template_helper.Template):
     @callback
