@@ -127,7 +127,6 @@ DEFAULTS_SCHEMA = vol.Schema({
 })
 
 SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({
-    vol.Optional('friendly_name'): cv.string,
     vol.Optional('notifier'): vol.Any(cv.template, jstringList),
     vol.Optional('summary_notifier'): vol.Any(cv.boolean, cv.template, jstringList),
     vol.Optional('title'): cv.template,
@@ -142,7 +141,8 @@ SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({
 # So if 'generator' is present, then 'name' is a template. Otherwise it's a string.
 SINGLE_TRACKED_SCHEMA = SINGLE_TRACKED_SCHEMA_PRE_NAME.extend({
     vol.Required('domain'): cv.string,
-    vol.Required('name'): cv.string
+    vol.Required('name'): cv.string,
+    vol.Optional('friendly_name'): cv.string,
 })
 
 SINGLE_ALERT_SCHEMA_PRE_NAME = SINGLE_TRACKED_SCHEMA_PRE_NAME.extend({
@@ -152,6 +152,7 @@ SINGLE_ALERT_SCHEMA_PRE_NAME = SINGLE_TRACKED_SCHEMA_PRE_NAME.extend({
 SINGLE_ALERT_SCHEMA_EVENT = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Required('domain'): cv.string,
     vol.Required('name'): cv.string,
+    vol.Optional('friendly_name'): cv.string,
     vol.Required('trigger'): cv.TRIGGER_SCHEMA,
     vol.Required('condition'): cv.template,
 })
@@ -174,11 +175,13 @@ SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
 SINGLE_ALERT_SCHEMA_CONDITION = vol.Any(SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): cv.template,
     vol.Required('name'): cv.template,
+    vol.Optional('friendly_name'): cv.template,
     vol.Required('generator'): jtemplate,
     vol.Required('generator_name'): cv.string,
 }), SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): cv.string,
     vol.Required('name'): cv.string,
+    vol.Optional('friendly_name'): cv.string,
 }))
 
 TOP_LEVEL_SCHEMA = vol.Schema({

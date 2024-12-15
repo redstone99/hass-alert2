@@ -262,6 +262,7 @@ class AlertGenerator(SensorEntity):
         needWrite = False
         newEntities = []
         currNames = set() # entity names (ie the part after alert2.)
+        sawError = False
         for elem in alist:
             svars = { 'genRaw': elem }
             if isinstance(elem, dict):
@@ -275,11 +276,13 @@ class AlertGenerator(SensorEntity):
                 nameStr = self.config['name'].async_render(variables=svars, parse_result=False).strip()
             except TemplateError as err:
                 report(DOMAIN, 'error', f'{self.name} Name template returned err {err}')
+                sawError = True
                 break
             try:
                 domainStr = self.config['domain'].async_render(variables=svars, parse_result=False).strip()
             except TemplateError as err:
                 report(DOMAIN, 'error', f'{self.name} Domain template returned err {err}')
+                sawError = True
                 break
             #_LOGGER.warning(f'got result: {nameStr} {domainStr}')
             entName = entNameFromDN(domainStr, nameStr)
@@ -295,6 +298,15 @@ class AlertGenerator(SensorEntity):
                 acfg = dict(self.config) # very shallow copy, don't copy object values
                 acfg['domain'] = domainStr
                 acfg['name'] = nameStr
+                if 'friendly_name' in self.config:
+                    try:
+                        friendlyNameStr = self.config['friendly_name'].async_render(
+                            variables=svars, parse_result=False).strip()
+                        acfg['friendly_name'] = friendlyNameStr
+                    except TemplateError as err:
+                        report(DOMAIN, 'error', f'{self.name} Friendly_name template returned err {err}')
+                        sawError = True
+                        break
                 ent = self.alertData.declareCondition(acfg, False, genVars=svars)
                 if ent is not None:
                     _LOGGER.info(f'Generator {self.name} created new alert entity {DOMAIN}.{ent.name}')
@@ -302,16 +314,19 @@ class AlertGenerator(SensorEntity):
                     newEntities.append(ent)
                     needWrite = True
         await self.alertData.component.async_add_entities(newEntities)
-        
-        for aname in list(self.nameEntityMap.keys()):
-            if not aname in currNames:
-                # entity no longer in list
-                ent = self.nameEntityMap[aname]
-                _LOGGER.info(f'Generator {self.name} removing alert entity {DOMAIN}.{ent.name}')
-                await ent.async_remove() # I think this is the complement of async_add_entities
-                self.alertData.undeclareCondition(ent.alDomain, ent.alName) # destroys ent
-                del self.nameEntityMap[aname]
-                needWrite = True
+
+        if not sawError:
+            # If we saw an error while processing templates, we might be missing entities
+            # so don't do any deletions
+            for aname in list(self.nameEntityMap.keys()):
+                if not aname in currNames:
+                    # entity no longer in list
+                    ent = self.nameEntityMap[aname]
+                    _LOGGER.info(f'Generator {self.name} removing alert entity {DOMAIN}.{ent.name}')
+                    await ent.async_remove() # I think this is the complement of async_add_entities
+                    self.alertData.undeclareCondition(ent.alDomain, ent.alName) # destroys ent
+                    del self.nameEntityMap[aname]
+                    needWrite = True
         if needWrite:
             self.async_write_ha_state()
 
