@@ -2817,7 +2817,6 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         tfoo1a = self.gad.alerts['test']['foo1a']
         
         g13 = self.gad.generators['g13']
-        #fuck should error
         self.assertEqual(g13.state, 1)
         self.assertEqual(self.gad.alerts['test']['b'].state, 'off')
         g14 = self.gad.generators['g14']
@@ -2833,7 +2832,54 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         g15 = self.gad.generators['g15']
         self.assertEqual(g15.state, 1)
         self.assertEqual(self.gad.alerts['test']['foo1d'].state, 'on')
+    async def test_generator6(self):
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g15',
+              'generator': [ 'foo1' ],
+              'friendly_name': '{{ genElem }}zz', 'condition': 'off' },
+            # Test if one alert has a render error in domain/name, we don't delete the rest
+            { 'domain': 'test',
+              'name': '{% if states("sensor.ick") == "on" and genElem == "foo2" %}{{blowup()}}{% else %}{{ genElem }}{% endif %}',
+              'generator_name': 'g16', 'generator': [ 'foo2', 'foo3' ],
+              'condition': 'off' },
+            ]}}
+        ahass = FakeHass()
+        ahass.states.set('sensor.ick', SimpleNamespace(entity_id='sensor.ick', state='foo'))
+        await self.initCase(cfg, ahass)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertEqual(len(self.gad.generators), 2)
+        g15 = self.gad.generators['g15']
+        self.assertEqual(g15.state, 1)
+        foo1 = self.gad.alerts['test']['foo1']
+        self.assertEqual(foo1.state, 'off')
+
+        doConditionUpdate(foo1, True)
+        await asyncio.sleep(0.05)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], '^foo1zz: turned on')
+
+        g16 = self.gad.generators['g16']
+        self.assertEqual(g16.state, 2)
+        foo2 = self.gad.alerts['test']['foo2']
+        foo3 = self.gad.alerts['test']['foo3']
+        self.assertTrue('foo3' in self.gad.alerts['test'])
+        ahass.states.get('sensor.ick').state = 'on'
         
+        g16._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                                [ SimpleNamespace(template=g16._generator_template, result='["foo2","foo3"]') ] )
+        await asyncio.sleep(0.05)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'blowup\' is undefined')
+        # Here's the crux of the test.  generator had a render error while processing "foo2"
+        # so neither foo2 nor foo3 should be deleted.
+        self.assertTrue('foo2' in self.gad.alerts['test'])
+        self.assertTrue('foo3' in self.gad.alerts['test'])
+
         
 if __name__ == '__main__':
     unittest.main()
