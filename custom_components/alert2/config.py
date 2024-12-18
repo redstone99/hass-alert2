@@ -155,6 +155,7 @@ SINGLE_ALERT_SCHEMA_EVENT = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Optional('friendly_name'): cv.string,
     vol.Required('trigger'): cv.TRIGGER_SCHEMA,
     vol.Required('condition'): cv.template,
+    vol.Optional('early_start'): cv.boolean,
 })
 
 
@@ -166,13 +167,12 @@ SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
         vol.Optional('minimum'): vol.Coerce(float),
         vol.Optional('maximum'): vol.Coerce(float),
     })),
-    vol.Optional('early_start'): cv.boolean,
     vol.Optional('done_message'): cv.template,
     vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
     vol.Optional('delay_on_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
 })
 # If alert is a generator, then 'name' is a template, otherwise 'name' is a string
-SINGLE_ALERT_SCHEMA_CONDITION = vol.Any(SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
+SINGLE_ALERT_SCHEMA_CONDITION = has_atleast_oneof(['condition','threshold'], vol.Any(SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): cv.template,
     vol.Required('name'): cv.template,
     vol.Optional('friendly_name'): cv.template,
@@ -182,7 +182,8 @@ SINGLE_ALERT_SCHEMA_CONDITION = vol.Any(SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.e
     vol.Required('domain'): cv.string,
     vol.Required('name'): cv.string,
     vol.Optional('friendly_name'): cv.string,
-}))
+    vol.Optional('early_start'): cv.boolean,
+})))
 
 TOP_LEVEL_SCHEMA = vol.Schema({
     vol.Optional('defaults'): dict,

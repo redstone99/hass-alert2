@@ -292,7 +292,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `notifier` | template | optional | Override the default `notifier`. See [Notifier Config](#notifier-config) section below for examples. |
 | `summary_notifier` | template | optional | Override the default `summary_notifier`. See [Notifier Config](#notifier-config) section below for examples. |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
-| `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts.  |
+| `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts. Not available for [generator patterns](#generator-patterns).  |
 | `generator` | template | optional | If specified, this alert is a [generator pattern](#generator-patterns). |
 | `generator_name` | string | optional | Each generator creates a sensor entity with the name `sensor.alert2generator_[generator_name]`. See [generator patterns](#generator-patterns). |
 
@@ -548,6 +548,8 @@ See the [Reference](#reference) section below for a complete list of possibiliti
 As a fallback, for any object in the list, the variable `genRaw` is defined as the object.
 
 Generators track HA entity life cycles and so will dynamically create or destroy alerts as the set of entities changes. Technical note: by default in HA, using "states|" or "states.sensor|" in a template causes the template to be reevaluated every time the state of any entity in HA changes. For generator templates, we change this behavior so it only updates on entity life cycle events (to reduce unnecessary re-renderings).
+
+Generators do not start generating until HA fully starts. `early_start` is not available for them or the alerts they create.
 
 Last implementation detail:  templates actually render to strings. So "{{ [ 1, 2 ] }}" renders to the string "[1, 2]".  Alert2 internally does a literal_eval to convert the string back into a list.
 

@@ -192,9 +192,18 @@ class AlertGenerator(SensorEntity):
     @property
     def state(self) -> str:
         return len(self.nameEntityMap)
+    
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        
+        earlyStart = False  # generators have earlyStart forced to False
+        if earlyStart or self.alertData.haStarted:
+            self.startWatching()
+        else:
+            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.startWatchingEv)
+
+    def startWatchingEv(self, event):
+        self.hass.loop.call_soon_threadsafe(self.startWatching)
+    def startWatching(self):
         if isinstance(self._generator_template, list):
             atask = create_task(self.hass, DOMAIN, self.update(self._generator_template))
             return
@@ -307,9 +316,10 @@ class AlertGenerator(SensorEntity):
                         report(DOMAIN, 'error', f'{self.name} Friendly_name template returned err {err}')
                         sawError = True
                         break
+                _LOGGER.debug(f'{self.name} generator creating alert: {acfg} with vars {svars}')
                 ent = self.alertData.declareCondition(acfg, False, genVars=svars)
                 if ent is not None:
-                    _LOGGER.info(f'Generator {self.name} created new alert entity {DOMAIN}.{ent.name}')
+                    _LOGGER.info(f'{self.name} generator created new alert entity {DOMAIN}.{ent.name}')
                     self.nameEntityMap[entName] = ent
                     newEntities.append(ent)
                     needWrite = True
@@ -894,6 +904,7 @@ class EventAlert(AlertBase):
         self.config = config
         self.hass = hass
         self.detach_trigger = None
+        self.earlyStart = config['early_start'] if 'early_start' in config else False
         
     @property
     def state(self) -> str:
@@ -911,8 +922,19 @@ class EventAlert(AlertBase):
     async def async_added_to_hass(self) -> None:
         """Restore extra state attributes on start-up."""
         await super().async_added_to_hass()
+
+        if self.earlyStart or self.alertData.haStarted:
+            await self.startWatching()
+        else:
+            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.startWatchingEv)
+
+    def startWatchingEv(self, event):
+        self.hass.loop.call_soon_threadsafe(self.startWatchingAlmost)
+    def startWatchingAlmost(self):
+        create_task(self.hass, DOMAIN, self.startWatching())
+            
+    async def startWatching(self):
         self.reminder_check()
-        
         if 'trigger' in self.config:
             def log_cb(level: int, msg: str, **kwargs: Any) -> None:
                 _LOGGER.log(level, "%s %s", msg, self.name, **kwargs)
@@ -1111,7 +1133,6 @@ class ConditionAlertBase(AlertBase):
                     self.last_off_time = tdate
             # We don't restore cond_true_time/task becaues we don't know the cond was true while HA was restarting.
 
-        self.reminder_check()
         self.added_to_hass_called = True
 
     # Call when alert would otherwise be on
@@ -1295,6 +1316,7 @@ class ConditionAlert(ConditionAlertBase):
         self.hass.loop.call_soon_threadsafe(self.startWatching)
             
     def startWatching(self):
+        self.reminder_check()
         trackers = []
         if self._condition_template is not None:
             trackers.append(TrackTemplate(self._condition_template, variables=self.extraVariables))
@@ -1459,6 +1481,7 @@ class ConditionAlertManual(ConditionAlertBase):
     async def async_added_to_hass(self) -> None:
         """Restore state and register callbacks."""
         await super().async_added_to_hass()
+        self.reminder_check()
 
     # Note that async_added_to_hass may be called after
     # the setup of any component, so it may overwrite state.

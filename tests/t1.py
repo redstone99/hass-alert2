@@ -378,7 +378,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
                 break
         return count
     
-    async def initCase(self, cfg, ahass=None):
+    async def initCase(self, cfg, ahass=None, startWatching=True):
         global gHass
         print('setting up')
         self.oldTasks = asyncio.all_tasks()
@@ -393,10 +393,24 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         #self.hass.data = { alert2.DOMAIN : self.gad }
         #await self.gad.init2()
         #await self.gad.haStartedEv(None)
+        if startWatching:
+            # normally called when EVENT_HOMEASSISTANT_STARTED happens
+            await self.startWatching()
+    
+    async def startWatching(self):
+        self.gad.haStarted = True
+        # do generators first so if they create entities, those also will start being watched
+        for name in self.gad.generators:
+            self.gad.generators[name].startWatchingEv(None)
+        await asyncio.sleep(0.1)
         for dom in self.gad.alerts:
             for name in self.gad.alerts[dom]:
-                self.gad.alerts[dom][name].startWatchingEv(None) # normally called when EVENT_HOMEASSISTANT_STARTED happens
-    #def setup(self):
+                self.gad.alerts[dom][name].startWatchingEv(None) 
+        for dom in self.gad.tracked:
+            for name in self.gad.tracked[dom]:
+                self.gad.tracked[dom][name].startWatchingEv(None)
+        await asyncio.sleep(0.1)
+        
     #    pass
     def tearDown(self):
         #self.gad.shutdown()
@@ -1953,23 +1967,24 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.1)
         #await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
-        self.assertEqual(len(nn.await_args_list), 12)
-        self.assertRegex(nn.await_args_list[0].args[0].data['message'], 't38a.*turned on')
-        self.assertRegex(nn.await_args_list[1].args[0].data['message'], 't38b.*turned on')
-        self.assertRegex(nn.await_args_list[2].args[0].data['message'], 'Duplicate.*t30')
-        self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'Duplicate.*t31')
-        self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'Duplicate.*t30a')
-        self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'Duplicate.*t32')
-        self.assertRegex(nn.await_args_list[6].args[0].data['message'], 'expected dictionary.*t35')
+        perCount = 12
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-12].args[0].data['message'], 'Duplicate.*t30')
+        self.assertRegex(nn.await_args_list[perCount-11].args[0].data['message'], 'Duplicate.*t31')
+        self.assertRegex(nn.await_args_list[perCount-10].args[0].data['message'], 'Duplicate.*t30a')
+        self.assertRegex(nn.await_args_list[perCount-9].args[0].data['message'], 'Duplicate.*t32')
+        self.assertRegex(nn.await_args_list[perCount-8].args[0].data['message'], 'expected dictionary.*t35')
+        self.assertRegex(nn.await_args_list[perCount-7].args[0].data['message'], 't38a.*turned on')
+        self.assertRegex(nn.await_args_list[perCount-6].args[0].data['message'], 't38b.*turned on')
         # t33 test here is a hack cuz we don't implement AllStates when looking up states that don't exist.
         # Real HA would return unknown.
-        self.assertRegex(nn.await_args_list[7].args[0].data['message'], 't33.*NoneType.*has no attribute \'state\'')
-        self.assertRegex(nn.await_args_list[8].args[0].data['message'], 't34.*rendered to "".*not truthy')
-        self.assertRegex(nn.await_args_list[9].args[0].data['message'], 't34a.*rendered to "3".*not truthy')
+        self.assertRegex(nn.await_args_list[perCount-5].args[0].data['message'], 't33.*NoneType.*has no attribute \'state\'')
+        self.assertRegex(nn.await_args_list[perCount-4].args[0].data['message'], 't34.*rendered to "".*not truthy')
+        self.assertRegex(nn.await_args_list[perCount-3].args[0].data['message'], 't34a.*rendered to "3".*not truthy')
         # t37 test here is a hack cuz we don't implement AllStates when looking up states that don't exist.
         # Real HA would return unknown.
-        self.assertRegex(nn.await_args_list[10].args[0].data['message'], 't37.*NoneType.*has no attribute')
-        self.assertRegex(nn.await_args_list[11].args[0].data['message'], 't38.*Threshold value returned "".*a float')
+        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 't37.*NoneType.*has no attribute')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't38.*Threshold value returned "".*a float')
 
         self.assertEqual(self.gad.tracked['test']['t30']._friendly_name, 'happyt30')
         self.assertEqual(self.gad.alerts['test']['t31']._condition_template.template, 'off')
@@ -2492,7 +2507,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_generator(self):
         cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True}, 'alerts' : [
-            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't55', 'condition': '{{ zzz }}',  },
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't55', 'condition': '{{ False }}',  },
         ] } }
         await self.initCase(cfg)
         perCount = 0
@@ -2546,7 +2561,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
 
         # what if name includes a trailing z in template
         cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True}, 'alerts' : [
-            { 'domain': 'test', 'name': '{{ genElem }}z', 'generator_name': 'g1', 'generator': 't56', 'condition': '{{ zzz }}',  },
+            { 'domain': 'test', 'name': '{{ genElem }}z', 'generator_name': 'g1', 'generator': 't56', 'condition': '{{ False }}',  },
         ] } }
         resetModuleLoadTime()
         await self.initCase(cfg)
@@ -2582,7 +2597,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         # Try templating of genElem variable
         cfg = { 'alert2' : { 'alerts' : [
             { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't57',
-              'condition': '{{ zzz }}',
+              'condition': '{{ False }}',
               # If genElem doesn't resolve to 't57', then we'll pick the wrong notifier
               'notifier': '{% if genElem == "t57" %}persistent_notification{% else %}foo{% endif %}',
               'title': '{{ genElem }}tt', 'target': '{{ genElem }}tar',
@@ -2653,11 +2668,9 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         cfg = { 'alert2' : { 'alerts' : [
             { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't59',
               'condition': '{{ genElem == "t59" }}',
-              'early_start': True,  # so test harness evals template quickly
              },
             { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g2', 'generator': 't60',
               'condition': '{{ true }}',
-              'early_start': True,
               'threshold': {
                   'value': '{% if genElem == "t60" %}10{% else %}5{% endif %}',
                   'hysteresis': 2,
@@ -2682,15 +2695,15 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
     async def test_generator3(self):
         cfg = { 'alert2' : { 'alerts' : [
             { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't61',
-              'condition': '{{ zzz }}' },
+              'condition': '{{ False }}' },
             { 'domain': 'test', 'name': '{{ genRaw }}', 'generator_name': 'g1a', 'generator': 't61a',
-              'condition': '{{ zzz }}' },
+              'condition': '{{ False }}' },
             { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g2', 'generator': [ "t62", "t63" ],
-              'condition': '{{ zzz }}' },
+              'condition': '{{ False }}' },
             { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g3', 'generator': '[ "t64", "t65" ]',
-              'condition': '{{ zzz }}' },
+              'condition': '{{ False }}' },
             { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g4', 'generator': '{{ [ "t66", "t67" ] }}',
-              'condition': '{{ zzz }}' },
+              'condition': '{{ False }}' },
         ] } }
         await self.initCase(cfg)
         perCount = 0
@@ -2785,12 +2798,10 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
               'condition': 'off' },
             { 'domain': 'test', 'name': '{{ genGroups[0] }}c', 'generator_name': 'g14',
               'generator': "{{ states|entity_regex('sensor.(.*)_bar')|list }}",
-              'early_start': True,
               'condition': '{{ states(genEntityId) }}' },
             # Check genEntityId auto-populates
             { 'domain': 'test', 'name': '{{ genEntityId|replace("sensor.foo1_bar","foo1") }}d', 'generator_name': 'g15',
               'generator': "{{ states|selectattr('entity_id','equalto','sensor.foo1_bar')|map(attribute='entity_id')|list }}",
-              'early_start': True,
               'message': 'ee={{genRaw}}',
               'condition': '{{ states(genEntityId) }}' }
         ]}}
@@ -2879,6 +2890,46 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         # so neither foo2 nor foo3 should be deleted.
         self.assertTrue('foo2' in self.gad.alerts['test'])
         self.assertTrue('foo3' in self.gad.alerts['test'])
+        
+    async def test_generator7(self):
+        # Test that generators don't start generating until HA has fully started
+        cfg = { 'alert2' : { 'alerts' : [
+            # test config err where generator missing condition
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g16',
+              'generator': [ 'foo1' ] },
+            # test generator doesn't gen till HA started
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g17',
+              'generator': [ 'foo1' ], 'condition': 'off' },
+            # test conditions don't start firing till HA started if early_start is False
+            { 'domain': 'test', 'name': 't68', 'condition': True, 'early_start': False },
+            { 'domain': 'test', 'name': 't69', 'condition': True, 'early_start': True },
+            ], 'tracked': [
+                # Our test harness isn't fancy enough to be able to test early_start
+                # for event alerts
+            ]}}
+        await self.initCase(cfg, startWatching=False)
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        await asyncio.sleep(0.05)
+        perCount = 2
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 't69.* turned on')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'must contain at least one of')
+        self.assertEqual(len(self.gad.generators), 1)
+        g17 = self.gad.generators['g17']
+        self.assertEqual(g17.state, 0)
+        self.assertTrue('foo1' not in self.gad.alerts['test'])
+        self.assertEqual(self.gad.alerts['test']['t68'].state, 'off')
+        self.assertEqual(self.gad.alerts['test']['t69'].state, 'on')
+
+        await self.startWatching()
+        self.assertEqual(g17.state, 1)
+        foo1 = self.gad.alerts['test']['foo1']
+        self.assertEqual(foo1.state, 'off')
+        self.assertEqual(self.gad.alerts['test']['t68'].state, 'on')
+        self.assertEqual(self.gad.alerts['test']['t69'].state, 'on')
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't68.* turned on')
 
         
 if __name__ == '__main__':
