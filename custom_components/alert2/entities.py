@@ -147,15 +147,16 @@ def getField(fieldName, config, defaults, requireDefault=True):
             raise vol.Invalid(f'Alert {config["domain"]},{config["name"]} config or defaults must specify {fieldName}')
         else:
             return None
+
 def agoStr(secondsAgo):
     if secondsAgo < 1.5*60:
-        astr = f'{round(secondsAgo)}s'
+        astr = f'{round(secondsAgo)} s'
     elif secondsAgo < 1.5*60*60:
-        astr = f'{round(secondsAgo/60)}m'
+        astr = f'{round(secondsAgo/60)} min'
     elif secondsAgo < 1.5*24*60*60:
-        astr = f'{round(secondsAgo/(60*60))}h'
+        astr = f'{round(secondsAgo/(60*60))} h'
     else:
-        astr = f'{round(secondsAgo/(24*60*60))}d'
+        astr = f'{round(secondsAgo/(24*60*60))} d'
     return astr
 
 # components/group/notify.py::GroupNotifyPlatform does not handle exceptions if one of the notifiers
