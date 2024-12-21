@@ -333,11 +333,11 @@ class Alert2Data:
             if not isinstance(cond, str) or '{{' in cond or '{%' in cond:
                 return
             try:
-                x = cv.boolean(cond)
-            except vol.Invalid:
+                x = cv.boolean(cond) if name == 'condition' else float(cond)
+            except (vol.Invalid, ValueError):
                 # it's not a template and not a truthy, so assume it's an entity
                 if '\'' in cond or '"' in cond:
-                    report(DOMAIN, 'error', f'config has condition that is neither a template nor an entity: {obj}')
+                    report(DOMAIN, 'error', f'config has {name} that is neither a template nor an entity: {obj}')
                     return
                 # TODO - Not sure if strip() is necessary. Can yaml return extra whitespace?
                 obj[name] = '{{ states("' + cond.strip() + '") }}'

@@ -6,6 +6,7 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 _LOGGER = logging.getLogger(None) # get root logger
 _LOGGER.setLevel(logging.INFO)
+#_LOGGER.setLevel(logging.DEBUG)
 _LOGGER.handlers[0].setFormatter(logging.Formatter("%(message)s"))
 
 import sys
@@ -259,9 +260,13 @@ class States:
             #yield SimpleNamespace(entity_id=x)
             yield self.data[x]
     def __call__(self, entity_id):
-        # Hack, this is not it actually works in HA. In HA uses AllStates with tolerates
+        # Hack, this is not how it actually works in HA. In HA uses AllStates with tolerates
         # a missing entity
-        return self.get(entity_id).state
+        ent = self.get(entity_id)
+        if ent:
+            return ent.state
+        else:
+            return ''
 
 class FakeHass:
     def __init__(self):
@@ -358,7 +363,7 @@ def setCondition(aler, rez):
         #assert '{{' in rez, rez
         aler._condition_template.set_value(rez)
 
-class FooTest(unittest.IsolatedAsyncioTestCase):
+class Foo(unittest.IsolatedAsyncioTestCase):
     async def waitForAllBut(self, oldTasks):
         await asyncio.sleep(0) # let events fire
         count = 0
@@ -1113,9 +1118,9 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(len(nn.await_args_list), perCount)
                         if onAtEnd:
                             if extraFire:
-                                self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling ending] Alert2 test_{tname} fired 1x.*: on for 2s$')
+                                self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling ending] Alert2 test_{tname} fired 1x.*: on for 2 s$')
                             else:
-                                self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling ending] Alert2 test_{tname}: on for 4s$')
+                                self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling ending] Alert2 test_{tname}: on for 4 s$')
                         else:
                             self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling ending] Summary.*test_{tname}.*turned off.*after being on')
                     else:
@@ -1123,9 +1128,9 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
                             perCount += 1
                             self.assertEqual(len(nn.await_args_list), perCount)
                             if extraFire:
-                                self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling ending] Alert2 test_{tname} fired 1x.*on for 2s$')
+                                self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling ending] Alert2 test_{tname} fired 1x.*on for 2 s$')
                             else:
-                                self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling ending] Alert2 test_{tname}: on for 4s$')
+                                self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], f'Throttling ending] Alert2 test_{tname}: on for 4 s$')
                         else:
                             self.assertEqual(len(nn.await_args_list), perCount)
 
@@ -1958,32 +1963,36 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
             { 'domain': 'test', 'name': 't34a', 'condition': '{{ 3 }}' },
             { 'domain': 'test', 'name': 't35', 'threshold': 4 },
             { 'domain': 'test', 'name': 't36', 'threshold': { 'value': 5, 'hysteresis': 6, 'minimum':4 } },
+            { 'domain': 'test', 'name': 't36a', 'threshold': { 'value': '3', 'hysteresis': 6, 'minimum':4 } },
             { 'domain': 'test', 'name': 't37', 'threshold': { 'value': 'foo.bar2', 'hysteresis': 8, 'minimum':9 } },
+            { 'domain': 'test', 'name': 't37a', 'threshold': { 'value': 'sensor.ick', 'hysteresis': 8, 'minimum':9 } },
             { 'domain': 'test', 'name': 't38', 'threshold': { 'value': '{{ ick2 }}', 'hysteresis': 10, 'minimum':11 } },
             { 'domain': 'test', 'name': 't38a', 'condition': 'on' },
             { 'domain': 'test', 'name': 't38b', 'condition': '{{ "on" }}' },
         ], } }
-        await self.initCase(cfg)
+        ahass = FakeHass()
+        ahass.states.set('sensor.ick', SimpleNamespace(entity_id='sensor.ick', state='3'))
+        await self.initCase(cfg, ahass)
         await asyncio.sleep(0.1)
         #await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
-        perCount = 12
+        perCount = 14
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertRegex(nn.await_args_list[perCount-12].args[0].data['message'], 'Duplicate.*t30')
-        self.assertRegex(nn.await_args_list[perCount-11].args[0].data['message'], 'Duplicate.*t31')
-        self.assertRegex(nn.await_args_list[perCount-10].args[0].data['message'], 'Duplicate.*t30a')
-        self.assertRegex(nn.await_args_list[perCount-9].args[0].data['message'], 'Duplicate.*t32')
-        self.assertRegex(nn.await_args_list[perCount-8].args[0].data['message'], 'expected dictionary.*t35')
+        self.assertRegex(nn.await_args_list[perCount-14].args[0].data['message'], 'Duplicate.*t30')
+        self.assertRegex(nn.await_args_list[perCount-13].args[0].data['message'], 'Duplicate.*t31')
+        self.assertRegex(nn.await_args_list[perCount-12].args[0].data['message'], 'Duplicate.*t30a')
+        self.assertRegex(nn.await_args_list[perCount-11].args[0].data['message'], 'Duplicate.*t32')
+        self.assertRegex(nn.await_args_list[perCount-10].args[0].data['message'], 'expected dictionary.*t35')
+        self.assertRegex(nn.await_args_list[perCount-9].args[0].data['message'], 't36a.*turned on')
+        self.assertRegex(nn.await_args_list[perCount-8].args[0].data['message'], 't37a.*turned on')
         self.assertRegex(nn.await_args_list[perCount-7].args[0].data['message'], 't38a.*turned on')
         self.assertRegex(nn.await_args_list[perCount-6].args[0].data['message'], 't38b.*turned on')
-        # t33 test here is a hack cuz we don't implement AllStates when looking up states that don't exist.
-        # Real HA would return unknown.
-        self.assertRegex(nn.await_args_list[perCount-5].args[0].data['message'], 't33.*NoneType.*has no attribute \'state\'')
+        self.assertRegex(nn.await_args_list[perCount-5].args[0].data['message'], 't33.*rendered to "", which is not truthy')
         self.assertRegex(nn.await_args_list[perCount-4].args[0].data['message'], 't34.*rendered to "".*not truthy')
         self.assertRegex(nn.await_args_list[perCount-3].args[0].data['message'], 't34a.*rendered to "3".*not truthy')
         # t37 test here is a hack cuz we don't implement AllStates when looking up states that don't exist.
         # Real HA would return unknown.
-        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 't37.*NoneType.*has no attribute')
+        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 't37.*Threshold value returned "" rather than a float')
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't38.*Threshold value returned "".*a float')
 
         self.assertEqual(self.gad.tracked['test']['t30']._friendly_name, 'happyt30')
@@ -1993,6 +2002,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.gad.alerts['test']['t34']._condition_template.template, '{{ ick }}')
         self.assertNotIn('35', self.gad.alerts['test'])
         self.assertEqual(self.gad.alerts['test']['t36']._threshold_value_template.template, '5')
+        self.assertEqual(self.gad.alerts['test']['t36a']._threshold_value_template.template, '3')
         self.assertEqual(self.gad.alerts['test']['t37']._threshold_value_template.template, '{{ states("foo.bar2") }}')
         self.assertEqual(self.gad.alerts['test']['t38']._threshold_value_template.template, '{{ ick2 }}')
 
@@ -2325,7 +2335,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(nfoo.await_args_list), fooCount)
-        # snooze expires, get notification summary
+        # snooze expires, get reminder notification summary
         await asyncio.sleep(2)
         perCount += 3
         self.assertEqual(t53.notification_control, a2Entities.NOTIFICATIONS_ENABLED)
@@ -2384,7 +2394,7 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(nfoo.await_args_list), fooCount)
-        # snooze expires, get notification summary
+        # snooze expires, get summary notification
         await asyncio.sleep(2)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
@@ -2505,6 +2515,45 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(t54b.notification_control, a2Entities.NOTIFICATIONS_ENABLED)
         self.assertEqual(t54c.notification_control, a2Entities.NOTIFICATIONS_ENABLED)
 
+        # Alert is on.
+        doConditionUpdate(t54a, True)
+        await asyncio.sleep(0.05)
+        doConditionUpdate(t54b, True)
+        await asyncio.sleep(0.05)
+        doConditionUpdate(t54c, True)
+        await asyncio.sleep(0.05)
+        perCount += 3
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-3].args[0].data['message'], 't54a: turned on')
+        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 't54b: turned on')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't54c: turned on')
+        self.assertEqual(t54a.notification_control, a2Entities.NOTIFICATIONS_ENABLED)
+        self.assertEqual(t54b.notification_control, a2Entities.NOTIFICATIONS_ENABLED)
+        self.assertEqual(t54c.notification_control, a2Entities.NOTIFICATIONS_ENABLED)
+        # then we snooze it
+        now = rawdt.datetime.now(rawdt.timezone.utc)
+        await t54a.async_notification_control(True, now + rawdt.timedelta(seconds=1))
+        await t54b.async_notification_control(True, now + rawdt.timedelta(seconds=1))
+        await t54c.async_notification_control(True, now + rawdt.timedelta(seconds=1))
+        await asyncio.sleep(0.05)
+        self.assertTrue(isinstance(t54a.notification_control, rawdt.datetime))
+        self.assertTrue(isinstance(t54b.notification_control, rawdt.datetime))
+        self.assertTrue(isinstance(t54c.notification_control, rawdt.datetime))
+        self.assertEqual(len(nn.await_args_list), perCount)
+        await t54c.async_unack()  # unack one of them
+        # Snooze expires
+        await asyncio.sleep(2)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't54c: on for')
+        # and should get reminders
+        await asyncio.sleep(2)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't54c: on for')
+
+
+        
     async def test_generator(self):
         cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True}, 'alerts' : [
             { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't55', 'condition': '{{ False }}',  },
@@ -2930,6 +2979,25 @@ class FooTest(unittest.IsolatedAsyncioTestCase):
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't68.* turned on')
+
+    async def test_late_state(self):
+        cfg = { 'alert2' : { 'alerts' : [
+            # Check that template condition still becomes states("sensor.ick") even if sensor.ick doesn't yet exist
+            # when the alert is created.
+            { 'domain': 'test', 'name': 't70', 'condition': 'sensor.ick' },
+            ]}}
+        await self.initCase(cfg)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't70 condition template rendered to "", which is not truthy')
+        t70 = self.gad.alerts['test']['t70']
+        self.assertRegex(t70._condition_template.template, 'states."sensor.ick"')
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), perCount)
+        
+        #self.hass.states.set('sensor.ick', SimpleNamespace(entity_id='sensor.ick', state='on'))
 
         
 if __name__ == '__main__':

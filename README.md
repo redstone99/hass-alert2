@@ -146,7 +146,7 @@ There are a few mechanisms available for controlling when and whether notificati
 
 * Ack'ing an alert prevents further reminders and the stop notification for the current firing of a condition alert. For both condition and event alerts, ack'ing also prevents any throttled notification of previous firings of the alert. Unack'ing an alert will restart notifications for a condition alert if it is still firing.
 
-* Snoozing notifications for an alert prevents any notifications from current or future firings of an alert for a specified period of time. The start of snoozing also implicitly ack's the alert.
+* Snoozing notifications for an alert implicitly acks the alert once and prevents any notifications from current or future firings of an alert for a specified period of time.
 
 * Disabling notifications for an alert prevents any notifications until it is enabled again.  Snoozing & disabling affect only notifications. Alerts will still fire and be recorded for reviewing in your dashboard.
 
@@ -241,7 +241,7 @@ The `defaults:` subsection specifies optional default values for parameters comm
 
 | Key | Type | Description |
 |---|---|---|
-| `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. |
+| `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. Minimum is 0.01 min. |
 | `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers, an entity name whose state is a list of notifiers, or a template that evaluates to either. See [Notifier Config](#notifier-config) section below for possibilities here.  |
 | `summary_notifier` | bool or template | True to send summaries (see [Notifiers](#notifiers) section for detail) using the same notifier as other notifications.  False to not send summaries.  Or can be a template similar to `notifier` parameter to specify notifier to use for summaries. Default is `false`. |
 | `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notification, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
