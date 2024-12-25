@@ -177,7 +177,7 @@ class FakeHA:
                     pass
         class event:
             @staticmethod
-            def async_track_template_result(hass, trackers, cb):
+            def async_track_template_result(hass, trackers, action):
                 # fire initial result of templates
                 event = None
                 updates = []
@@ -188,7 +188,8 @@ class FakeHA:
                     except FakeExceptions.TemplateError as err:
                         rez = SimpleNamespace(template=x.template, result=err)
                     updates.append(rez)
-                cb(event, updates)
+                action(event, updates)
+                #asyncio.get_running_loop().create_task(action(event, updates))
                 return SimpleNamespace(async_refresh = lambda: None)
             class TrackTemplate:
                 def __init__(self, template, variables, rate_limit=None):
@@ -267,10 +268,10 @@ class States:
             return ent.state
         else:
             return ''
-
+        
 class FakeHass:
     def __init__(self):
-        self.bus = SimpleNamespace(async_listen_once = lambda a,b: None,
+        self.bus = SimpleNamespace(async_listen_once = lambda ev,fun: self.bus_async_listen_once(ev, fun),
                                    async_listen = lambda ev,fun: self.bus_async_listen(ev, fun),
                                    async_fire = lambda a, b: self.bus_async_fire(a, b)
                                    )
@@ -279,6 +280,7 @@ class FakeHass:
                                         async_call = lambda dom, nm, args: self.service_async_call(dom, nm, args)
                                         )
         self.evHandlers = {  }
+        self.evOnceHandlers = {  }
         self.servHandlers = { 'notify.persistent_notification': AsyncMock(name='persist', spec_set=[]) }
         self.loop = asyncio.get_running_loop()
         self.states = States()
@@ -288,10 +290,26 @@ class FakeHass:
     def service_async_register(self, dom, nm, fun):
         self.servHandlers[f'{dom}.{nm}'] = fun
     def bus_async_listen(self, ev, fun):
-        self.evHandlers[ev] = fun
+        _LOGGER.debug(f'bus_async_listen for {ev}')
+        if not ev in self.evHandlers:
+            self.evHandlers[ev] = []
+        self.evHandlers[ev].append(fun)
+    def bus_async_listen_once(self, ev, fun):
+        _LOGGER.debug(f'bus_async_listen once for {ev}')
+        if not ev in self.evOnceHandlers:
+            self.evOnceHandlers[ev] = []
+        self.evOnceHandlers[ev].append(fun)
     def bus_async_fire(self, ev, data):
         obj = SimpleNamespace(data = data)
-        asyncio.get_running_loop().create_task(self.evHandlers[ev](obj))
+        _LOGGER.debug(f'bus_async_fire for {ev}')
+        if ev in self.evHandlers:
+            for aco in self.evHandlers[ev]:
+                asyncio.get_running_loop().create_task(aco(obj))
+        if ev in self.evOnceHandlers:
+            for afun in self.evOnceHandlers[ev]:
+                afun(obj)
+                #asyncio.get_running_loop().call_soon_threadsafe(lambda : self.evOnceHandlers[ev](obj))
+            del self.evOnceHandlers[ev]
     async def service_async_call(self, dom, nm, args):
         call = SimpleNamespace(data = args)
         fulln = f'{dom}.{nm}'
@@ -321,6 +339,14 @@ import custom_components.alert2 as alert2
 import custom_components.alert2.entities as a2Entities
 alert2.kNotifierStartupGraceSecs = 3
 
+def getCondTracker(aler):
+    if isinstance(aler, a2Entities.AlertGenerator):
+        return aler.tracker
+    else:
+        assert isinstance(aler, a2Entities.ConditionAlert)
+        return aler.condValTracker
+    assert False
+
 def doConditionUpdate(aler, rez):
     #assert isinstance(rez, bool)
     setCondition(aler, rez)
@@ -328,15 +354,15 @@ def doConditionUpdate(aler, rez):
         crez = aler._condition_template.async_render()
     except FakeExceptions.TemplateError as f:
         crez = f
-    aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                               [ SimpleNamespace(template=aler._condition_template, result=crez) ])
+    getCondTracker(aler)._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                                    [ SimpleNamespace(template=aler._condition_template, result=crez) ])
 def doValueUpdate(aler, rez):
     setValue(aler, rez)
     try:
         vrez = aler._threshold_value_template.async_render()
     except FakeExceptions.TemplateError as f:
         vrez = f
-    aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+    getCondTracker(aler)._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                [ SimpleNamespace(template=aler._threshold_value_template, result=vrez) ])
 def doCondValueUpdate(aler, condRez, valRez):
     setCondition(aler, condRez)
@@ -349,7 +375,7 @@ def doCondValueUpdate(aler, condRez, valRez):
         vrez = aler._threshold_value_template.async_render()
     except FakeExceptions.TemplateError as f:
         vrez = f
-    aler._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+    getCondTracker(aler)._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                [ SimpleNamespace(template=aler._threshold_value_template, result=vrez),
                                  SimpleNamespace(template=aler._condition_template, result=crez) ])
     
@@ -394,6 +420,8 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         gHass = self.hass
         await alert2.async_setup(self.hass, cfg)
         self.gad = self.hass.data[alert2.DOMAIN]
+        self.gad.binarySensorDict = {'hastarted' : SimpleNamespace(_attr_is_on = False,
+                                                                 async_write_ha_state = lambda : None ) }
         #self.gad = alert2.Alert2Data(self.hass, cfg)
         #self.hass.data = { alert2.DOMAIN : self.gad }
         #await self.gad.init2()
@@ -403,6 +431,9 @@ class Foo(unittest.IsolatedAsyncioTestCase):
             await self.startWatching()
     
     async def startWatching(self):
+        self.hass.bus.async_fire(FakeConst.EVENT_HOMEASSISTANT_STARTED, 'happy')
+        await asyncio.sleep(0.1)
+        return
         self.gad.haStarted = True
         # do generators first so if they create entities, those also will start being watched
         for name in self.gad.generators:
@@ -1291,22 +1322,22 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         perCount += 3
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertRegex(nn.await_args_list[perCount-3].args[0].data['message'], 't18.*xxx.*truthy')
-        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 't19.*Threshold.*"" rather than a float')
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't20.*Threshold.*"" rather than a float')
+        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 't19.*value template.*"" rather than a float')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't20.*value template.*"" rather than a float')
         self.assertEqual(t18.state, 'off')
         
         doConditionUpdate(t18, True)  # cond updating causes value to be evaluated, which returns zzz:
         await self.waitForAllBut(self.oldTasks)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Threshold.*zzz.*rather than a float')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'value template.*zzz.*rather than a float')
         self.assertEqual(t18.state, 'off')
 
         doConditionUpdate(t18, True)  # cond updating causes value to be evaluated, which returns zzz:
         await self.waitForAllBut(self.oldTasks)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Threshold.*zzz.*rather than a float')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'value template.*zzz.*rather than a float')
         self.assertEqual(t18.state, 'off')
 
         # condition updates can never fail - i.e., helpers.result_as_boolean never fails
@@ -1322,7 +1353,7 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         await self.waitForAllBut(self.oldTasks)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Threshold.*zz2.*rather than a float')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'template.*zz2.*rather than a float')
         self.assertEqual(t18.state, 'off')
         
         # Now try false, false in various combinations
@@ -1976,24 +2007,38 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.1)
         #await self.waitForAllBut(self.oldTasks)
         nn = self.hass.servHandlers['notify.persistent_notification']
-        perCount = 14
-        self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertRegex(nn.await_args_list[perCount-14].args[0].data['message'], 'Duplicate.*t30')
-        self.assertRegex(nn.await_args_list[perCount-13].args[0].data['message'], 'Duplicate.*t31')
-        self.assertRegex(nn.await_args_list[perCount-12].args[0].data['message'], 'Duplicate.*t30a')
-        self.assertRegex(nn.await_args_list[perCount-11].args[0].data['message'], 'Duplicate.*t32')
-        self.assertRegex(nn.await_args_list[perCount-10].args[0].data['message'], 'expected dictionary.*t35')
-        self.assertRegex(nn.await_args_list[perCount-9].args[0].data['message'], 't36a.*turned on')
-        self.assertRegex(nn.await_args_list[perCount-8].args[0].data['message'], 't37a.*turned on')
-        self.assertRegex(nn.await_args_list[perCount-7].args[0].data['message'], 't38a.*turned on')
-        self.assertRegex(nn.await_args_list[perCount-6].args[0].data['message'], 't38b.*turned on')
-        self.assertRegex(nn.await_args_list[perCount-5].args[0].data['message'], 't33.*rendered to "", which is not truthy')
-        self.assertRegex(nn.await_args_list[perCount-4].args[0].data['message'], 't34.*rendered to "".*not truthy')
-        self.assertRegex(nn.await_args_list[perCount-3].args[0].data['message'], 't34a.*rendered to "3".*not truthy')
+        perCount = 0
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't36a.*turned on')
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't37a.*turned on')
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't38a.*turned on')
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't38b.*turned on')
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Duplicate.*t30')
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Duplicate.*t31')
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Duplicate.*t30a')
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Duplicate.*t32')
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'expected dictionary.*t35')
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't33.*rendered to "", which is not truthy')
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't34.*rendered to "".*not truthy')
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't34a.*rendered to "3".*not truthy')
         # t37 test here is a hack cuz we don't implement AllStates when looking up states that don't exist.
         # Real HA would return unknown.
-        self.assertRegex(nn.await_args_list[perCount-2].args[0].data['message'], 't37.*Threshold value returned "" rather than a float')
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't38.*Threshold value returned "".*a float')
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't37.*value template rendered to "" rather than a float')
+        perCount += 1
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't38.*value template rendered to "".*a float')
+        self.assertEqual(len(nn.await_args_list), perCount)
 
         self.assertEqual(self.gad.tracked['test']['t30']._friendly_name, 'happyt30')
         self.assertEqual(self.gad.alerts['test']['t31']._condition_template.template, 'off')
@@ -2253,7 +2298,6 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'not known to HA.*\'foo\'')
         await self.waitForAllBut(self.oldTasks)
 
-        _LOGGER.warning('\n\n')
         # Test defer naming specific list
         cfg = { 'alert2' : { 'notifier_startup_grace_secs': 1.5, 'defer_startup_notifications': ['fooexist','foono'],
                              'tracked': [ { 'domain': 'test', 'name': 't49', 'notifier': 'fooexist' },
@@ -2576,8 +2620,8 @@ class Foo(unittest.IsolatedAsyncioTestCase):
 
         
         # And suppose generator is a template and produces an error.  should not change generated alerts.
-        g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                                [ SimpleNamespace(template=None, result=FakeExceptions.TemplateError('bogus err')) ] )
+        g1.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                                [ SimpleNamespace(template=g1._generator_template, result=FakeExceptions.TemplateError('bogus err')) ] )
         await asyncio.sleep(0.05)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
@@ -2585,16 +2629,16 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.gad.alerts['test']['t55'], t55)
 
         # suppose template renders to empty string - it's an error
-        g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+        g1.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                 [ SimpleNamespace(template=None, result='fff') ] )
         await asyncio.sleep(0.05)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'generator_g1 generator template var is None')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'generator_g1 template not found: None')
         self.assertEqual(self.gad.alerts['test']['t55'], t55)
 
         # template producing same string should not recreate alert
-        g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+        g1.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                 [ SimpleNamespace(template=g1._generator_template, result='t55') ] )
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
@@ -2602,7 +2646,7 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.gad.alerts['test']['t55'], t55)
         
         # Now suppose template returns nothing, so alert should disappear
-        g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+        g1.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                 [ SimpleNamespace(template=g1._generator_template, result='') ] )
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
@@ -2627,7 +2671,7 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(g1.state, 1)
         self.assertEqual(len(nn.await_args_list), perCount)
         # Now suppose a second alert appears
-        g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+        g1.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                 [ SimpleNamespace(template=g1._generator_template, result='[ "t56", "t57" ]') ] )
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
@@ -2636,7 +2680,7 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(g1.state, 2)
                 
         # Now suppose template returns nothing, so alert should disappear
-        g1._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+        g1.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                 [ SimpleNamespace(template=g1._generator_template, result='') ] )
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
@@ -2769,7 +2813,7 @@ class Foo(unittest.IsolatedAsyncioTestCase):
 
         # Pick one and try adding another alert
         g3 = self.gad.generators['g3']
-        g3._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+        g3.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                 [ SimpleNamespace(template=g3._generator_template, result='[ "t64", "t65", "t65a" ]') ] )
         await asyncio.sleep(0.05)
         self.assertEqual(len(self.gad.alerts['test']), 9)
@@ -2929,8 +2973,8 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.assertTrue('foo3' in self.gad.alerts['test'])
         ahass.states.get('sensor.ick').state = 'on'
         
-        g16._tracker_result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                                [ SimpleNamespace(template=g16._generator_template, result='["foo2","foo3"]') ] )
+        g16.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                                [ SimpleNamespace(template=g16.tracker.cfgList[0]['template'], result='["foo2","foo3"]') ] )
         await asyncio.sleep(0.05)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
@@ -2998,7 +3042,24 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), perCount)
         
         #self.hass.states.set('sensor.ick', SimpleNamespace(entity_id='sensor.ick', state='on'))
-
+        
+    async def test_friendlyname(self):
+        cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': 't71', 'friendly_name': '{{ states("sensor.ick") }}', 'condition': 'off' },
+            ]}}
+        ahass = FakeHass()
+        ahass.states.set('sensor.ick', SimpleNamespace(entity_id='sensor.ick', state='t71yy'))
+        await self.initCase(cfg, ahass)
+        await asyncio.sleep(0.05)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), perCount)
+        t71 = self.gad.alerts['test']['t71']
+        self.assertEqual(t71.extra_state_attributes['friendly_name2'], 't71yy')
+        t71.friendlyNameTracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                                [ SimpleNamespace(template=t71.friendlyNameTracker.cfgList[0]['template'], result='foo71') ] )
+        await asyncio.sleep(0.05)
+        self.assertEqual(t71.extra_state_attributes['friendly_name2'], 'foo71')
         
 if __name__ == '__main__':
     unittest.main()
