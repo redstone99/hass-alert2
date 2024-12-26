@@ -3101,7 +3101,8 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(t71.extra_state_attributes['friendly_name2'], 'foo71')
         
     async def test_reload(self):
-        cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True, 'reminder_frequency_mins': 0.01}, 'alerts' : [
+        cfg = { 'alert2' : { 'notifier_startup_grace_secs': 1.0,
+                             'defaults': { 'summary_notifier': True, 'reminder_frequency_mins': 0.01}, 'alerts' : [
             { 'domain': 'test', 'name': 't72', 'condition': 'off' },
             { 'domain': 'test', 'name': 't73', 'condition': 'off' },
             { 'domain': 'test', 'name': 't74', 'condition': 'off' }, # will snooze
@@ -3119,7 +3120,7 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't75: turned on')
         now = rawdt.datetime.now(rawdt.timezone.utc)
         t74 = self.gad.alerts['test']['t74']
-        await t74.async_notification_control(True, now + rawdt.timedelta(seconds=1))
+        await t74.async_notification_control(True, now + rawdt.timedelta(seconds=30))
         entids = self.hass.states.data.keys()
         self.assertEqual(len(entids), 9) # 1 is alert2.error
 
@@ -3131,7 +3132,7 @@ class Foo(unittest.IsolatedAsyncioTestCase):
                 { 'domain': 'test', 'name': 't77' },
                 { 'domain': 'test', 'name': 't82' },
             ]}}
-        self.gad.component.newCfg = cfg['alert2']
+        self.gad.component.newCfg = cfg
         await self.gad.reload_service_handler(None)
         await asyncio.sleep(0.05)
         entids = list(self.hass.states.data.keys())
@@ -3139,9 +3140,14 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         for id in ['alert2.alert2_error', 'alert2.test_t77', 'alert2.test_t82', 'alert2.test_t72',
                    'alert2.test_t80', 'sensor.alert2generator_g18', 'alert2.test_t81']:
             self.assertTrue(id in entids)
+        # The snooze task should have been canceled
+        await asyncio.sleep(2)
+        self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
 
+
+            
         cfg = { 'alert2' : {}}
-        self.gad.component.newCfg = cfg['alert2']
+        self.gad.component.newCfg = cfg
         await self.gad.reload_service_handler(None)
         await asyncio.sleep(0.05)
         entids = list(self.hass.states.data.keys())

@@ -589,7 +589,7 @@ class AlertBase(RestoreEntity):
         baseDict.update(self.more_state_attributes())
         return baseDict
 
-    def destroy(self):
+    def shutdown(self):
         self._attr_available = False
         if self.future_notification_info is not None:
             cancel_task(DOMAIN, self.future_notification_info['task'])
@@ -1209,8 +1209,8 @@ class ConditionAlertBase(AlertBase):
         self.cond_true_time = None
         self.cond_true_task = None
 
-    def destroy(self):
-        super().destroy()
+    def shutdown(self):
+        super().shutdown()
         if self.cond_true_task:
             cancel_task(DOMAIN, self.cond_true_task)
             self.cond_true_task = None

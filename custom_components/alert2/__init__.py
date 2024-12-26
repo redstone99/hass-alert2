@@ -339,17 +339,18 @@ class Alert2Data:
             for name in self.tracked[domain]:
                 ent = self.tracked[domain][name]
                 await self.component.async_remove_entity(ent.entity_id)
-                ent.destroy()
+                ent.shutdown()
         self.tracked = {}
         # then condition alerts
         for domain in self.alerts:
             for name in self.alerts[domain]:
                 ent = self.alerts[domain][name]
                 await self.component.async_remove_entity(ent.entity_id)
-                ent.destroy()
+                ent.shutdown()
         self.alerts = {}
         
         conf = await self.component.async_prepare_reload(skip_reset=True)
+        _LOGGER.warning(conf)
         if conf is None:
             conf = {DOMAIN: {}}
         self._rawConfig = conf[DOMAIN]
@@ -445,12 +446,16 @@ class Alert2Data:
     def startShutdown(self, event):
         self._hass.loop.call_soon_threadsafe(self.shutdown)
     def shutdown(self):
+        for adomain in self.alerts:
+            for alName in self.alerts[adomain]:
+                entity = self.alerts[adomain][alName]
+                entity.shutdown()
         for adomain in self.tracked:
             for alName in self.tracked[adomain]:
                 entity = self.tracked[adomain][alName]
                 entity.shutdown()
-        for aName in self.generators:
-            self.generators[aName].shutdown()
+        #for aName in self.generators:
+        #    self.generators[aName].shutdown()
         for atask in global_tasks:
             atask.cancel()
     #async def slowStartup(self):
@@ -528,7 +533,7 @@ class Alert2Data:
             return
         ent = self.alerts[domain][name]
         del self.alerts[domain][name]
-        ent.destroy()
+        ent.shutdown()
         
     def declareGenerator(self, config):
         domain = GENERATOR_DOMAIN
