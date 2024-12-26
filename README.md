@@ -46,7 +46,8 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - **Template notifiers**. Dynamically specify who gets notified.
 - **Generator patterns**. Dynamically define multiple similar alerts, with wildcard support.
 
-Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-alert2/discussions) or file an [Issue](https://github.com/redstone99/hass-alert2/issues).
+Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-alert2/discussions) or file an [Issue](https://github.com/redstone99/hass-alert2/issues).  Or follow the [development thread](https://community.home-assistant.io/t/alert2-a-new-alerting-component).
+
 
 ## Installation
 
@@ -215,6 +216,8 @@ alert2:
                                         # more than 10x in 60 minutes
 ```
 
+Configuration may be reloaded on the fly by going to "Developer tools" -> "YAML" and clicking on "Alert2".  That deletes all alert2 alert entities and generators and then recreates them.  You can change defaults as well.  Reloading does not affect the startup-related config parameters `notifier_startup_grace_secs` and `defer_startup_notifications`.
+
 ### Top-level config options
 
 The following are all optional.
@@ -273,7 +276,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 |---|---|---|---|
 |`domain` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `domain` is typically the object causing the alert (e.g., garage door).<br>Can be a template when used with [generator patterns](#generator-patterns). |
 | `name` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `name` is typically the particular fault occurring (e.g., open_too_long).<br>Can be a template when used with [generator patterns](#generator-patterns). |
-| `friendly_name` | string | optional | Name to display instead of the entity name. Surfaces in the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) overview card. <br>Can be a template when used with [generator patterns](#generator-patterns). |
+| `friendly_name` | template | optional | Name to display instead of the entity name. Surfaces in the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) overview card. |
 | `condition` | string | optional | Template string or entity name. Alert is firing if the template or entity state evaluates to truthy AND any other alert options specified below are also true.  |
 | `trigger` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Indicates an event-based alert. Alert fires when the trigger does, if also any `condition` specified is truthy. |
 | `threshold:` | dict | optional | Subsection specifying a threshold criteria with hysteresis. Alert is firing if the threshold value exceeds bounds AND any `condition` specified is truthy. Not available for event-based alerts. |
@@ -481,8 +484,6 @@ Also, alert2 entities are built on `RestoreEntity`, which backs itself up every 
 
 ## Generator patterns
 
-EXPERIMENTAL - news of changes will posted at https://community.home-assistant.io/t/alert2-a-new-alerting-component
-
 Generator patterns let you create multiple, similar alerts dynamically, and can be based on a wild-card search of entities.  Here's an example of a generator watching for battery_plus entities reporting a low battery:
 
 ```yaml
@@ -532,7 +533,7 @@ Here's how the first generator, above, is working:
 
 1. `generator` specifies a template.
 1. The template starts with the set of all sensor entities, filters for those whose entity_id matches the regex, and returns the list of matching entity_ids.
-1. Alert2 creates an alert for each entity_id in the list. That entity_id is made available to all template config fields via the `genEntityId` variable. `domain`, `name`, and `friendly_name` also accept templates for generator alerts.
+1. Alert2 creates an alert for each entity_id in the list. That entity_id is made available to all template config fields via the `genEntityId` variable. `domain` and `name` also accept templates for generator alerts.
 1. A sensor will also be created, `sensor.alert2generator_low_bat`, whose state will be the number of alerts created by the generator.  This is useful for verifying that the generator is producing the expected number of alerts.
 
 The second generator example, above uses the `entity_regex` filter. Using that filter makes available to all template config fields the variable `genEntityId` with the entity_id as well as the variable `genGroups` with the regex groups that matched.
@@ -553,7 +554,7 @@ Generators do not start generating until HA fully starts. `early_start` is not a
 
 Last implementation detail:  templates actually render to strings. So "{{ [ 1, 2 ] }}" renders to the string "[1, 2]".  Alert2 internally does a literal_eval to convert the string back into a list.
 
-Really last implementation detail: any templates specified for `domain`, `name`, or `friendly_name` are evaluated only when the generator creates a new alert - i.e. so you can't change the name of an alert on the fly.
+Really last implementation detail: any templates specified for `domain` or `name` are evaluated only when the generator creates a new alert - i.e. so you can't change the domain/name of an alert on the fly (though you can change `friendly_name`).
 
 ### Reference
 

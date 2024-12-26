@@ -15,14 +15,17 @@ _LOGGER = logging.getLogger(__name__)
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from   homeassistant.const import (
+    SERVICE_RELOAD,
     EVENT_HOMEASSISTANT_STOP,
     EVENT_HOMEASSISTANT_STARTED
 )
 from   homeassistant.core import HomeAssistant, Event
 from   homeassistant.helpers import discovery
+from homeassistant.helpers.service import async_register_admin_service
 import homeassistant.helpers.config_validation as cv
 from   homeassistant.helpers.entity_component import EntityComponent
 from   homeassistant.helpers.typing import ConfigType
+from   homeassistant.helpers import template as template_helper
 import homeassistant.util.dt as dt
 
 from .config import (
@@ -110,7 +113,7 @@ async def async_setup(hass, config: ConfigType):
             config,
         )
         , eager_start=True)
-
+    
     # Note, sensor/binary_sensor init may happen later, so init2() may create templates before sensor entities exist for early_start ones.
     await data.init2()
     #create_background_task(hass, DOMAIN, data.slowStartup())
@@ -202,19 +205,20 @@ class Alert2Data:
         self.sensorDict = None
         self.binarySensorDict = None
         self.haStarted = False
-        self.defaultsError = None
         self.delayedNotifierMgr = None
 
-        # Defaults
-        #
-        self.defaults = DEFAULTS_SCHEMA({ 'reminder_frequency_mins': [60], 'notifier': 'persistent_notification', 'summary_notifier': False, 'annotate_messages': True })
-        self.skip_internal_errors = False
-        self.notifier_startup_grace_secs = kNotifierStartupGraceSecs
-        self.defer_startup_notifications = False
 
     async def init2(self):
         # First, initialize enough so that report() will work for internal errors
         #
+
+        # Defaults
+        #
+        self.defaultsError = None
+        self.defaults = DEFAULTS_SCHEMA({ 'reminder_frequency_mins': [60], 'notifier': 'persistent_notification', 'summary_notifier': False, 'annotate_messages': True })
+        self.skip_internal_errors = False
+        self.notifier_startup_grace_secs = kNotifierStartupGraceSecs
+        self.defer_startup_notifications = False
 
         # Try processing just the defaults part of the config, so they'll apply to the internal events we declare, below.
         # report() isn't available yet, so defer error reporting until later in init
@@ -263,58 +267,95 @@ class Alert2Data:
 
             await self.component.async_add_entities([ errorEnt ])
 
-        self.delayedNotifierMgr = DelayedNotifierMgr(self._hass,
-                                                     self.notifier_startup_grace_secs, self.defer_startup_notifications)
+
+        isFirstInit = (self.delayedNotifierMgr is None)
+        if isFirstInit:
+            self.delayedNotifierMgr = DelayedNotifierMgr(self._hass,
+                                                         self.notifier_startup_grace_secs, self.defer_startup_notifications)
             
         # Now that report() is available, continue init that might use it
         
-        loop = asyncio.get_running_loop()
-        # Gives traceback info on asyncio 'Unclosed client session' errors
-        #loop.set_debug(True)
-        oldHandler = loop.get_exception_handler()
-        self.inHandler = False
-        def newHandler(loop, context):
-            if self.inHandler:
-                _LOGGER.error(f'Exception {context}')
-                return
-            self.inHandler = True
-            excMsg = f'Global exception handler: a task died to due to an unhandled exception: '
-            if 'exception' in context:
-                ex = context['exception']
-                excMsg += f'{ex.__class__}: {ex}. '
-            excMsg += f'full context: {context}'
-            report(DOMAIN, 'error', excMsg)
-            if oldHandler:
-                oldHandler(loop, context)
+        if isFirstInit:
+            loop = asyncio.get_running_loop()
+            # Gives traceback info on asyncio 'Unclosed client session' errors
+            #loop.set_debug(True)
+            oldHandler = loop.get_exception_handler()
             self.inHandler = False
-        loop.set_exception_handler(newHandler)
-        self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self.startShutdown)
-        self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.haStartedEv)
+            def newHandler(loop, context):
+                if self.inHandler:
+                    _LOGGER.error(f'Exception {context}')
+                    return
+                self.inHandler = True
+                excMsg = f'Global exception handler: a task died to due to an unhandled exception: '
+                if 'exception' in context:
+                    ex = context['exception']
+                    excMsg += f'{ex.__class__}: {ex}. '
+                excMsg += f'full context: {context}'
+                report(DOMAIN, 'error', excMsg)
+                if oldHandler:
+                    oldHandler(loop, context)
+                self.inHandler = False
+            loop.set_exception_handler(newHandler)
+            self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self.startShutdown)
+            self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.haStartedEv)
         
-        # Maps event name to { dt: datetime when last sent notification, count: events since last notification }
-        self.lastNotifyDict = {}
-        #self.validator = vol.Schema(REPORT_SCHEMA)
-        self._hass.bus.async_listen(EVENT_TYPE, self.handle_event_report)
-        self._hass.services.async_register(DOMAIN, 'report', self.handle_service_report)
-        self._hass.services.async_register(DOMAIN, 'ack_all', self.ackAll)
-        #self._hass.services.async_register(DOMAIN, 'log', self.dolog)
-        self.component.async_register_entity_service(
-            'notification_control',
-            cv.make_entity_service_schema(NOTIFICATION_CONTROL_SCHEMA),
-            "async_notification_control",
-        )
-        self.component.async_register_entity_service(
-            'ack',
-            cv.make_entity_service_schema(ACK_SCHEMA),
-            "async_ack",
-        )
-        self.component.async_register_entity_service(
-            'unack',
-            cv.make_entity_service_schema(UNACK_SCHEMA),
-            "async_unack",
-        )
+            self._hass.bus.async_listen(EVENT_TYPE, self.handle_event_report)
+            self._hass.services.async_register(DOMAIN, 'report', self.handle_service_report)
+            self._hass.services.async_register(DOMAIN, 'ack_all', self.ackAll)
+            #self._hass.services.async_register(DOMAIN, 'log', self.dolog)
+            self.component.async_register_entity_service(
+                'notification_control',
+                cv.make_entity_service_schema(NOTIFICATION_CONTROL_SCHEMA),
+                "async_notification_control",
+            )
+            self.component.async_register_entity_service(
+                'ack',
+                cv.make_entity_service_schema(ACK_SCHEMA),
+                "async_ack",
+            )
+            self.component.async_register_entity_service(
+                'unack',
+                cv.make_entity_service_schema(UNACK_SCHEMA),
+                "async_unack",
+            )
+            async_register_admin_service(
+                self._hass,
+                DOMAIN,
+                SERVICE_RELOAD,
+                self.reload_service_handler,
+            )
+        
         await self.processConfig()
         
+    async def reload_service_handler(self, service_call) -> None:
+        """Reload yaml entities."""
+        # First unload all entities. Start with generators since they'll remove condition alerts
+        for aName in self.generators:
+            agen = self.generators[aName]
+            await self.sensorComponent.async_remove_entity(agen.entity_id)
+        self.generators = {}
+        # then event alerts
+        for domain in self.tracked:
+            for name in self.tracked[domain]:
+                ent = self.tracked[domain][name]
+                await self.component.async_remove_entity(ent.entity_id)
+                ent.destroy()
+        self.tracked = {}
+        # then condition alerts
+        for domain in self.alerts:
+            for name in self.alerts[domain]:
+                ent = self.alerts[domain][name]
+                await self.component.async_remove_entity(ent.entity_id)
+                ent.destroy()
+        self.alerts = {}
+        
+        conf = await self.component.async_prepare_reload(skip_reset=True)
+        if conf is None:
+            conf = {DOMAIN: {}}
+        self._rawConfig = conf[DOMAIN]
+        _LOGGER.info('alert2 re-initing after config reload')
+        await self.init2()
+
     async def processConfig(self):
         # Validate the config in pieces. We want alert2 to successfully initialize no matter how messed up the config is.
         # And if the config has an error, to process the rest of itas much as it can.
@@ -330,14 +371,14 @@ class Alert2Data:
                 return
             cond = obj[name]
             # we haven't done a voluptuous validation yet, so don't know what type cond is
-            if not isinstance(cond, str) or '{{' in cond or '{%' in cond:
+            if not isinstance(cond, str) or template_helper.is_template_string(cond):
                 return
             try:
                 x = cv.boolean(cond) if name == 'condition' else float(cond)
             except (vol.Invalid, ValueError):
                 # it's not a template and not a truthy, so assume it's an entity
                 if '\'' in cond or '"' in cond:
-                    report(DOMAIN, 'error', f'config has {name} that is neither a template nor an entity: {obj}')
+                    report(DOMAIN, 'error', f'config has {name} template that is neither a template nor an entity: {obj}')
                     return
                 # TODO - Not sure if strip() is necessary. Can yaml return extra whitespace?
                 obj[name] = '{{ states("' + cond.strip() + '") }}'

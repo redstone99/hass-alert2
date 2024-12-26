@@ -36,6 +36,7 @@ class FakeConst:
     MINOR_VERSION = 10
     EVENT_HOMEASSISTANT_STOP = 3
     EVENT_HOMEASSISTANT_STARTED = 4
+    SERVICE_RELOAD = 5
 sys.modules['homeassistant.const'] = FakeConst
 class FakeCore:
     class HomeAssistant:
@@ -120,6 +121,9 @@ class FakeHelpers:
                 return value != 0  # type: ignore[comparison-overlap]
             raise vol.Invalid(f"invalid boolean value {value}")
         Template = FakeTemplate
+        @staticmethod
+        def is_template_string(astr):
+            return "{%" in astr or "{{" in astr or "{#" in astr
     class discovery:
         @staticmethod
         def async_load_platform(*args):
@@ -165,6 +169,7 @@ class FakeHA:
                 def __init__(self, logger, domain, hass):
                     self.domain = domain
                     self.hass = hass
+                    self.newCfg = None
                     pass
                 async def async_add_entities(self, ents):
                     for ent in ents: # usualy done by Entity::_async_process_registry_update_or_remove
@@ -173,8 +178,17 @@ class FakeHA:
                         self.hass.states.set(ent.entity_id, ent)
                         await ent.async_added_to_hass()
                     pass
+                async def async_remove_entity(self, entid):
+                    ent = self.hass.states.get(entid)
+                    #_LOGGER.warning(f'async_remove_entity: {entid} -> {ent}')
+                    assert ent, entid
+                    if hasattr(ent, 'async_will_remove_from_hass'):
+                        await ent.async_will_remove_from_hass()
+                    self.hass.states.erase(entid)
                 def async_register_entity_service(self, n1, ss, n2):
                     pass
+                async def async_prepare_reload(self, skip_reset=True):
+                    return self.newCfg
         class event:
             @staticmethod
             def async_track_template_result(hass, trackers, action):
@@ -190,7 +204,7 @@ class FakeHA:
                     updates.append(rez)
                 action(event, updates)
                 #asyncio.get_running_loop().create_task(action(event, updates))
-                return SimpleNamespace(async_refresh = lambda: None)
+                return SimpleNamespace(async_refresh = lambda: None, async_remove = lambda: None)
             class TrackTemplate:
                 def __init__(self, template, variables, rate_limit=None):
                     self.template = template
@@ -211,6 +225,8 @@ class FakeHA:
                     pass
                 async def async_added_to_hass(self):
                     pass
+                async def async_will_remove_from_hass(self):
+                    pass
                 def as_dict(self):
                     # Hack - this is needed only because we don't model States accurately,
                     # storing the ent in it rather than a real State object.
@@ -223,6 +239,10 @@ class FakeHA:
                 return None
         class typing:
             class ConfigType:
+                pass
+        class service:
+            @staticmethod
+            def async_register_admin_service(hass, domain, meth, func):
                 pass
     class util:
         class dt:
@@ -252,6 +272,8 @@ FakeHA.helpers.restore_state.RestoreEntity = RestoreEntity
 class States:
     def __init__(self):
         self.data = {}
+    def erase(self, n):
+        del self.data[n]
     def set(self, n, v):
         self.data[n] = v
     def get(self, n):
@@ -327,6 +349,8 @@ sys.modules['homeassistant.helpers.entity_component'] = FakeHA.helpers.entity_co
 sys.modules['homeassistant.helpers.event'] = FakeHA.helpers.event
 sys.modules['homeassistant.helpers.restore_state'] = FakeHA.helpers.restore_state
 sys.modules['homeassistant.helpers.entity'] = FakeHA.helpers.entity
+sys.modules['homeassistant.helpers.service'] = FakeHA.helpers.service
+sys.modules['homeassistant.helpers.template'] = FakeHelpers.template
 sys.modules['homeassistant.helpers.trigger'] = FakeHA.helpers.trigger
 sys.modules['homeassistant.helpers.typing'] = FakeHA.helpers.typing
 sys.modules['homeassistant.util.dt'] = FakeHA.util.dt
@@ -347,6 +371,25 @@ def getCondTracker(aler):
         return aler.condValTracker
     assert False
 
+def doGeneratorUpdate(aler, rez):
+    setGenerator(aler, rez)
+    try:
+        crez = aler._generator_template.async_render()
+    except FakeExceptions.TemplateError as f:
+        crez = f
+    aler.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                            [ SimpleNamespace(template=aler._generator_template, result=crez) ])
+
+def doFriendlyNameUpdate(aler, rez):
+    setFriendlyName(aler, rez)
+    templ = aler.friendlyNameTracker.cfgList[0]['template']
+    try:
+        crez = templ.async_render()
+    except FakeExceptions.TemplateError as f:
+        crez = f
+    aler.friendlyNameTracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
+                            [ SimpleNamespace(template=templ, result=crez) ])
+    
 def doConditionUpdate(aler, rez):
     #assert isinstance(rez, bool)
     setCondition(aler, rez)
@@ -379,6 +422,10 @@ def doCondValueUpdate(aler, condRez, valRez):
                                [ SimpleNamespace(template=aler._threshold_value_template, result=vrez),
                                  SimpleNamespace(template=aler._condition_template, result=crez) ])
     
+def setFriendlyName(aler, rez):
+    aler.friendlyNameTracker.cfgList[0]['template'].set_value(rez)
+def setGenerator(aler, rez):
+    aler._generator_template.set_value(rez)
 def setValue(aler, rez):
     aler._threshold_value_template.set_value(rez)
 def setCondition(aler, rez):
@@ -2620,15 +2667,14 @@ class Foo(unittest.IsolatedAsyncioTestCase):
 
         
         # And suppose generator is a template and produces an error.  should not change generated alerts.
-        g1.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                                [ SimpleNamespace(template=g1._generator_template, result=FakeExceptions.TemplateError('bogus err')) ] )
+        doGeneratorUpdate(g1, '{{ foo')
         await asyncio.sleep(0.05)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
-        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'generator_g1 generator template threw error: bogus err')
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'generator_g1 generator template threw error: unexpected end')
         self.assertEqual(self.gad.alerts['test']['t55'], t55)
 
-        # suppose template renders to empty string - it's an error
+        # suppose template is missing - it's an error
         g1.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
                                 [ SimpleNamespace(template=None, result='fff') ] )
         await asyncio.sleep(0.05)
@@ -2636,18 +2682,16 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'generator_g1 template not found: None')
         self.assertEqual(self.gad.alerts['test']['t55'], t55)
-
+        
         # template producing same string should not recreate alert
-        g1.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                                [ SimpleNamespace(template=g1._generator_template, result='t55') ] )
+        doGeneratorUpdate(g1, 't55')
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(self.gad.generators), 1)
         self.assertEqual(self.gad.alerts['test']['t55'], t55)
         
         # Now suppose template returns nothing, so alert should disappear
-        g1.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                                [ SimpleNamespace(template=g1._generator_template, result='') ] )
+        doGeneratorUpdate(g1, '')
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(self.gad.alerts['test']), 0)
@@ -2671,8 +2715,7 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(g1.state, 1)
         self.assertEqual(len(nn.await_args_list), perCount)
         # Now suppose a second alert appears
-        g1.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                                [ SimpleNamespace(template=g1._generator_template, result='[ "t56", "t57" ]') ] )
+        doGeneratorUpdate(g1, '[ "t56", "t57" ]' )
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(self.gad.alerts['test']), 2)
@@ -2680,8 +2723,7 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(g1.state, 2)
                 
         # Now suppose template returns nothing, so alert should disappear
-        g1.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                                [ SimpleNamespace(template=g1._generator_template, result='') ] )
+        doGeneratorUpdate(g1, '')
         await asyncio.sleep(0.05)
         self.assertEqual(len(nn.await_args_list), perCount)
         self.assertEqual(len(self.gad.alerts['test']), 0)
@@ -2813,8 +2855,7 @@ class Foo(unittest.IsolatedAsyncioTestCase):
 
         # Pick one and try adding another alert
         g3 = self.gad.generators['g3']
-        g3.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                                [ SimpleNamespace(template=g3._generator_template, result='[ "t64", "t65", "t65a" ]') ] )
+        doGeneratorUpdate(g3, '[ "t64", "t65", "t65a" ]')
         await asyncio.sleep(0.05)
         self.assertEqual(len(self.gad.alerts['test']), 9)
         self.assertTrue(self.gad.alerts['test']['t65a'])
@@ -2944,7 +2985,7 @@ class Foo(unittest.IsolatedAsyncioTestCase):
             # Test if one alert has a render error in domain/name, we don't delete the rest
             { 'domain': 'test',
               'name': '{% if states("sensor.ick") == "on" and genElem == "foo2" %}{{blowup()}}{% else %}{{ genElem }}{% endif %}',
-              'generator_name': 'g16', 'generator': [ 'foo2', 'foo3' ],
+              'generator_name': 'g16', 'generator': '[ "foo2", "foo3" ]',
               'condition': 'off' },
             ]}}
         ahass = FakeHass()
@@ -2972,9 +3013,8 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         foo3 = self.gad.alerts['test']['foo3']
         self.assertTrue('foo3' in self.gad.alerts['test'])
         ahass.states.get('sensor.ick').state = 'on'
-        
-        g16.tracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                                [ SimpleNamespace(template=g16.tracker.cfgList[0]['template'], result='["foo2","foo3"]') ] )
+
+        doGeneratorUpdate(g16, '["foo2","foo3"]')
         await asyncio.sleep(0.05)
         perCount += 1
         self.assertEqual(len(nn.await_args_list), perCount)
@@ -3056,10 +3096,59 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(nn.await_args_list), perCount)
         t71 = self.gad.alerts['test']['t71']
         self.assertEqual(t71.extra_state_attributes['friendly_name2'], 't71yy')
-        t71.friendlyNameTracker._result_cb(SimpleNamespace(context=3, data={ 'entity_id': 'eid' }),
-                                [ SimpleNamespace(template=t71.friendlyNameTracker.cfgList[0]['template'], result='foo71') ] )
+        doFriendlyNameUpdate(t71, 'foo71')
         await asyncio.sleep(0.05)
         self.assertEqual(t71.extra_state_attributes['friendly_name2'], 'foo71')
         
+    async def test_reload(self):
+        cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True, 'reminder_frequency_mins': 0.01}, 'alerts' : [
+            { 'domain': 'test', 'name': 't72', 'condition': 'off' },
+            { 'domain': 'test', 'name': 't73', 'condition': 'off' },
+            { 'domain': 'test', 'name': 't74', 'condition': 'off' }, # will snooze
+            { 'domain': 'test', 'name': 't75', 'condition': 'on' },
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g18', 'generator': [ 't76' ], 'condition':'off' },
+            ], 'tracked': [
+                { 'domain': 'test', 'name': 't77' },
+                { 'domain': 'test', 'name': 't78' },
+            ]}}
+        await self.initCase(cfg)
+        await asyncio.sleep(0.05)
+        perCount = 1
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't75: turned on')
+        now = rawdt.datetime.now(rawdt.timezone.utc)
+        t74 = self.gad.alerts['test']['t74']
+        await t74.async_notification_control(True, now + rawdt.timedelta(seconds=1))
+        entids = self.hass.states.data.keys()
+        self.assertEqual(len(entids), 9) # 1 is alert2.error
+
+        cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True, 'reminder_frequency_mins': 0.01}, 'alerts' : [
+            { 'domain': 'test', 'name': 't72', 'condition': 'off' },
+            { 'domain': 'test', 'name': 't80', 'condition': 'off' },
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g18', 'generator': [ 't81' ], 'condition':'off' },
+            ], 'tracked': [
+                { 'domain': 'test', 'name': 't77' },
+                { 'domain': 'test', 'name': 't82' },
+            ]}}
+        self.gad.component.newCfg = cfg['alert2']
+        await self.gad.reload_service_handler(None)
+        await asyncio.sleep(0.05)
+        entids = list(self.hass.states.data.keys())
+        self.assertEqual(len(entids), 7) # 1 is alert2.error
+        for id in ['alert2.alert2_error', 'alert2.test_t77', 'alert2.test_t82', 'alert2.test_t72',
+                   'alert2.test_t80', 'sensor.alert2generator_g18', 'alert2.test_t81']:
+            self.assertTrue(id in entids)
+
+        cfg = { 'alert2' : {}}
+        self.gad.component.newCfg = cfg['alert2']
+        await self.gad.reload_service_handler(None)
+        await asyncio.sleep(0.05)
+        entids = list(self.hass.states.data.keys())
+        self.assertEqual(len(entids), 1) # 1 is alert2.error
+        for id in ['alert2.alert2_error']:
+            self.assertTrue(id in entids)
+
+            
 if __name__ == '__main__':
     unittest.main()

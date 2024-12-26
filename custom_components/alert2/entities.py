@@ -147,7 +147,6 @@ def getField(fieldName, config, defaults, requireDefault=True):
             raise vol.Invalid(f'Alert {config["domain"]},{config["name"]} config or defaults must specify {fieldName}')
         else:
             return None
-
 def agoStr(secondsAgo):
     if secondsAgo < 1.5*60:
         astr = f'{round(secondsAgo)} s'
@@ -167,7 +166,160 @@ def entNameFromDN(domain, name):
     return f'{domain}_{name}'
 
 
-# An entity, though we won't add to hass
+# cfgList = [ { fieldName, type, template }, .. ]
+class Tracker:
+    class Type(Enum):
+        Bool = 1
+        Str  = 2
+        Float = 3
+        List = 4
+    def __init__(self, parentEnt, hass, alertData, cfgList, cb, extraVariables, early_start):
+        self.hass = hass
+        self.alertData = alertData
+        self.cfgList = cfgList
+        self.trackerInfo = None
+        self._self_ref_update_count = 0
+        self.parentEnt = parentEnt
+        self.earlyStart = early_start
+        self.cb = cb
+        self.extraVariables = extraVariables
+
+    def shutdown(self):
+        if self.trackerInfo:
+            self.trackerInfo.async_remove()
+            self.trackerInfo = None
+    def startup(self) -> None:
+        if self.earlyStart or self.alertData.haStarted:
+            self.startWatching()
+        else:
+            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.startWatchingEv)
+    def refresh(self):
+        self.trackerInfo.async_refresh()
+            
+    def startWatchingEv(self, event):
+        self.hass.loop.call_soon_threadsafe(self.startWatching)
+    def startWatching(self):
+        trackers = []
+        for x in self.cfgList:
+            if isinstance(x['template'], template_helper.Template):
+                pass#trackers.append(TrackTemplate(x['template'], self.extraVariables))
+            else:
+                # So we have a literal of some kind.
+                # Well convert it to a string, then template-ify it.
+                # just so the same code path is used to get the literal back.
+                # a bit wasteful.
+                x['template'] = template_helper.Template(str(x['template']), self.hass)
+            trackers.append(TrackTemplate(x['template'], self.extraVariables))
+        #trackers = [ TrackTemplate(x['template'], self.extraVariables) for x in self.cfgList ]
+        # We use async_track_template_result rather than a higher-level form,
+        # components/template/template_entity:TemplateEntity
+        # because TemplateEntity only starts working once HA has completely started
+        # and we'd like the option of starting watching while HA is starting.
+        info = async_track_template_result(
+            self.hass,
+            trackers,
+            self._result_cb,
+        )
+        self.trackerInfo = info
+        #self.async_on_remove(info.async_remove)  # stop template listeners if ConditionAlert is removed from hass. from helpers/entity.py
+        info.async_refresh() # components/template/temlate_entity.py does this, so I guess we will, though this may not be necessary per docs of async_track_template_result
+        
+    @callback
+    def _result_cb(self, 
+                   event: Event[EventStateChangedData] | None,
+                   updates: list[TrackTemplateResult]) -> None:
+        if event:
+            self.parentEnt.async_set_context(event.context)
+        entity_id = event and event.data["entity_id"]
+        _LOGGER.debug(f'{self.parentEnt.name} template result cb for entity_id={entity_id}')
+        # This is how componnents/template/template_entity.py does cycle detection
+        if entity_id and entity_id == self.parentEnt.entity_id:
+            self._self_ref_update_count += 1
+        else:
+            self._self_ref_update_count = 0
+        if self._self_ref_update_count > 2:
+            upStr = ','.join([ x['fieldName'] for x in self.cfgList ])
+            report(DOMAIN, 'error', f'{self.parentEnt.name} detected template loop. event={event}, updates for [{upStr}]. Skipping render')
+            return
+
+        tresults = [None for x in self.cfgList]
+        for update in updates:
+            template = update.template
+            result = update.result
+            try:
+                cfgIdx = next(i for i,v in enumerate(self.cfgList) if v['template'] == template)
+            except StopIteration:
+                report(DOMAIN, 'error', f'{gAssertMsg} {self.parentEnt.name} template not found: {template} with result={result}')
+                return
+            cfg = self.cfgList[cfgIdx]
+            #_LOGGER.warning(f'  forzz: {self.parentEnt.name} {cfg["fieldName"]} produced "{result}" of type {type(result)} ')
+            if isinstance(result, TemplateError):
+                report(DOMAIN, 'error', f'{self.parentEnt.name} {cfg["fieldName"]} template threw error: {result}')
+                return
+            if result is None:
+                report(DOMAIN, 'error', f'{self.parentEnt.name} {cfg["fieldName"]} template returned None')
+                return
+            # async_track_template_result tracks the result with parse_result=True,
+            # which calls _cached_parse_result, which does some type conversion that
+            # are unecessary and probably risky.
+            # TODO - make async_track_template_result take a parse_result arg
+            #tresults[cfgIdx] = result
+
+        # Now rerender templates that did not get an update.  I suppose we could cache the values
+        for idx, val in enumerate(tresults):
+            if tresults[idx] is None:
+                try:
+                    #_LOGGER.warning(f'renderingzz {self.cfgList[idx]["fieldName"]} with extraVariables={self.extraVariables} and templ={self.cfgList[idx]["template"].template}')
+                    aresult = self.cfgList[idx]['template'].async_render(variables=self.extraVariables, parse_result=False)
+                except TemplateError as err:
+                    report(DOMAIN, 'error', f'{self.parentEnt.name} {self.cfgList[idx]["fieldName"]} template: {err}')
+                    return
+                tresults[idx] = aresult
+            if not isinstance(tresults[idx], str):
+                report(DOMAIN, 'error', f'{gAssertMsg} {self.parentEnt.name} {self.cfgList[idx]["fieldName"]} rendered to {type(tresults[idx])} rather than string')
+                return
+        resultStrs = [x for x in tresults]  # async_render always strips as does I think async_track_template_result
+        #resultStrs = [x.strip() for x in tresults]
+        
+        # Now type convert the results
+        results = [ None for x in resultStrs ]
+        for idx, val in enumerate(resultStrs):
+            if self.cfgList[idx]['type'] == Tracker.Type.Str:
+                rez = str(resultStrs[idx]) # I don't think this conversion can fail
+                if len(rez) == 0:
+                    report(DOMAIN, 'error', f'{self.parentEnt.name} {self.cfgList[idx]["fieldName"]} template rendered to empty string')
+                    return
+                results[idx] =  rez
+            elif self.cfgList[idx]['type'] == Tracker.Type.Bool:
+                try:
+                    abool = template_helper.result_as_boolean(resultStrs[idx])
+                except vol.Invalid as err:
+                    report(DOMAIN, 'error', f'{self.parentEnt.name} {self.cfgList[idx]["fieldName"]} template rendered to "{resultStrs[idx]}", which is not truthy')
+                    return
+                results[idx] = abool
+            elif self.cfgList[idx]['type'] == Tracker.Type.Float:
+                try:
+                    afloat = float(resultStrs[idx])
+                except ValueError:
+                    report(DOMAIN, 'error', f'{self.parentEnt.name} {self.cfgList[idx]["fieldName"]} template rendered to "{resultStrs[idx]}" rather than a float')
+                    return
+                results[idx] = afloat
+            elif self.cfgList[idx]['type'] == Tracker.Type.List:
+                if len(resultStrs[idx]) == 0:
+                    results[idx] = []
+                #elif isinstance(resultStrs[idx], list):
+                #    results[idx] = resultStrs[idx]
+                else:
+                    try:
+                        literalList = ast.literal_eval(resultStrs[idx])
+                    except Exception as ex:  # literal_eval can throw various kinds of exceptions
+                        literalList = resultStrs[idx]
+                    # might not be [ str], will check below.
+                    results[idx] = literalList if isinstance(literalList, list) else [ literalList ]
+
+        self.cb(results)
+        
+                
 class AlertGenerator(SensorEntity):
     _attr_should_poll = False
     _attr_device_class = SensorDeviceClass.DATA_SIZE #'problem'
@@ -179,95 +331,39 @@ class AlertGenerator(SensorEntity):
         self.config = config
         self._attr_name = entNameFromDN(GENERATOR_DOMAIN, self.config["generator_name"])
         self._generator_template = self.config['generator']
-        self.templateTrackerInfo = None
+        self.tracker = Tracker(self, hass, alertData,
+                               [ { 'fieldName': 'generator', 'type': Tracker.Type.List,
+                                   'template': self._generator_template } ], self.update_rez, extraVariables=None, early_start=False)
+                               
         # "name" here is overloaded. There's the 'name' from the domain+name specified in an alert config
         # then there's the 'name' that is the HA entity's name property.
         # Here we're using the entity name
         self.nameEntityMap = {} # Map from name -> ent
         
-    def shutdown(self):
-        if self.templateTrackerInfo:
-            self.templateTrackerInfo.async_remove()
-            self.templateTrackerInfo = None
-
     @property
     def state(self) -> str:
         return len(self.nameEntityMap)
     
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        earlyStart = False  # generators have earlyStart forced to False
-        if earlyStart or self.alertData.haStarted:
-            self.startWatching()
-        else:
-            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.startWatchingEv)
+        self.tracker.startup()
+    async def async_will_remove_from_hass(self) -> None:
+        await super().async_will_remove_from_hass()
+        self.tracker.shutdown()
+        for ent in self.nameEntityMap.values():
+            await self.alertData.component.async_remove_entity(ent.entity_id)
+            self.alertData.undeclareCondition(ent.alDomain, ent.alName) # destroys ent
+        self.nameEntityMap = {}
 
-    def startWatchingEv(self, event):
-        self.hass.loop.call_soon_threadsafe(self.startWatching)
-    def startWatching(self):
-        if isinstance(self._generator_template, list):
-            atask = create_task(self.hass, DOMAIN, self.update(self._generator_template))
-            return
-        trackers = [ TrackTemplate(self._generator_template, None) ]
-        # We use async_track_template_result rather than a higher-level form, components/template/template_entity:TemplateEntity
-        # because TemplateEntity only starts working once HA has completely started and we'd like the generator to start generating while HA is starting.
-        info = async_track_template_result(
-            self.hass,
-            trackers,
-            self._tracker_result_cb,
-        )
-        self.templateTrackerInfo = info
-        #self.async_on_remove(info.async_remove)  # stop template listeners if ConditionAlert is removed from hass. from helpers/entity.py
-        info.async_refresh() # components/template/temlate_entity.py does this, so I guess we will, though this may not be necessary per docs of async_track_template_result
-            
-    @callback
-    def _tracker_result_cb(self, 
-                           event: Event[EventStateChangedData] | None,
-                           updates: list[TrackTemplateResult]):
-        if event:
-            self.async_set_context(event.context)
-        entity_id = event and event.data["entity_id"]
-        _LOGGER.debug(f'Generator result cb for name={self.name}, self.entity_id={self.entity_id} entity_id={entity_id}')
-        # This is how componnents/template/template_entity.py does cycle detection
-        if entity_id and entity_id == self.entity_id:
-            self._self_ref_update_count += 1
-        else:
-            self._self_ref_update_count = 0
-        if self._self_ref_update_count > 2:
-            report(DOMAIN, 'error', f'{self.name} Detected template loop. event={event}. Skipping render')
-            return
-
-        for update in updates:
-            template = update.template
-            result = update.result
-            if isinstance(result, TemplateError):
-                report(DOMAIN, 'error', f'{self.name} generator template threw error: {result}')
-                return
-            if template is None:
-                report(DOMAIN, 'error', f'{gAssertMsg} {self.name} generator template var is None with result={result}')
-                return
-            elif template == self._generator_template:
-                atask = create_task(self.hass, DOMAIN, self.update(result))
-            else:
-                report(DOMAIN, 'error', f'{gAssertMsg} template cb for {self.name} returned unexpected template rez={result} template={template}')
-                
-    async def update(self, result):
-        if isinstance(result, list):
-            _LOGGER.debug(f'{self.name} generator update called with list result={result}')
-            alist = result
-        else:
-            _LOGGER.debug(f'{self.name} generator update called with result="{result}"')
-            result = result.strip()
-            try:
-                literalList = ast.literal_eval(result)
-            except Exception as ex:  # literal_eval can throw various kinds of exceptions
-                literalList = result
-            if len(result) == 0:
-                alist = []
-            else:
-                # might not be [ str], will check below.
-                alist = literalList if isinstance(literalList, list) else [ literalList ]
-                
+    async def async_update(self):
+        await super().async_update()
+        self.tracker.async_refresh()
+        
+    def update_rez(self, results):
+        create_task(self.hass, DOMAIN, self.async_update_rez(results))
+    async def async_update_rez(self, results):
+        alist = results[0]
+        
         # Now see if entities are added or deleted
         needWrite = False
         newEntities = []
@@ -308,15 +404,15 @@ class AlertGenerator(SensorEntity):
                 acfg = dict(self.config) # very shallow copy, don't copy object values
                 acfg['domain'] = domainStr
                 acfg['name'] = nameStr
-                if 'friendly_name' in self.config:
-                    try:
-                        friendlyNameStr = self.config['friendly_name'].async_render(
-                            variables=svars, parse_result=False).strip()
-                        acfg['friendly_name'] = friendlyNameStr
-                    except TemplateError as err:
-                        report(DOMAIN, 'error', f'{self.name} Friendly_name template returned err {err}')
-                        sawError = True
-                        break
+                #if 'friendly_name' in self.config:
+                #    try:
+                #        friendlyNameStr = self.config['friendly_name'].async_render(
+                #            variables=svars, parse_result=False).strip()
+                #        acfg['friendly_name'] = friendlyNameStr
+                #    except TemplateError as err:
+                #        report(DOMAIN, 'error', f'{self.name} Friendly_name template returned err {err}')
+                #        sawError = True
+                #        break
                 _LOGGER.debug(f'{self.name} generator creating alert: {acfg} with vars {svars}')
                 ent = self.alertData.declareCondition(acfg, False, genVars=svars)
                 if ent is not None:
@@ -334,7 +430,8 @@ class AlertGenerator(SensorEntity):
                     # entity no longer in list
                     ent = self.nameEntityMap[aname]
                     _LOGGER.info(f'Generator {self.name} removing alert entity {DOMAIN}.{ent.name}')
-                    await ent.async_remove() # I think this is the complement of async_add_entities
+                    await self.alertData.component.async_remove_entity(ent.entity_id)
+                    #await ent.async_remove() # I think this is the complement of async_add_entities
                     self.alertData.undeclareCondition(ent.alDomain, ent.alName) # destroys ent
                     del self.nameEntityMap[aname]
                     needWrite = True
@@ -372,7 +469,24 @@ class AlertBase(RestoreEntity):
         self._title_template = config['title'] if 'title' in config else None
         self._target_template = config['target'] if 'target' in config else None
         self._data = config['data'] if 'data' in config else None
-        self._friendly_name = config['friendly_name'] if 'friendly_name' in config else None
+        self.earlyStart = config['early_start'] if 'early_start' in config else False
+        if genVars is not None:
+            self.extraVariables = genVars
+        else:
+            self.extraVariables = None
+        self._friendly_name = None
+        self.friendlyNameTracker = None
+        if 'friendly_name' in config:
+            frn = config['friendly_name']
+            # Since friendly_name may be displyed quite early, so if we aren't using templates, then
+            # directly process it
+            if template_helper.is_template_string(frn.template):
+                self.friendlyNameTracker = Tracker(self, hass, alertData,
+                                                   [ { 'fieldName': 'friendly_name', 'type': Tracker.Type.Str,
+                                                       'template': frn } ], self.friendly_name_update, self.extraVariables, self.earlyStart)
+            else:
+                self._friendly_name = frn.template.strip()
+        # else _friendly_name is None
         if self._message_template is not None:
             self._message_template.hass = hass
         if self._done_message_template is not None:
@@ -391,10 +505,6 @@ class AlertBase(RestoreEntity):
         if throttle_fires_per_mins is not None:
             self.movingSum = MovingSum(throttle_fires_per_mins[0], throttle_fires_per_mins[1])
         self.notified_max_on = False
-        if genVars is not None:
-            self.extraVariables = genVars
-        else:
-            self.extraVariables = None
         
         # State restored on restart
         self.last_notified_time = None
@@ -443,7 +553,24 @@ class AlertBase(RestoreEntity):
                         self.notification_control = val
                     else:
                         self.notification_control = dt.parse_datetime(val)
-        
+
+        if self.friendlyNameTracker:
+            self.friendlyNameTracker.startup()
+
+    async def async_will_remove_from_hass(self) -> None:
+        await super().async_will_remove_from_hass()
+        if self.friendlyNameTracker:
+            self.friendlyNameTracker.shutdown()
+    async def async_update(self) -> None:
+        await super().async_update()
+        if self.friendlyNameTracker:
+            self.friendlyNameTracker.refresh()
+    def friendly_name_update(self, results):
+        newname = results[0]
+        if newname != self._friendly_name:
+            self._friendly_name = newname
+            self.async_write_ha_state()
+                        
     @property
     def extra_state_attributes(self):
         baseDict = {
@@ -905,7 +1032,6 @@ class EventAlert(AlertBase):
         self.config = config
         self.hass = hass
         self.detach_trigger = None
-        self.earlyStart = config['early_start'] if 'early_start' in config else False
         
     @property
     def state(self) -> str:
@@ -1301,128 +1427,43 @@ class ConditionAlert(ConditionAlertBase):
             self.threshold_min = config['threshold']['minimum'] if 'minimum' in config['threshold'] else None
             self.threshold_hysteresis = config['threshold']['hysteresis'] if 'hysteresis' in config['threshold'] else None
             self.threshold_exceeded = ThresholdExeeded.Init # to record if we crossed min or max
-        self.earlyStart = config['early_start'] if 'early_start' in config else False
-        self.templateTrackerInfo = None
-        self._self_ref_update_count = 0  # To detect template self-referencing loops
-        
-    async def async_added_to_hass(self) -> None:
-        """Restore state and register callbacks."""
-        await ConditionAlertBase.async_added_to_hass(self)
-        if self.earlyStart or self.alertData.haStarted:
-            self.startWatching()
-        else:
-            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.startWatchingEv)
-
-    def startWatchingEv(self, event):
-        self.hass.loop.call_soon_threadsafe(self.startWatching)
-            
-    def startWatching(self):
-        self.reminder_check()
-        trackers = []
+        templs = []
         if self._condition_template is not None:
-            trackers.append(TrackTemplate(self._condition_template, variables=self.extraVariables))
+            templs.append({'fieldName': 'condition', 'type': Tracker.Type.Bool, 'template': self._condition_template })
         if self._threshold_value_template is not None:
-            trackers.append(TrackTemplate(self._threshold_value_template, variables=self.extraVariables))
+            templs.append({'fieldName': 'value', 'type': Tracker.Type.Float, 'template': self._threshold_value_template })
+        self.condValTracker = Tracker(self, hass, alertData, templs, self.cond_val_update, self.extraVariables, self.earlyStart)
 
-        # We use async_track_template_result rather than a higher-level form, components/template/template_entity:TemplateEntity
-        # because TemplateEntity only starts working once HA has completely started and we'd like to be able to alert while
-        # HA is starting.
-        info = async_track_template_result(
-            self.hass,
-            trackers,
-            self._tracker_result_cb,
-        )
-        self.templateTrackerInfo = info
-        #self.async_on_remove(info.async_remove)  # stop template listeners if ConditionAlert is removed from hass. from helpers/entity.py
-        info.async_refresh() # components/template/temlate_entity.py does this, so I guess we will, though this may not be necessary per docs of async_track_template_result
-
+    async def async_added_to_hass(self) -> None:
+        """Restore extra state attributes on start-up."""
+        await super().async_added_to_hass()
+        self.condValTracker.startup()
     async def async_will_remove_from_hass(self) -> None:
-        if self.templateTrackerInfo is not None:
-            self.templateTrackerInfo.async_remove()
-            self.templateTrackerInfo = None
+        await super().async_will_remove_from_hass()
+        self.condValTracker.shutdown()
     async def async_update(self) -> None:
-        if self.templateTrackerInfo is not None:
-            self.templateTrackerInfo.async_refresh()
-        
-    @callback
-    def _tracker_result_cb(self, 
-                           event: Event[EventStateChangedData] | None,
-                           updates: list[TrackTemplateResult]):
-        self._attr_available = False  # Updated to True, below, if we successfully process the updates
-        if event:
-            self.async_set_context(event.context)
-        entity_id = event and event.data["entity_id"]
-        _LOGGER.debug(f'Result cb for name={self.name}, self.entity_id={self.entity_id} entity_id={entity_id}')
-        if entity_id and entity_id == self.entity_id:
-            self._self_ref_update_count += 1
-        else:
-            self._self_ref_update_count = 0
-        # 2 since we track condition and threshold templates. I would have thought 1 would be fine but maybe
-        # _tracker_result_cb gets called multiple times for same entity_id.
-        # This is how componnents/template/template_entity.py does it.
-        if self._self_ref_update_count > 2:
-            report(DOMAIN, 'error', f'{self.name} Detected template loop. event={event}. Skipping render')
-            return
+        await super().async_update()
+        self.condValTracker.refresh()
 
-        has_condition = False
-        has_threshold = False
-        condition_result = None
-        thresh_result = None
-        for update in updates:
-            template = update.template
-            result = update.result
-            if isinstance(result, TemplateError):
-                report(DOMAIN, 'error', f'{self.name} template {template}: {result}')
+    def cond_val_update(self, results):
+        condition_bool = thresh_val = None
+        if len(results) == 2:
+            condition_bool = results[0]
+            thresh_val = results[1]
+        elif self._condition_template is not None:
+            condition_bool = results[0]
+        else:
+            if self._threshold_value_template is None:
+                report(DOMAIN, 'error', f'{gAssertMsg} {self.name}.  both condition and thresh val template is none')
                 return
-            if template is None:
-                report(DOMAIN, 'error', f'{gAssertMsg} template is None for {self.name}: {result}')
-            elif template == self._condition_template:
-                has_condition = True
-                condition_result = result
-            elif template == self._threshold_value_template:
-                has_threshold = True
-                thresh_result = result
-            else:
-                report(DOMAIN, 'error', f'{gAssertMsg} template cb for {self.name} returned unexpected template rez={result} template={template}')
-            
-        if not has_condition:
-            if self._condition_template is not None:
-                has_condition = True
-                try:
-                    condition_result = self._condition_template.async_render(variables=self.extraVariables, parse_result=False)
-                except TemplateError as err:
-                    report(DOMAIN, 'error', f'{self.name} Condition template: {err}')
-                    return
-        condition_bool = None
-        if has_condition:
-            try:
-                condition_bool = template_helper.result_as_boolean(condition_result)
-            except vol.Invalid as err:
-                report(DOMAIN, 'error', f'{self.name} condition template rendered to "{condition_result}", which is not truthy')
-                return
-                
-        if not has_threshold:
-            if self._threshold_value_template is not None:
-                has_threshold = True
-                try:
-                    thresh_result = self._threshold_value_template.async_render(variables=self.extraVariables, parse_result=False)
-                except TemplateError as err:
-                    report(DOMAIN, 'error', f'{self.name} Threshold value template: {err}')
-                    return
-        thresh_val = None
-        if has_threshold:
-            try:
-                thresh_val = float(thresh_result)
-            except ValueError:
-                report(DOMAIN, 'error', f'{self.name} Threshold value returned "{thresh_result}" rather than a float')
-                return
-            
+            thresh_val = results[0]
+        
         # Now we have a condition_bool|None and a thresh_val|None
         # Figure out new state
         #
         self._attr_available = True
-        if not has_threshold:
-            if not has_condition:
+        if self._threshold_value_template is None:
+            if self._condition_template is None:
                 # Config valudation should prevent this
                 report(DOMAIN, 'error', f'{gAssertMsg} template for {self.name} appears to have neither condition nor threshold test specified')
                 newState = False

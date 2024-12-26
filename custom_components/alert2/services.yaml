@@ -1,3 +1,4 @@
+reload:
 report:
   name: Report Event
   description: Report that an event alert fired
