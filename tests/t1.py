@@ -3143,8 +3143,6 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         # The snooze task should have been canceled
         await asyncio.sleep(2)
         self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
-
-
             
         cfg = { 'alert2' : {}}
         self.gad.component.newCfg = cfg
@@ -3155,6 +3153,34 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         for id in ['alert2.alert2_error']:
             self.assertTrue(id in entids)
 
+    async def test_shutdown(self):
+        cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True, 'reminder_frequency_mins': 0.01}, 'alerts' : [
+            { 'domain': 'test', 'name': 't83', 'condition': 'off' },
+            { 'domain': 'test', 'name': 't84', 'condition': 'on' },
+            { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g19', 'generator': [ 't85' ], 'condition':'off' },
+            ], 'tracked': [
+                { 'domain': 'test', 'name': 't86' },
+            ]}}
+        await self.initCase(cfg)
+        await asyncio.sleep(0.05)
+        perCount = 1
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 't84: turned on')
+        now = rawdt.datetime.now(rawdt.timezone.utc)
+        t74 = self.gad.alerts['test']['t83']
+        await t74.async_notification_control(True, now + rawdt.timedelta(seconds=30))
+        entids = self.hass.states.data.keys()
+        entids = list(self.hass.states.data.keys())
+        self.assertEqual(len(entids), 6) # 1 is alert2.error
+        for id in ['alert2.alert2_error', 'alert2.test_t83', 'alert2.test_t84', 'alert2.test_t85',
+                   'alert2.test_t86', 'sensor.alert2generator_g19']:
+            self.assertTrue(id in entids)
+
+        # Shutdown should stop all tasks, reminders and whatnot
+        self.hass.bus.async_fire(FakeConst.EVENT_HOMEASSISTANT_STOP, 'happy2')
+        await asyncio.sleep(0.2)
+        self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
             
 if __name__ == '__main__':
     unittest.main()
