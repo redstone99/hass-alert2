@@ -58,6 +58,7 @@ moduleLoadTime = dt.now()
 kNotifierStartupGraceSecs = 30  # Default value for notifier_startup_grace_secs
 kStartupWaitPollFactor = 10
 
+
 ##########################################################
 #
 # BEGIN - Utility functions for developers to call
@@ -73,11 +74,12 @@ kStartupWaitPollFactor = 10
 async def declareEventMulti(arr):
     await get_global_hass().data[DOMAIN].declareEventMulti(arr)
 
+    
 ##########################################################
 #
 # END of utility functions. Below this is Alert2 internal code.
 #
-        
+
 NOTIFICATION_CONTROL_SCHEMA = {
     vol.Required("enable"): cv.boolean, #vol.Any(STATE_ON, STATE_OFF, NOTIFICATION_SNOOZE),  ( from homeassistant.const )
     vol.Optional("snooze_until"): cv.datetime,
@@ -206,7 +208,7 @@ class Alert2Data:
         self.binarySensorDict = None
         self.haStarted = False
         self.delayedNotifierMgr = None
-
+        self.declEvMultiArr = [] # cumulative alert configs from all calls to alert.declareEventMulti
 
     async def init2(self):
         # First, initialize enough so that report() will work for internal errors
@@ -356,6 +358,9 @@ class Alert2Data:
         self._rawConfig = conf[DOMAIN]
         _LOGGER.info('alert2 re-initing after config reload')
         await self.init2()
+        # Redo prior calls to declareEventMulti() from other components
+        if self.declEvMultiArr:
+            await self.declareEventMulti(self.declEvMultiArr)
 
     async def processConfig(self):
         # Validate the config in pieces. We want alert2 to successfully initialize no matter how messed up the config is.
@@ -552,6 +557,7 @@ class Alert2Data:
             domain = x['domain']
             if domain not in self.tracked or 'unhandled_exception' not in self.tracked[domain]:
                 entities.append(self.declareEvent(x['domain'], 'unhandled_exception'))
+        self.declEvMultiArr = self.declEvMultiArr + arr
         await self.component.async_add_entities(entities)
         
     #async def dolog(self, call):

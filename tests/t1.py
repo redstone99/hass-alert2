@@ -3181,6 +3181,43 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.hass.bus.async_fire(FakeConst.EVENT_HOMEASSISTANT_STOP, 'happy2')
         await asyncio.sleep(0.2)
         self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
-            
+
+    async def test_declare_event(self):
+        cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True} } }
+        await self.initCase(cfg)
+        await asyncio.sleep(0.05)
+        perCount = 0
+        nn = self.hass.servHandlers['notify.persistent_notification']
+        self.assertEqual(len(nn.await_args_list), perCount)
+
+        await alert2.declareEventMulti([
+            { 'domain': 'test', 'name': 't87' },
+            { 'domain': 'test', 'name': 't88' },
+        ])
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(nn.await_args_list), perCount)
+
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t87'})
+        await asyncio.sleep(0.05)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t87')
+        alert2.report('test', 't88', 'foo')
+        await asyncio.sleep(0.05)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t88: foo')
+        
+        # Try a reload, should preserve the declareEventMulti
+        await self.gad.reload_service_handler(None)
+        await asyncio.sleep(0.05)
+        alert2.report('test', 't88', 'foo')
+        await asyncio.sleep(0.05)
+        perCount += 1
+        self.assertEqual(len(nn.await_args_list), perCount)
+        self.assertRegex(nn.await_args_list[perCount-1].args[0].data['message'], 'Alert2 test_t88: foo')
+
+        
+        
 if __name__ == '__main__':
     unittest.main()
