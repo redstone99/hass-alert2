@@ -45,6 +45,7 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - **Hysteresis**. Reduce spurious alerts as sensors fluctuate.
 - **Template notifiers**. Dynamically specify who gets notified.
 - **Generator patterns**. Dynamically define multiple similar alerts, with wildcard support.
+- **YAML reload**. Update your alert2 config without restarting HA.
 
 Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-alert2/discussions) or file an [Issue](https://github.com/redstone99/hass-alert2/issues).  Or follow the [development thread](https://community.home-assistant.io/t/alert2-a-new-alerting-component).
 
