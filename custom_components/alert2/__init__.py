@@ -26,6 +26,7 @@ import homeassistant.helpers.config_validation as cv
 from   homeassistant.helpers.entity_component import EntityComponent
 from   homeassistant.helpers.typing import ConfigType
 from   homeassistant.helpers import template as template_helper
+from   homeassistant.helpers import trigger as trigger_helper
 import homeassistant.util.dt as dt
 
 from .config import (
@@ -204,7 +205,6 @@ class Alert2Data:
         self.generators = {}
         self.component = EntityComponent[EventAlert](_LOGGER, DOMAIN, hass)
         self.sensorComponent = EntityComponent[AlertGenerator](_LOGGER, 'sensor', hass)
-        self.sensorDict = None
         self.binarySensorDict = None
         self.haStarted = False
         self.delayedNotifierMgr = None
@@ -352,7 +352,7 @@ class Alert2Data:
         self.alerts = {}
         
         conf = await self.component.async_prepare_reload(skip_reset=True)
-        _LOGGER.warning(conf)
+        #_LOGGER.warning(conf)
         if conf is None:
             conf = {DOMAIN: {}}
         self._rawConfig = conf[DOMAIN]
@@ -414,6 +414,8 @@ class Alert2Data:
                 try:
                     if 'trigger' in obj:
                         aCfg = SINGLE_ALERT_SCHEMA_EVENT(obj)
+                        atrig = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger'])
+                        aCfg['trigger'] = atrig
                         newEnt = self.declareEventInt(aCfg)
                     else:
                         aCfg = SINGLE_ALERT_SCHEMA_CONDITION(obj)
@@ -472,9 +474,6 @@ class Alert2Data:
     #        if not self._hass.services.has_service('notify', ann):
     #            report(DOMAIN, 'error', f'notifier notify.{ann} referenced by an alert but is still not avaiable after startup grace period')
             
-    def setSensorDict(self, adict):
-        _LOGGER.debug(f'called setSensorDict')
-        self.sensorDict = adict
     def setBinarySensorDict(self, adict):
         _LOGGER.debug(f'called setBinarySensorDict')
         self.binarySensorDict = adict
