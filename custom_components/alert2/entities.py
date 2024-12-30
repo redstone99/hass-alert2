@@ -1115,23 +1115,26 @@ class EventAlert(AlertBase):
         variables: dict[str, Any] = {"this": this, **(run_variables or {})}
         if self.extraVariables:
             variables.update(self.extraVariables)
-        
         _LOGGER.debug(f'  variables are {variables["trigger"]}')
-        try:
-            # self._condition_template ok to reference cause condition required in the config schema for events
-            rez = self._condition_template.async_render(variables, parse_result=False)
-        except TemplateError as err:
-            report(DOMAIN, 'error', f'{self.name} Condition template: {err}')
-            return
-        _LOGGER.debug(f'Got result: {rez}')
-        try:
-            brez = template_helper.result_as_boolean(rez)
-        except vol.Invalid as err:
-            report(DOMAIN, 'error', f'{self.name} condition template rendered to "{rez}", which is not truthy')
-            return
 
-        #_LOGGER.warning(f' cond={self._condition_template.template} and is {rez} {type(rez)} {brez}')
-        _LOGGER.debug(f'  that became a bool: {brez}')
+        if self._condition_template:
+            try:
+                # self._condition_template ok to reference cause condition required in the config schema for events
+                rez = self._condition_template.async_render(variables, parse_result=False)
+            except TemplateError as err:
+                report(DOMAIN, 'error', f'{self.name} Condition template: {err}')
+                return
+            _LOGGER.debug(f'Got result: {rez}')
+            try:
+                brez = template_helper.result_as_boolean(rez)
+            except vol.Invalid as err:
+                report(DOMAIN, 'error', f'{self.name} condition template rendered to "{rez}", which is not truthy')
+                return
+
+            #_LOGGER.warning(f' cond={self._condition_template.template} and is {rez} {type(rez)} {brez}')
+            _LOGGER.debug(f'  that became a bool: {brez}')
+        else:
+            brez = True
 
         if brez:
             _LOGGER.debug(f'  and event fired')

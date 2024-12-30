@@ -153,7 +153,7 @@ SINGLE_ALERT_SCHEMA_EVENT = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Required('domain'): cv.string,
     vol.Required('name'): cv.string,
     vol.Required('trigger'): cv.TRIGGER_SCHEMA,
-    vol.Required('condition'): cv.template,
+    vol.Optional('condition'): cv.template,
     vol.Optional('early_start'): cv.boolean,
 })
 

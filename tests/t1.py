@@ -1045,6 +1045,8 @@ class Foo(unittest.IsolatedAsyncioTestCase):
             { 'domain': 'test', 'name': 't9z', 'condition': '{{ false }}', 'notifier': '{{ ["sensor.testent"] }}' },
 
         ], } }
+        oldStSecs = alert2.kNotifierStartupGraceSecs
+        alert2.kNotifierStartupGraceSecs += 2  # Need more for this slow test to avoid startup ending too early
         resetModuleLoadTime()
         await self.initCase(cfg)
         self.hass.services.async_register('notify','foo', AsyncMock(name='foo', spec_set=[]))
@@ -1068,6 +1070,7 @@ class Foo(unittest.IsolatedAsyncioTestCase):
             nonlocal fooCount
             perCount += perBump
             fooCount += fooBump
+            _LOGGER.warning(f'testing tname={tname} perCount={perCount}')
             self.assertEqual(len(nn.await_args_list), perCount)
             self.assertEqual(len(nfoo.await_args_list), fooCount)
         
@@ -1137,6 +1140,7 @@ class Foo(unittest.IsolatedAsyncioTestCase):
 
         # We leave lots of alerts on, so kill them
         #self.assertEqual(await self.waitForAllBut(self.oldTasks), 0)
+        alert2.kNotifierStartupGraceSecs = oldStSecs
         
     async def test_throttle(self):
         # Check that default notifier is used
@@ -1983,11 +1987,13 @@ class Foo(unittest.IsolatedAsyncioTestCase):
     async def test_event3(self):
         # Check throttling
         cfg = { 'alert2' : { 'alerts' : [
+            { 'domain': 'test', 'name': 't28a',  'trigger': 'foo', 'message': '{{ 3+4 }}' },
             { 'domain': 'test', 'name': 't28',  'trigger': 'foo', 'condition': '{{ zzz }}' },
             { 'domain': 'test', 'name': 't29',  'trigger': 'foo', 'condition': '{{ zzz }}', 'friendly_name': 'friendly-t29'  },
         ], } }
         await self.initCase(cfg)
         t28 = self.gad.tracked['test']['t28']
+        t28a = self.gad.tracked['test']['t28a']
         t29 = self.gad.tracked['test']['t29']
         nn = self.hass.servHandlers['notify.persistent_notification']
 
@@ -2024,6 +2030,24 @@ class Foo(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(nn.await_args_list[3].args[0].data['message'], 'Alert2 test_t28-no')
         self.assertRegex(nn.await_args_list[4].args[0].data['message'], 'Alert2 alert2_error: undeclared event.*t28-no')
 
+        # try triggering alert without condition
+        await t28a.async_trigger({'trigger': {}}, None, skip_condition=False)
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 6)
+        self.assertRegex(nn.await_args_list[5].args[0].data['message'], 'Alert2 test_t28a: 7')
+        
+        # Reporting bypasses any message
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t28a'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 7)
+        self.assertEqual(nn.await_args_list[6].args[0].data['message'], 'Alert2 test_t28a')
+        await self.hass.services.async_call('alert2','report', {'domain':'test','name':'t28a', 'message': 'foo'})
+        await self.waitForAllBut(self.oldTasks)
+        self.assertEqual(len(nn.await_args_list), 8)
+        self.assertEqual(nn.await_args_list[7].args[0].data['message'], 'Alert2 test_t28a: foo')
+
+
+        
     async def test_condition(self):
         # test pssing entity name instead of template for condition or threshold value
         cfg = { 'alert2' : { 'tracked': [
