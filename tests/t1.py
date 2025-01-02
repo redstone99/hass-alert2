@@ -119,7 +119,8 @@ class FakeHelpers:
             elif isinstance(value, Number):
                 # type ignore: https://github.com/python/mypy/issues/3186
                 return value != 0  # type: ignore[comparison-overlap]
-            raise vol.Invalid(f"invalid boolean value {value}")
+            return False
+            #raise vol.Invalid(f"invalid boolean value {value}")
         Template = FakeTemplate
         @staticmethod
         def is_template_string(astr):

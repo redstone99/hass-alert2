@@ -33,6 +33,7 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - [Front-end UI](#front-end-ui)
 - [Service calls](#service-calls)
 - [Python alerting](#python-alerting)
+- [Contributing](#contributing)
 
 
 ## New features
@@ -716,3 +717,11 @@ taskHandle = alert2.create_task(hass, 'mydomain', testTask())
 taskHandle.cancel()
 ```
 If an unhandled exception occurs, alert2 will fire an alert: `alert2.mydomain_unhandled_exception`.  `declareEventMulti()` automatically declares `mydomain_unhandled_exception` if you haven't already.
+
+## Contributing
+
+There are lots of great ideas for making Alert2 better and we'll take all the help we can get!
+A number of great ideas have arisen on the main [development thread](https://community.home-assistant.io/t/alert2-a-new-alerting-component) as well as on [Github issues](https://github.com/redstone99/hass-alert2/issues).
+
+We happily accept help coding or UI design help.  Ask on that development thread or jump in and submit a PR!
+
