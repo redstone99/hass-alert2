@@ -3,7 +3,7 @@
 # run from repository root directory
 #
 # JTESTDIR=/home/redstone/home-monitoring/homeassistant  ~/tmp/general-env/bin/python3 tests/t1.py Foo.test_ack
-# 
+#
 
 import inspect
 import sys
