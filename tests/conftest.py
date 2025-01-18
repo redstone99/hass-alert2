@@ -10,18 +10,18 @@ class CallCollector:
         self.hass = hass
     def recCall(self, domain, service, service_data):
         self.allCalls.append((domain, service, service_data))
-    def popNotifySearch(self, service, search, rMsg):
+    def popNotifySearch(self, service, search, rMsg, useRegex=True):
         assert len(self.allCalls) > 0
         idx = next((i for i, x in enumerate(self.allCalls) if x[1] == service and search in x[2]['message']), -1)
         assert idx >= 0
-        self.doTest(service, rMsg, idx)
+        self.doTest(service, rMsg, idx, useRegex)
     def popNotifyEmpty(self, service, rMsg):
         self.popNotify(service, rMsg)
         assert self.isEmpty()
     def popNotify(self, service, rMsg):
         assert len(self.allCalls) > 0
         self.doTest(service, rMsg, 0)
-    def doTest(self, service, rMsg, idx):
+    def doTest(self, service, rMsg, idx, useRegex=True):
         tcall = self.allCalls[idx]
         assert tcall[0] == 'notify'
         assert tcall[1] == service
@@ -30,7 +30,10 @@ class CallCollector:
         #_LOGGER.warning(f'   hmm   {x}')
         #x = re.match(rMsg, "Alert2 alert2_error: top-level alert2 config: extra keys not allowed @ data['foo']")
         #_LOGGER.warning(f'   hmm2   {x} {type(tcall[2]["message"])}')
-        assert re.search(rMsg, tcall[2]['message'])
+        if useRegex:
+            assert re.search(rMsg, tcall[2]['message'])
+        else:
+            assert rMsg == tcall[2]['message']
         del self.allCalls[idx]
     def isEmpty(self):
         return len(self.allCalls) == 0

@@ -13,6 +13,7 @@ if os.environ.get('JTESTDIR'):
     sys.path.insert(0, os.environ['JTESTDIR'])
 from custom_components.alert2 import (DOMAIN, Alert2Data)
 import custom_components.alert2 as alert2
+import homeassistant.const
 
 async def test_cfg1(hass):
     assert await async_setup_component(hass, DOMAIN, { 'alert2': {} })
@@ -290,6 +291,9 @@ async def test_notifiers1(hass, service_calls):
     await setAndWait(hass, 'sensor.c', 'on')
     service_calls.popNotifyEmpty('foo2', r'test_t6c: turned on')
 
+def mock_service_foo(call):
+    return None
+
 async def test_notifiers2(hass, service_calls):
     resetModuleLoadTime()
     alert2.kNotifierStartupGraceSecs = 3
@@ -321,8 +325,6 @@ async def test_notifiers2(hass, service_calls):
     service_calls.popNotifyEmpty('persistent_notification', r'test_t7d: turned on')
 
     # Now foo comes around
-    def mock_service_foo(call):
-        return None
     hass.services.async_register('notify', 'foo', mock_service_foo)
     kStartupWaitPollSecs = alert2.kNotifierStartupGraceSecs / alert2.kStartupWaitPollFactor
     await asyncio.sleep(1.2 * kStartupWaitPollSecs)
@@ -356,3 +358,304 @@ async def test_notifiers2(hass, service_calls):
     service_calls.popNotifySearch('foo2', 't7c', r'test_t7c: turned on')
     service_calls.popNotifySearch('foo', 't7c', r'test_t7c: turned on')
     assert service_calls.isEmpty()
+
+async def test_notifiers3(hass, service_calls):
+    resetModuleLoadTime()
+    alert2.kNotifierStartupGraceSecs = 3
+    hass.states.async_set("sensor.a", "off")
+    # Check if default notifier is bad
+    cfg = { 'alert2' : { 'defaults': { 'notifier': 'foo2' }, 'alerts' : [
+        { 'domain': 'test', 'name': 't8a', 'condition': 'sensor.a', 'notifier': 'foo' },
+    ], } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    # notification deferred
+    await setAndWait(hass, 'sensor.a', 'on')
+    assert service_calls.isEmpty()
+
+    # Wait for end of startup period. Error reported, but since foo2 doesn't exist, it falls
+    # back to persistent one
+    await asyncio.sleep(alert2.kNotifierStartupGraceSecs + 0.3)
+    service_calls.popNotifyEmpty('persistent_notification', r'notifiers are not known.*\'foo\'.*"foo2" is not known')
+    
+    # And now if new instance:
+    await setAndWait(hass, 'sensor.a', 'off')
+    service_calls.popNotifyEmpty('persistent_notification', r't8a.*notifier "foo" is not known.*notifier "foo2" is not known')
+
+async def test_notifiers4(hass, service_calls):
+    hass.states.async_set("sensor.a", "off")
+    # Check that default notifier is used
+    cfg = { 'alert2' : { 'defaults': { 'notifier': 'foo' }, 'alerts' : [
+        { 'domain': 'test', 'name': 't9a', 'condition': 'sensor.a' },
+    ], } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    hass.services.async_register('notify', 'foo', mock_service_foo)
+    await setAndWait(hass, 'sensor.a', 'on')
+    service_calls.popNotifyEmpty('foo', r't9a: turned on')
+
+async def test_notifiers5(hass, service_calls):
+    cfg = { 'alert2' : { 'alerts' : [
+        # notifier can be list.
+        # otherwise, jinja2 eval it
+        # need to strip()
+        # ast.eval_literal
+        # if fails, consider a single notifier name (or entity name?)
+        #
+        # if notifier is single string, it either is name of notifier, or something that evaluates with json.loads
+        # First singleton notifiers
+        { 'domain': 'test', 'name': 't9a', 'condition': 'sensor.a', 'notifier': 'foo' },
+        { 'domain': 'test', 'name': 't9b', 'condition': 'sensor.a', 'notifier': 'sensor.testent' },
+        { 'domain': 'test', 'name': 't9b2', 'condition': 'sensor.a', 'notifier': 'sensor.multient' },
+        { 'domain': 'test', 'name': 't9c', 'condition': 'sensor.a', 'notifier': '"foo"' },
+        { 'domain': 'test', 'name': 't9d', 'condition': 'sensor.a', 'notifier': '\'foo\'' },
+        { 'domain': 'test', 'name': 't9e', 'condition': 'sensor.a', 'notifier': '[ "foo" ]' },
+        { 'domain': 'test', 'name': 't9f', 'condition': 'sensor.a', 'notifier': '[ \'foo\' ]' },
+        
+        { 'domain': 'test', 'name': 't9g', 'condition': 'sensor.a', 'notifier': '{{ \'foo\' }}' },
+        { 'domain': 'test', 'name': 't9h', 'condition': 'sensor.a', 'notifier': '{{ "foo" }}' },
+
+        { 'domain': 'test', 'name': 't9i', 'condition': 'sensor.a', 'notifier': '{{ ["foo"] }}' },
+        { 'domain': 'test', 'name': 't9j', 'condition': 'sensor.a', 'notifier': '{{ [\'foo\'] }}' },
+
+        { 'domain': 'test', 'name': 't9k', 'condition': 'sensor.a', 'notifier': '{{ "a" if false else "foo" }}' },
+        { 'domain': 'test', 'name': 't9l', 'condition': 'sensor.a', 'notifier': '{{ "a" if false else "sensor.testent" }}' },
+
+        { 'domain': 'test', 'name': 't9m', 'condition': 'sensor.a', 'notifier': '{% if true %}foo{% endif %}' },
+        { 'domain': 'test', 'name': 't9n', 'condition': 'sensor.a', 'notifier': '{% if true %}{{ ["foo"]}}{% endif %}' },
+
+        # And let's test some error cases
+        # notifier evals to something other than string
+        { 'domain': 'test', 'name': 't9p', 'condition': 'sensor.a', 'notifier': '3' },
+        { 'domain': 'test', 'name': 't9q', 'condition': 'sensor.a', 'notifier': '{ "a": 4 }' },
+        { 'domain': 'test', 'name': 't9r', 'condition': 'sensor.a', 'notifier': '[ 4 ]' },
+        { 'domain': 'test', 'name': 't9s', 'condition': 'sensor.a', 'notifier': '{{ "foo"' },
+        { 'domain': 'test', 'name': 't9t', 'condition': 'sensor.a', 'notifier': '{{ ["foo", 5] }}' },
+        { 'domain': 'test', 'name': 't9u', 'condition': 'sensor.a', 'notifier': '{% if true %}{% endif %}' },
+        { 'domain': 'test', 'name': 't9v', 'condition': 'sensor.a', 'notifier': 'sensor.unavailEnt2' },
+        
+        { 'domain': 'test', 'name': 't9w', 'condition': 'sensor.w', 'notifier': '{{ ["foo", "bar"] }}' },
+        { 'domain': 'test', 'name': 't9x', 'condition': 'sensor.a', 'notifier': 'sensor.unavailEnt' },
+        { 'domain': 'test', 'name': 't9x1', 'condition': 'sensor.a', 'notifier': '[ foo ]' },
+        { 'domain': 'test', 'name': 't9y', 'condition': 'sensor.a', 'notifier': '[ "foo" ' },
+
+        # we don't support ent in a list
+        { 'domain': 'test', 'name': 't9z', 'condition': 'sensor.a', 'notifier': '{{ ["sensor.testent"] }}' },
+
+    ], } }
+    resetModuleLoadTime()
+    #      # Need more for this slow test to avoid startup ending too early
+    alert2.kNotifierStartupGraceSecs = 3
+    hass.states.async_set("sensor.a", "off")
+    hass.states.async_set("sensor.w", "off")
+    hass.services.async_register('notify', 'foo', mock_service_foo)
+    hass.states.async_set("sensor.testent", "foo")
+    hass.states.async_set("sensor.multient", '["foo","persistent_notification"]')
+    hass.states.async_set("sensor.unavailEnt", 'unavailable')
+    hass.states.async_set("sensor.unavailEnt2", None)
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', f'unexpected end of template.*t9s')
+
+    # Turning on alert makes good ones turn on and uncovers errors in the bad ones
+    await setAndWait(hass, 'sensor.a', 'on')
+    for tname in [ 't9a', 't9b', 't9b2', 't9c', 't9d', 't9e', 't9f', 't9g', 't9h', 't9i', 't9j', 't9k', 't9l', 't9m', 't9n' ]:
+        service_calls.popNotifySearch('foo', tname, f'test_{tname}: turned on')
+    service_calls.popNotifySearch('persistent_notification', 't9b2', f'test_t9b2: turned on')
+
+    service_calls.popNotifySearch('persistent_notification', 't9p', f'test_t9p.*not a string')
+    service_calls.popNotifySearch('persistent_notification', 't9q', f'test_t9q.*not a string')
+    service_calls.popNotifySearch('persistent_notification', 't9r', f'test_t9r.*not a string')
+    service_calls.popNotifySearch('persistent_notification', 't9t', f'test_t9t.*not a string')
+    service_calls.popNotifySearch('foo',                     't9t', f'test_t9t: turned on')
+    service_calls.popNotifySearch('persistent_notification', 't9u', f'test_t9u.*empty string')
+    service_calls.popNotifySearch('persistent_notification', 't9v', f'test_t9v.*not a string.*NoneType')
+    service_calls.popNotifySearch('persistent_notification', 't9x1', f'test_t9x1.*illegal characters')
+    service_calls.popNotifySearch('persistent_notification', 't9y', f'test_t9y.*illegal characters')
+
+    #_LOGGER.warning(service_calls.allCalls)
+    
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, 'sensor.w', 'on')
+    service_calls.popNotifySearch('foo','t9w', f'test_t9w: turned on')
+    hass.services.async_register('notify', 'bar', mock_service_foo)
+    kStartupWaitPollSecs = alert2.kNotifierStartupGraceSecs / alert2.kStartupWaitPollFactor
+    await asyncio.sleep(1.2 * kStartupWaitPollSecs)
+    service_calls.popNotifySearch('bar','t9w', f'test_t9w: turned on')
+    assert service_calls.isEmpty()
+
+    # Wait rest of startup grace period
+    await asyncio.sleep(alert2.kNotifierStartupGraceSecs + 0.3)
+    # t9z uses sensor.testent in a list. We don't support detecting that, so sensor.testent is interpreted
+    # literally as a notifier name
+    service_calls.popNotifyEmpty('persistent_notification', f'Following notifiers are not known.*\'unavailable\'.*\'sensor.testent\'')
+
+async def test_throttle(hass, service_calls):
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        { 'domain': 'test', 'name': 't10a', 'condition': 'sensor.a', 'throttle_fires_per_mins': [2, 0.05], 'reminder_frequency_mins':0.01 },
+        { 'domain': 'test', 'name': 't10b', 'condition': 'sensor.b', 'throttle_fires_per_mins': [2, 0.05], 'reminder_frequency_mins':0.01, 'summary_notifier': True },
+    ], } }
+    hass.states.async_set("sensor.a", "off")
+    hass.states.async_set("sensor.b", "off")
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    for summaryEnabled in [ True, False ]:
+        sname = 'sensor.b' if summaryEnabled else 'sensor.a'
+        tname = 't10b' if summaryEnabled else 't10a'
+        for onAtEnd in [ False, True ]:
+            for extraFire in [ False, True ]:
+                _LOGGER.info(f'loop: summaryEnabled={summaryEnabled} onAtEnd={onAtEnd} extraFire={extraFire}')
+                # 2 fires are fine
+                await setAndWait(hass, sname, 'on')
+                await setAndWait(hass, sname, 'off')
+                await setAndWait(hass, sname, 'on')
+                await setAndWait(hass, sname, 'off')
+                service_calls.popNotify('persistent_notification', f'test_{tname}: turned on')
+                service_calls.popNotify('persistent_notification', f'test_{tname}: turned off')
+                service_calls.popNotify('persistent_notification', f'test_{tname}: turned on')
+                service_calls.popNotifyEmpty('persistent_notification', f'test_{tname}: turned off')
+                
+                # 3rd fire should have throttle sign and no turn off or reminders
+                await setAndWait(hass, sname, 'on')
+                service_calls.popNotifyEmpty('persistent_notification', f'Throttling started.*test_{tname}.*turned on')
+                # no reminders
+                await asyncio.sleep(2)
+                assert service_calls.isEmpty()
+
+                if extraFire:
+                    await setAndWait(hass, sname, 'off')
+                    await setAndWait(hass, sname, 'on')
+                if not onAtEnd:
+                    await setAndWait(hass, sname, 'off')
+                await asyncio.sleep(0.1)
+                assert service_calls.isEmpty()
+                
+                await asyncio.sleep(2)
+                # throttle window done.
+                if summaryEnabled:
+                    if onAtEnd:
+                        if extraFire:
+                            service_calls.popNotifyEmpty('persistent_notification', f'Throttling ending] Alert2 test_{tname} fired 1x.*: on for 2 s$')
+                        else:
+                            service_calls.popNotifyEmpty('persistent_notification', f'Throttling ending] Alert2 test_{tname}: on for 4 s$')
+                    else:
+                        service_calls.popNotifyEmpty('persistent_notification', f'Throttling ending] Summary.*test_{tname}.*turned off.*after being on')
+                else:
+                    if onAtEnd:
+                        if extraFire:
+                            service_calls.popNotifyEmpty('persistent_notification', f'Throttling ending] Alert2 test_{tname} fired 1x.*on for 2 s$')
+                        else:
+                            service_calls.popNotifyEmpty('persistent_notification', f'Throttling ending] Alert2 test_{tname}: on for 4 s$')
+                    else:
+                        assert service_calls.isEmpty()
+
+                if onAtEnd:
+                    await setAndWait(hass, sname, 'off')
+                    service_calls.popNotifyEmpty('persistent_notification', f'test_{tname}.*turned off')
+                await hass.async_block_till_done()
+                assert service_calls.isEmpty()
+
+async def test_annotate(hass, service_calls):
+    cfg = { 'alert2' : { 'defaults': { 'reminder_frequency_mins': 0.01 },  'alerts' : [
+        { 'domain': 'test', 'name': 't11a', 'condition': 'sensor.a' },
+        { 'domain': 'test', 'name': 't11b', 'condition': 'sensor.a', 'message': 'ick-t11b' },
+        { 'domain': 'test', 'name': 't11c', 'condition': 'sensor.a', 'message': 'ick-t11c', 'done_message': 'ick-t11c done' },
+        { 'domain': 'test', 'name': 't11d', 'condition': 'sensor.a', 'message': 'ick-t11d', 'annotate_messages': False },
+        { 'domain': 'test', 'name': 't11e', 'condition': 'sensor.a', 'message': 'ick-t11e', 'annotate_messages': False, 'done_message': 'ick-t11e done' },
+        { 'domain': 'test', 'name': 't11f', 'condition': 'sensor.a', 'friendly_name': 'friend_t11f' },
+        { 'domain': 'test', 'name': 't11g', 'condition': 'sensor.a', 'message': 'ick-t11g', 'annotate_messages': False, 'friendly_name': 'friend_t11g' },
+    ], 'tracked': [ { 'domain': 'test', 'name': 't11h' } ] } }
+    hass.states.async_set("sensor.a", "off")
+    resetModuleLoadTime()
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    oldV = (homeassistant.const.MAJOR_VERSION, homeassistant.const.MINOR_VERSION)
+    homeassistant.const.MAJOR_VERSION = 2024
+    homeassistant.const.MINOR_VERSION = 9
+
+    await setAndWait(hass, 'sensor.a', 'on')
+    service_calls.popNotifySearch('persistent_notification', 't11a', '{% raw %}Alert2 test_t11a: turned on{% endraw %}', useRegex=False)
+    service_calls.popNotifySearch('persistent_notification', 't11b', 'Alert2 test_t11b: ick-t11b')
+    service_calls.popNotifySearch('persistent_notification', 't11c', 'Alert2 test_t11c: ick-t11c')
+    service_calls.popNotifySearch('persistent_notification', 't11d', 'ick-t11d')
+    service_calls.popNotifySearch('persistent_notification', 't11e', 'ick-t11e')
+    service_calls.popNotifySearch('persistent_notification', 't11f', 'friend_t11f: turned on')
+    service_calls.popNotifySearch('persistent_notification', 't11g', 'ick-t11g')
+    assert service_calls.isEmpty()
+
+    # reminders
+    await asyncio.sleep(2)
+    await hass.async_block_till_done()
+    service_calls.popNotifySearch('persistent_notification', 't11a', 'Alert2 test_t11a: on for')
+    service_calls.popNotifySearch('persistent_notification', 't11b', 'Alert2 test_t11b: on for')
+    service_calls.popNotifySearch('persistent_notification', 't11c', 'Alert2 test_t11c: on for')
+    service_calls.popNotifySearch('persistent_notification', 't11d', 'Alert2 test_t11d: on for')
+    service_calls.popNotifySearch('persistent_notification', 't11e', 'Alert2 test_t11e: on for')
+    service_calls.popNotifySearch('persistent_notification', 't11f', 'friend_t11f: on for')
+    service_calls.popNotifySearch('persistent_notification', 't11g', 'friend_t11g: on for')
+    assert service_calls.isEmpty()
+        
+    await setAndWait(hass, 'sensor.a', 'off')
+    await asyncio.sleep(1.2)  # Wait for startup delaymgr to expire
+    service_calls.popNotifySearch('persistent_notification', 't11a', 'Alert2 test_t11a: turned off after')
+    service_calls.popNotifySearch('persistent_notification', 't11b', 'Alert2 test_t11b: turned off after')
+    service_calls.popNotifySearch('persistent_notification', 't11c', 'Alert2 test_t11c: ick-t11c done{% endraw')
+    service_calls.popNotifySearch('persistent_notification', 't11e', 'ick-t11e done')
+    service_calls.popNotifySearch('persistent_notification', 't11f', 'friend_t11f: turned off after')
+    # t11d and t11g will have notification messages without any identifying marks
+    service_calls.popNotify('persistent_notification', '{% raw %}turned off after 2 s.{% endraw %}')
+    service_calls.popNotifyEmpty('persistent_notification', '{% raw %}turned off after 2 s.{% endraw %}')
+    assert service_calls.isEmpty()
+
+    # As of 2024.10, HA no longer does template interpretation of message arg to notify
+    homeassistant.const.MAJOR_VERSION = 2024
+    homeassistant.const.MINOR_VERSION = 9
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'t11h', 'message': 'm1'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', '{% raw %}Alert2 test_t11h: m1{% endraw %}')
+    homeassistant.const.MAJOR_VERSION = 2023
+    homeassistant.const.MINOR_VERSION = 11
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'t11h', 'message': 'm2'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', '{% raw %}Alert2 test_t11h: m2{% endraw %}')
+    homeassistant.const.MAJOR_VERSION = 2024
+    homeassistant.const.MINOR_VERSION = 10
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'t11h', 'message': 'm3'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', '^Alert2 test_t11h: m3$')
+    homeassistant.const.MAJOR_VERSION = 2025
+    homeassistant.const.MINOR_VERSION = 5
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'t11h', 'message': 'm4'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', '^Alert2 test_t11h: m4$')
+
+    (homeassistant.const.MAJOR_VERSION, homeassistant.const.MINOR_VERSION) = oldV
+    
+async def test_delay_on(hass, service_calls):
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': 't12a', 'condition': 'sensor.a', 'delay_on_secs': 1, 'reminder_frequency_mins': 0.01 },
+    ], } }
+    hass.states.async_set("sensor.a", "off")
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, 'sensor.a', 'on')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t12a').state == 'off'
+    
