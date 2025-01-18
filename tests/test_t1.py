@@ -656,6 +656,229 @@ async def test_delay_on(hass, service_calls):
     assert service_calls.isEmpty()
 
     await setAndWait(hass, 'sensor.a', 'on')
+    # alert should not have fired
     assert service_calls.isEmpty()
     assert hass.states.get('alert2.test_t12a').state == 'off'
+    # it should fire after 0.9 secs more of sleeping + 1 sec bufer time
+    await asyncio.sleep(2)
+    assert hass.states.get('alert2.test_t12a').state == 'on'
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t12a: turned on')
+    # reminder counts from when turned on, so should be 0.1s into reminder time of 0.6s
+    # so sleeping a bit more shouldn't trigger reminder
+    await asyncio.sleep(0.2)
+    assert service_calls.isEmpty()
+    # Sleeping a bit more should now trigger it
+    await asyncio.sleep(0.8)
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t12a:.*on for')
+    await setAndWait(hass, 'sensor.a', 'off')
+    assert hass.states.get('alert2.test_t12a').state == 'off'
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t12a: turned off')
+
+async def test_threshold(hass, service_calls):
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': 't13a', 'condition': '{{ "xxx" }}', 'threshold': { 'value': "{{ 'zzz' }}", 'hysteresis': 3, 'minimum': 0 } },
+        { 'domain': 'test', 'name': 't13b', 'condition': '{{ true }}', 'threshold': { 'value': "{{ zzz }}", 'hysteresis': 3, 'maximum': 10 } },
+        { 'domain': 'test', 'name': 't13c', 'condition': '{{ true }}', 'threshold': { 'value': "{{ 'zzz' }}", 'hysteresis': 3, 'minimum': 0, 'maximum': 10 } },
+        { 'domain': 'test', 'name': 't13d', 'condition': 'sensor.a', 'threshold': { 'value': "sensor.v", 'hysteresis': 3, 'minimum': 0, 'maximum': 10 } },
+        { 'domain': 'test', 'name': 't13e', 'condition': '{{ states("sensor.b")|int > 4 }}', 'threshold': { 'value': "sensor.b", 'hysteresis': 3, 'minimum': 0, 'maximum': 10 } },
+        { 'domain': 'test', 'name': 't13f', 'condition': 'sensor.min', 'threshold': { 'value': "sensor.v2", 'hysteresis': 3, 'minimum': 0 } },
+        { 'domain': 'test', 'name': 't13g', 'condition': 'sensor.max', 'threshold': { 'value': "sensor.v2", 'hysteresis': 3, 'maximum': 10 } },
+    ], } }
+    hass.states.async_set("sensor.a", "on")
+    hass.states.async_set("sensor.min", "off")
+    hass.states.async_set("sensor.max", "off")
+    hass.states.async_set("sensor.b", "3")
+    hass.states.async_set("sensor.v", "3")
+    hass.states.async_set("sensor.v2", "3")
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+
+    service_calls.popNotifySearch('persistent_notification', 't13a', 't13a.*xxx.*truthy')
+    service_calls.popNotifySearch('persistent_notification', 't13b', 't13b.*value template.*"" rather than a float')
+    service_calls.popNotifySearch('persistent_notification', 't13c', 't13c.*value template.*"zzz" rather than a float')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13a').state == 'off'
+    assert hass.states.get('alert2.test_t13b').state == 'off'
+    assert hass.states.get('alert2.test_t13c').state == 'off'
+    # cond is True, val is ok
+    assert hass.states.get('alert2.test_t13d').state == 'off'
+    assert hass.states.get('alert2.test_t13e').state == 'off'
+
+    await setAndWait(hass, 'sensor.a', 'off')
+    assert service_calls.isEmpty()
+    # Illegal val with false condition
+    await setAndWait(hass, 'sensor.v', 'zz2')
+    service_calls.popNotifySearch('persistent_notification', 't13d', 't13d.*value template.*"zz2" rather than a float')
+    # Now try false, false in various combinations
+    #
+    await setAndWait(hass, 'sensor.v', '1')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13d').state == 'off'
+    #
+    await setAndWait(hass, 'sensor.a', 'false') # update sensor.a without change it's value (off==false)
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13d').state == 'off'
+    #
+    await setAndWait(hass, 'sensor.b', '2') # updates both cond and value at same time.
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13e').state == 'off'
+
+    # Now try cond true, val false
+    #
+    await setAndWait(hass, 'sensor.a', 'on')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13d').state == 'off'
+    await setAndWait(hass, 'sensor.v', '5')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13d').state == 'off'
+    await setAndWait(hass, 'sensor.b', '5') # updates both cond and value at same time.
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13e').state == 'off'
+
+    # Now try false, True in various combinations
+    #
+    await setAndWait(hass, 'sensor.a', 'off')
+    await setAndWait(hass, 'sensor.v', '-1')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13d').state == 'off'
+    await setAndWait(hass, 'sensor.b', '-1') # updates both cond and value at same time.
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13e').state == 'off'
+
+    # Now try with both true
+    #
+    # First cond change turns it on
+    await setAndWait(hass, 'sensor.a', 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13d: turned on')
+    await setAndWait(hass, 'sensor.a', 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13d: turned off')
+    # and now value change turns it on
+    await setAndWait(hass, 'sensor.v', '5')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.a', 'on')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v', '-1')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13d: turned on')
+    await setAndWait(hass, 'sensor.a', 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13d: turned off')
+    # and now both cond & val update turns it on
+    await setAndWait(hass, 'sensor.b', '11')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13e: turned on')
+    await setAndWait(hass, 'sensor.b', '5')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13e: turned off')
+
+    # Now check hysteresis
+    #
+    await setAndWait(hass, 'sensor.v', '5')
+    await setAndWait(hass, 'sensor.a', 'on')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v', '-1')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13d: turned on')
+    # going positive, but still less than 3
+    await setAndWait(hass, 'sensor.v', '1')
+    assert service_calls.isEmpty()
+    # 3 counts from 0, not -1
+    await setAndWait(hass, 'sensor.v', '2.5')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13d').state == 'on'
+    # now turns off
+    await setAndWait(hass, 'sensor.v', '3')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13d: turned off')
+    assert hass.states.get('alert2.test_t13d').state == 'off'
+    
+    # We tested above alert turning off due to condition going false
+
+    # Test max hysteresis
+    await setAndWait(hass, 'sensor.v', '9')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v', '10')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v', '11')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13d: turned on')
+    await setAndWait(hass, 'sensor.v', '10')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13d').state == 'on'
+    await setAndWait(hass, 'sensor.v', '9')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13d').state == 'on'
+    await setAndWait(hass, 'sensor.v', '8')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13d').state == 'on'
+    await setAndWait(hass, 'sensor.v', '7')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13d: turned off')
+    assert hass.states.get('alert2.test_t13d').state == 'off'
+    
+    # Test min-only hysteresis
+    await setAndWait(hass, 'sensor.a', 'off')
+    await setAndWait(hass, 'sensor.min', 'on')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v2', '11')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v2', '-1')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13f: turned on')
+    await setAndWait(hass, 'sensor.v2', '2')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v2', '3')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13f: turned off')
+
+    # Test max-only hysteresis
+    await setAndWait(hass, 'sensor.min', 'off')
+    await setAndWait(hass, 'sensor.max', 'on')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v2', '-1')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v2', '11')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13g: turned on')
+    await setAndWait(hass, 'sensor.v2', '8')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v2', '7')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13g: turned off')
+
+    # Check if turn off by going into hysteresis region of opposite side
+    await setAndWait(hass, 'sensor.max', 'off')
+    await setAndWait(hass, 'sensor.a', 'on')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v', '-1')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13d: turned on')
+    await setAndWait(hass, 'sensor.v', '9')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13d: turned off')
+    # and in other direction
+    await setAndWait(hass, 'sensor.v', '11')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13d: turned on')
+    await setAndWait(hass, 'sensor.v', '1')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13d: turned off')
+    
+    # And test if jump from pole to pole
+    await setAndWait(hass, 'sensor.v', '-1')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13d: turned on')
+    await setAndWait(hass, 'sensor.v', '11')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v', '9')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v', '-1')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v', '5')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13d: turned off')
+
+    # No threshold tracking even when condition is false
+    await setAndWait(hass, 'sensor.a', 'off')
+    await setAndWait(hass, 'sensor.v', '-1')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v', '1')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.a', 'on')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13d').state == 'off'
+    # And from max
+    await setAndWait(hass, 'sensor.a', 'off')
+    await setAndWait(hass, 'sensor.v', '11')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v', '9')
+    assert service_calls.isEmpty()
+    # condition true, we don't track hysteresis coming from above max, so no turn on
+    await setAndWait(hass, 'sensor.a', 'on')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t13d').state == 'off'
+
     
