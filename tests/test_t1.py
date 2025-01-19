@@ -4,6 +4,7 @@
 #from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 import os
+import re
 import sys
 import asyncio
 import logging
@@ -16,6 +17,7 @@ from custom_components.alert2 import (DOMAIN, Alert2Data)
 import custom_components.alert2 as alert2
 import custom_components.alert2.entities as a2Entities
 import homeassistant.const
+from homeassistant import config as conf_util
 
 async def test_cfg1(hass):
     assert await async_setup_component(hass, DOMAIN, { 'alert2': {} })
@@ -1955,3 +1957,253 @@ async def test_generator5(hass, service_calls):
     assert gad.alerts['test']['foo3c'].state == 'off'
     # g15 does not add a new alert
     assert g15.state == 1
+
+async def test_generator6(hass, service_calls):
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g15',
+          'generator': [ 'foo1' ],
+          'friendly_name': '{{ genElem }}zz', 'condition': 'sensor.a' },
+        # Test if one alert has a render error in domain/name, we don't delete the rest
+        { 'domain': 'test',
+          'name': '{% if states("sensor.ick") == "on" and genElem == "foo2" %}{{blowup()}}{% else %}{{ genElem }}{% endif %}',
+          'generator_name': 'g16', 'generator': '{{ states("sensor.g") }}',
+          'condition': 'off' },
+        ]}}
+    hass.states.async_set("sensor.a", 'off')
+    hass.states.async_set("sensor.g", '[ "foo2", "foo3" ]')
+    hass.states.async_set("sensor.ick", 'off')
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    
+    gad = hass.data[DOMAIN]
+    assert len(gad.generators) == 2
+    g15 = gad.generators['g15']
+    assert g15.state == 1
+    foo1 = gad.alerts['test']['foo1']
+    assert foo1.state == 'off'
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', '^foo1zz: turned on')
+
+    g16 = gad.generators['g16']
+    assert g16.state == 2
+    foo2 = gad.alerts['test']['foo2']
+    foo3 = gad.alerts['test']['foo3']
+    assert 'foo3' in gad.alerts['test']
+
+    await setAndWait(hass, "sensor.ick", 'on')
+    assert service_calls.isEmpty()
+
+    #_LOGGER.warning('\n\n')
+    await setAndWait(hass, "sensor.g", '[ "foo2", "foo3", "foo4" ]')
+    service_calls.popNotifyEmpty('persistent_notification', 'blowup\' is undefined')
+    # Here's the crux of the test.  generator had a render error while processing "foo2"
+    # so neither foo2 nor foo3 should be deleted.
+    assert 'foo2' in gad.alerts['test']
+    assert 'foo3' in gad.alerts['test']
+
+async def test_generator7(hass, service_calls):
+    # Test that generators don't start generating until HA has fully started
+    cfg = { 'alert2' : { 'alerts' : [
+        # test config err where generator missing condition
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g16',
+          'generator': [ 'foo1' ] },
+        # test generator doesn't gen till HA started
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g17',
+          'generator': [ 'foo1' ], 'condition': 'off' },
+        # test conditions don't start firing till HA started if early_start is False
+        { 'domain': 'test', 'name': 't68', 'condition': True, 'early_start': False },
+        { 'domain': 'test', 'name': 't69', 'condition': True, 'early_start': True },
+        ], 'tracked': [
+            # Our test harness isn't fancy enough to be able to test early_start
+            # for event alerts
+        ]}}
+    hass.states.async_set("sensor.a", 'off')
+    hass.states.async_set("sensor.g", '[ "foo2", "foo3" ]')
+    hass.states.async_set("sensor.ick", 'off')
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_block_till_done()
+
+    service_calls.popNotifySearch('persistent_notification', 't69', 't69.* turned on')
+    service_calls.popNotifyEmpty('persistent_notification', 'must contain at least one of.*g16')
+
+    gad = hass.data[DOMAIN]
+    assert len(gad.generators) == 1
+    g17 = gad.generators['g17']
+    assert g17.state == 0
+    assert 'foo1' not in gad.alerts['test']
+    assert gad.alerts['test']['t68'].state == 'off'
+    assert gad.alerts['test']['t69'].state == 'on'
+
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert g17.state == 1
+    foo1 = gad.alerts['test']['foo1']
+    assert foo1.state == 'off'
+    assert gad.alerts['test']['t68'].state == 'on'
+    assert gad.alerts['test']['t69'].state == 'on'
+    service_calls.popNotifyEmpty('persistent_notification', 't68.* turned on')
+
+async def test_late_state(hass, service_calls):
+    cfg = { 'alert2' : { 'alerts' : [
+        # Check that template condition still becomes states("sensor.ick") even if sensor.ick doesn't yet exist
+        # when the alert is created.
+        { 'domain': 'test', 'name': 't70', 'condition': 'sensor.ick' },
+        ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 't70 condition template rendered to "unknown", which is not truthy')
+    gad = hass.data[DOMAIN]
+    t70 = gad.alerts['test']['t70']
+    assert re.search('states."sensor.ick"', t70._condition_template.template)
+    
+async def test_friendlyname(hass, service_calls):
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': 't71', 'friendly_name': '{{ states("sensor.ick") }}', 'condition': 'off' },
+        ]}}
+    hass.states.async_set("sensor.ick", 't71yy')
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+
+    t71 = gad.alerts['test']['t71']
+    assert t71.extra_state_attributes['friendly_name2'] == 't71yy'
+    await setAndWait(hass, "sensor.ick", 'foo71')
+    assert t71.extra_state_attributes['friendly_name2'] == 'foo71'
+    
+async def test_reload(hass, service_calls, monkeypatch):
+    cfg = { 'alert2' : { 'notifier_startup_grace_secs': 1.0,
+                         'defaults': { 'summary_notifier': True, 'reminder_frequency_mins': 0.01}, 'alerts' : [
+        { 'domain': 'test', 'name': 't72', 'condition': 'off' },
+        { 'domain': 'test', 'name': 't73', 'condition': 'off' },
+        { 'domain': 'test', 'name': 't74', 'condition': 'off' }, # will snooze
+        { 'domain': 'test', 'name': 't75', 'condition': 'on' },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g18', 'generator': [ 't76' ], 'condition':'off' },
+        ], 'tracked': [
+            { 'domain': 'test', 'name': 't77' },
+            { 'domain': 'test', 'name': 't78' },
+        ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 't75: turned on')
+    gad = hass.data[DOMAIN]
+
+    now = rawdt.datetime.now(rawdt.timezone.utc)
+    t74 = gad.alerts['test']['t74']
+    await hass.services.async_call('alert2','notification_control',
+        {'entity_id': 'alert2.test_t74', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=30) })
+    await hass.async_block_till_done()
+    entids = hass.states.async_entity_ids()
+    _LOGGER.warning(entids)
+    assert len(entids) == 10 # 1 is alert2.error, 1 is binary_sensor.alert2_ha_startup_done
+    assert t74.future_notification_info is not None
+    
+    cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True, 'reminder_frequency_mins': 0.01}, 'alerts' : [
+        { 'domain': 'test', 'name': 't72', 'condition': 'off' },
+        { 'domain': 'test', 'name': 't80', 'condition': 'off' },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g18', 'generator': [ 't81' ], 'condition':'off' },
+        ], 'tracked': [
+            { 'domain': 'test', 'name': 't77' },
+            { 'domain': 'test', 'name': 't82' },
+        ]}}
+    #gad.component.newCfg = cfg
+    async def fake_cfg(thass):
+        return cfg
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    
+    entids = hass.states.async_entity_ids()
+    assert len(entids) == 8 # 1 is alert2.error, 1 is binary_sensor.alert2_ha_startup_done
+    for id in ['alert2.alert2_error', 'binary_sensor.alert2_ha_startup_done', 'alert2.test_t77',
+               'alert2.test_t82', 'alert2.test_t72',
+               'alert2.test_t80', 'sensor.alert2generator_g18', 'alert2.test_t81']:
+        assert id in entids
+    # The snooze task should have been canceled
+    assert t74.future_notification_info is None
+    
+    cfg = { 'alert2' : {}}
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    entids = hass.states.async_entity_ids()
+    assert len(entids) == 2 # 1 is alert2.error
+    for id in ['alert2.alert2_error', 'binary_sensor.alert2_ha_startup_done']:
+        assert id in entids
+
+async def test_shutdown(hass, service_calls):
+    cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True, 'reminder_frequency_mins': 0.01}, 'alerts' : [
+        { 'domain': 'test', 'name': 't83', 'condition': 'off' },
+        { 'domain': 'test', 'name': 't84', 'condition': 'on' },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g19', 'generator': [ 't85' ], 'condition':'off' },
+        ], 'tracked': [
+            { 'domain': 'test', 'name': 't86' },
+        ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 't84: turned on')
+    gad = hass.data[DOMAIN]
+    now = rawdt.datetime.now(rawdt.timezone.utc)
+    await hass.services.async_call('alert2','notification_control',
+        {'entity_id': 'alert2.test_t83', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=30) })
+    await hass.async_block_till_done()
+    t83 = gad.alerts['test']['t83']
+    t84 = gad.alerts['test']['t84']
+    entids = hass.states.async_entity_ids()
+    assert len(entids) == 7 # 1 is alert2.error, 1 for binary_sensor.alert2_ha_startup_done
+    for id in ['alert2.alert2_error', 'binary_sensor.alert2_ha_startup_done',
+               'alert2.test_t83', 'alert2.test_t84', 'alert2.test_t85',
+               'alert2.test_t86', 'sensor.alert2generator_g19']:
+        assert id in entids
+
+    # Shutdown should stop all tasks, reminders and whatnot
+    assert t83.future_notification_info is not None
+    assert t84.future_notification_info is not None
+    await hass.async_stop()
+    await hass.async_block_till_done()
+    assert t83.future_notification_info is None
+    assert t84.future_notification_info is None
+
+async def test_declare_event(hass, service_calls, monkeypatch):
+    cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True} } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    
+    await alert2.declareEventMulti([
+        { 'domain': 'test', 'name': 't87' },
+        { 'domain': 'test', 'name': 't88' },
+    ])
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'t87'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t87')
+    alert2.report('test', 't88', 'foo')
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t88: foo')
+    
+    # Try a reload, should preserve the declareEventMulti
+    gad = hass.data[DOMAIN]
+    assert gad.tracked['test']['t88']
+    async def fake_cfg(thass):
+        return cfg
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    assert gad.tracked['test']['t88']
+    alert2.report('test', 't88', 'foo')
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t88: foo')
