@@ -15,13 +15,13 @@ class CallCollector:
         idx = next((i for i, x in enumerate(self.allCalls) if x[1] == service and search in x[2]['message']), -1)
         assert idx >= 0
         self.doTest(service, rMsg, idx, useRegex)
-    def popNotifyEmpty(self, service, rMsg):
-        self.popNotify(service, rMsg)
+    def popNotifyEmpty(self, service, rMsg, extraFields=None):
+        self.popNotify(service, rMsg, extraFields=extraFields)
         assert self.isEmpty()
-    def popNotify(self, service, rMsg):
+    def popNotify(self, service, rMsg, extraFields=None):
         assert len(self.allCalls) > 0
-        self.doTest(service, rMsg, 0)
-    def doTest(self, service, rMsg, idx, useRegex=True):
+        self.doTest(service, rMsg, 0, extraFields=extraFields)
+    def doTest(self, service, rMsg, idx, useRegex=True, extraFields=None):
         tcall = self.allCalls[idx]
         assert tcall[0] == 'notify'
         assert tcall[1] == service
@@ -34,6 +34,13 @@ class CallCollector:
             assert re.search(rMsg, tcall[2]['message'])
         else:
             assert rMsg == tcall[2]['message']
+        if extraFields:
+            for i, (key, val) in enumerate(extraFields.items()):
+                assert key in tcall[2]
+                if isinstance(val, dict):
+                    assert val == tcall[2][key]
+                else:
+                    assert re.search(val, tcall[2][key])
         del self.allCalls[idx]
     def isEmpty(self):
         return len(self.allCalls) == 0
@@ -47,7 +54,7 @@ def auto_patch_service_call(enable_custom_integrations, hass, monkeypatch):
     # runs.
     originalCall = ServiceRegistry.async_call
     async def mock_async_call(registryObj, domain, service, service_data, *args, **kwargs):
-        _LOGGER.warning(f'got call to {domain}.{service} with data={service_data}')
+        #_LOGGER.warning(f'got call to {domain}.{service} with data={service_data}')
         if domain == 'notify':
             cc.recCall(domain, service, service_data)
             return None
@@ -63,8 +70,9 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 
 # Make sure at end of each test there are no extra notifications we haven't processed
 @pytest.fixture(autouse=True)
-def auto_check_empty_calls(service_calls):
+async def auto_check_empty_calls(hass, service_calls):
     yield
+    await hass.async_block_till_done()
     assert service_calls.isEmpty()
     
 # work-around to unblock access to listen on port 8123.
