@@ -1624,8 +1624,8 @@ async def test_snooze2(hass, service_calls):
 async def test_generator(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True}, 'alerts' : [
         { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't55a', 'condition': 'sensor.a',  },
-        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g2', 'generator': 'sensor.g', 'condition': 'sensor.a',  },
-        { 'domain': 'test', 'name': '{{ genElem }}z', 'generator_name': 'g3', 'generator': 'sensor.g3', 'condition': 'sensor.a',  },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g2', 'generator': '{{ states("sensor.g") }}', 'condition': 'sensor.a',  },
+        { 'domain': 'test', 'name': '{{ genElem }}z', 'generator_name': 'g3', 'generator': '{{ states("sensor.g3") }}', 'condition': 'sensor.a',  },
     ] } }
     hass.states.async_set("sensor.a", "off")
     hass.states.async_set("sensor.g", "")
@@ -1635,7 +1635,7 @@ async def test_generator(hass, service_calls):
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     gad = hass.data[DOMAIN]
-    assert len(self.gad.generators) == 3
+    assert len(gad.generators) == 3
 
     # First generation happens
     assert len(gad.alerts['test']) == 1
@@ -1660,7 +1660,8 @@ async def test_generator(hass, service_calls):
     assert service_calls.isEmpty()
     # and now have generator produce a mess
     await setAndWait(hass, "sensor.g", "[ 'a")
-    service_calls.popNotifyEmpty('persistent_notification', 'generator_g2 generator template threw error: unexpected end')
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'alert2generator_g2 Name template.*illegal characters')
     assert gad.alerts['test']['t55b'] == t55b
     assert hass.states.get(t55b.entity_id)
     assert g2.state == 1
@@ -1686,13 +1687,13 @@ async def test_generator(hass, service_calls):
     assert not 't56' in gad.alerts['test']
     # let first generation happen
     t56z = gad.alerts['test']['t56z']
-    g3 = self.gad.generators['g3']
+    g3 = gad.generators['g3']
     assert g3.state == 1
     # Now suppose a second alert appears
     await setAndWait(hass, "sensor.g3", "['t56','t57']")
     assert service_calls.isEmpty()
     assert g3.state == 2
-    t57z = self.gad.alerts['test']['t57z']
+    t57z = gad.alerts['test']['t57z']
     assert hass.states.get(t57z.entity_id)
     # And one disappears
     await setAndWait(hass, "sensor.g3", "['t57']")
@@ -1710,3 +1711,247 @@ async def test_generator(hass, service_calls):
     assert not 't57z' in gad.alerts['test']
     assert not hass.states.get(t56z.entity_id)
     assert not hass.states.get(t57z.entity_id)
+
+async def test_generator2(hass, service_calls):
+    # Try templating of genElem variable
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't57',
+          'condition': 'sensor.a',
+          # If genElem doesn't resolve to 't57', then we'll pick the wrong notifier
+          'notifier': '{% if genElem == "t57" %}persistent_notification{% else %}foo{% endif %}',
+          'title': '{{ genElem }}tt', 'target': '{{ genElem }}tar',
+          'message': '{{ genElem }}msg{{ genEntityId}}z', # genEntityId should be empty
+          'done_message': '{{ genElem }}dmsg',
+         },
+        # duplicate g1
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't57zz',
+          'condition': '{{ zzz }}',
+         },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g2', 'generator': 't58',
+          'condition': '{{ true }}',
+          'threshold': {
+              'value': '{% if genElem == "zzz" %}10{% else %}5{% endif %}',
+              'hysteresis': 2,
+              'maximum': 9
+          },
+         },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g3', 'generator': 't59a',
+          'condition': '{{ genElem == "t59a" }}',
+         },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g4', 'generator': 't59b',
+          'condition': '{{ genElem == states("sensor.v2") }}',
+         },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g5', 'generator': 't59c',
+          'condition': '{{ true }}',
+          'threshold': {
+              'value': '{% if genElem == states("sensor.v") %}10{% else %}5{% endif %}',
+              'hysteresis': 2,
+              'maximum': 9
+          },
+         },
+    ] } }
+    hass.states.async_set("sensor.a", "off")
+    hass.states.async_set("sensor.v", "1")
+    hass.states.async_set("sensor.v2", "1")
+    hass.services.async_register('notify','foo', mock_service_foo)
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    gad = hass.data[DOMAIN]
+    service_calls.popNotifySearch('persistent_notification', 't59a', 'Alert2 test_t59a: turned on')
+    service_calls.popNotifyEmpty('persistent_notification', 'Duplicate generator name=g1')
+
+    # first generations happenned
+    assert len(gad.alerts['test']) == 5
+    assert not 'tracked' in gad.alerts
+    t57 = gad.alerts['test']['t57']
+    t58 = gad.alerts['test']['t58']
+    t59a = gad.alerts['test']['t59a']
+    t59b = gad.alerts['test']['t59b']
+    t59c = gad.alerts['test']['t59c']
+    assert len(gad.generators) == 5
+    g1 = gad.generators['g1']
+    g2 = gad.generators['g2']
+    g3 = gad.generators['g3']
+    g4 = gad.generators['g4']
+    g5 = gad.generators['g5']
+    assert g1.state == 1
+    assert g2.state == 1
+    assert g3.state == 1
+    assert g4.state == 1
+    assert g5.state == 1
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", "on")
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t57: t57msgz',
+                                 extraFields={ 'title': 't57tt', 'target': 't57tar' })
+    # Check done_message
+    await setAndWait(hass, "sensor.a", "off")
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t57: t57dmsg',
+                                 extraFields={ 'title': 't57tt', 'target': 't57tar' })
+    # So we've tested genElem in name, title, target, message, done_message, notifier.
+
+    await setAndWait(hass, "sensor.v", "t59c")
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t59c: turned on')
+    await setAndWait(hass, "sensor.v", "t59cz")
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t59c: turned off')
+
+    await setAndWait(hass, "sensor.v2", "t59b")
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t59b: turned on')
+    await setAndWait(hass, "sensor.v2", "t59bb")
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t59b: turned off')
+    # And now checked genElem in condition and value.
+
+async def test_generator3(hass, service_calls):
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't61',
+          'condition': '{{ False }}' },
+        { 'domain': 'test', 'name': '{{ genRaw }}', 'generator_name': 'g1a', 'generator': 't61a',
+          'condition': '{{ False }}' },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g2', 'generator': [ "t62", "t63" ],
+          'condition': 'sensor.b' },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g3', 'generator': '{{ states("sensor.a") }}',
+          'condition': '{{ False }}' },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g4', 'generator': '{{ [ "t66", "t67" ] }}',
+          'condition': '{{ False }}' },
+    ] } }
+    hass.states.async_set("sensor.a", '[ "t64", "t65" ]')
+    hass.states.async_set("sensor.b", 'off')
+    hass.services.async_register('notify','foo', mock_service_foo)
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+
+    assert len(gad.alerts['test']) == 8
+    assert not 'tracked' in gad.alerts
+    for id in [ 't61', 't61a', 't62', 't63', 't64', 't65', 't66', 't67' ]:
+        assert gad.alerts['test'][id]
+    assert len(gad.generators) ==  5
+    for id in [ 'g1', 'g1a', 'g2', 'g3', 'g4' ]:
+        assert gad.generators[id]
+
+    # Pick one and try adding another alert
+    g3 = gad.generators['g3']
+    await setAndWait(hass, "sensor.a", '[ "t64", "t65", "t65a" ]')
+    assert len(gad.alerts['test']) == 9
+    assert gad.alerts['test']['t65a']
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.b", 'on')
+    service_calls.popNotifySearch('persistent_notification', 't62', 'Alert2 test_t62: turned on')
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t63: turned on')
+
+async def test_generator4(hass, service_calls):
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g5', 'generator': '{{ foo ',
+          'condition': 'off' } ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'invalid template.*g5')
+
+async def test_generator4a(hass, service_calls):
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': '{{ genElem ', 'generator_name': 'g6', 'generator': 'foo',
+          'condition': 'off' },
+        { 'domain': 'test', 'name': '{{ zz() }}', 'generator_name': 'g7', 'generator': 'foo',
+          'condition': 'off' },
+        { 'domain': '{{ genElem', 'name': 'yay', 'generator_name': 'g8', 'generator': 'foo',
+          'condition': 'off' },
+        { 'domain': '{{ zz() }}', 'name': 'yay', 'generator_name': 'g9', 'generator': 'foo',
+          'condition': 'off' },
+        { 'domain': '{{ genElem }}dd', 'name': '{{genElem}}nn', 'generator_name': 'g10', 'generator': 'foo',
+          'condition': 'off' } ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    
+    service_calls.popNotifySearch('persistent_notification', 'g6', 'invalid template.*\'name\'.*g6')
+    service_calls.popNotifySearch('persistent_notification', 'g7', 'g7 Name template returned err.*zz.*undefined')
+    service_calls.popNotifySearch('persistent_notification', 'g8', 'invalid template.*\'domain\'.*g8')
+    service_calls.popNotifyEmpty('persistent_notification', 'g9 Domain template returned err.*zz.*undefined')
+    gad = hass.data[DOMAIN]
+    assert len(gad.generators) == 3
+    #assert gad.generators['g6'].state == 0
+    assert gad.generators['g7'].state == 0
+    #assert gad.generators['g8'].state == 0
+    assert gad.generators['g9'].state == 0
+    assert gad.generators['g10'].state == 1
+    assert gad.alerts['foodd']['foonn'].state == 'off'
+
+async def test_generator5(hass, service_calls):
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': '{{ genGroups[0] }}', 'generator_name': 'g11',
+          'generator': "{{ states|entity_regex('sensor.(.*)_bar')|list }}",
+          'condition': 'off' },
+        { 'domain': 'test', 'name': '{{ genGroups[0] }}a', 'generator_name': 'g12',
+          'generator': "{{ states|entity_regex('sensor.(.*)_bar')|list }}",
+          'message': 'aa={{genGroups[0]}} and bb={{genEntityId}} and cc={{genRaw}}',
+          'condition': '{{ states("sensor.z_"+genGroups[0]) }}' },  # e.g. sensor.z_foo1
+        # No group
+        { 'domain': 'test', 'name': '{{ genGroups[0] }}b', 'generator_name': 'g13',
+          'generator': "{{ states|entity_regex('sensor..*_bar')|list }}",
+          'condition': 'off' },
+        { 'domain': 'test', 'name': '{{ genGroups[0] }}c', 'generator_name': 'g14',
+          'generator': "{{ states|entity_regex('sensor.(.*)_bar')|list }}",
+          'condition': '{{ states(genEntityId) }}' },
+        # Check genEntityId auto-populates
+        { 'domain': 'test', 'name': '{{ genEntityId|replace("sensor.foo1_bar","foo1") }}d', 'generator_name': 'g15',
+          'generator': "{{ states|selectattr('entity_id','equalto','sensor.foo1_bar')|map(attribute='entity_id')|list }}",
+          'message': 'ee={{genRaw}}',
+          'condition': '{{ states(genEntityId) }}' }
+    ]}}
+    hass.states.async_set("sensor.ickbar", 'foo')
+    hass.states.async_set("sensor.foo1_bar", 'on')
+    hass.states.async_set("sensor.foo2_bar", 'off')
+    hass.states.async_set("sensor.z_foo1", 'off')
+    hass.states.async_set("sensor.z_foo2", 'off')
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+
+    service_calls.popNotifySearch('persistent_notification', 'test_foo1c', 'test_foo1c: turned on')
+    service_calls.popNotifyEmpty('persistent_notification', 'test.foo1d: ee=sensor.foo1_bar') # turned on
+    gad = hass.data[DOMAIN]
+    assert len(gad.generators) == 5
+    g11 = gad.generators['g11']
+    assert g11.state == 2
+    assert gad.alerts['test']['foo1'].state == 'off'
+    assert gad.alerts['test']['foo2'].state == 'off'
+    g12 = gad.generators['g12']
+    assert g12.state == 2
+    assert gad.alerts['test']['foo1a'].state == 'off'
+    assert gad.alerts['test']['foo2a'].state == 'off'
+    tfoo1a = gad.alerts['test']['foo1a']
+    
+    g13 = gad.generators['g13']
+    assert g13.state == 1
+    assert gad.alerts['test']['b'].state == 'off'
+    g14 = gad.generators['g14']
+    assert g14.state == 2
+    assert gad.alerts['test']['foo1c'].state ==  'on'
+    assert gad.alerts['test']['foo2c'].state == 'off'
+
+    await setAndWait(hass, "sensor.z_foo1", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 'aa=foo1.*bb=sensor.foo1_bar.*cc={\'genEntityId')
+
+    g15 = gad.generators['g15']
+    assert g15.state == 1
+    assert gad.alerts['test']['foo1d'].state == 'on'
+
+    _LOGGER.warning('\n\n')
+    # Let's add a new sensor and see what happens
+    hass.states.async_set("sensor.foo3_bar", 'off')
+    await hass.async_block_till_done()
+    # g11 adds a new alert
+    assert gad.alerts['test']['foo3'].state == 'off'
+    # g12 adds a new alert with bad condition
+    assert gad.alerts['test']['foo3a'].state == 'off'  # no truthy val in condition
+    service_calls.popNotifySearch('persistent_notification', 'test_foo3a', 'unknown.*not truthy')
+    # g13 has no groups so tried to readd sensor.test_b again
+    assert g13.state == 1
+    # g14 adds new alert with condition sensor.foo3_bar, which is off
+    assert gad.alerts['test']['foo3c'].state == 'off'
+    # g15 does not add a new alert
+    assert g15.state == 1
