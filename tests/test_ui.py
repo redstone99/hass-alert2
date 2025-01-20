@@ -141,6 +141,8 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert re.search('invalid boolean value', rez['error'])
     
     # Now try the default fields
+    #
+    # notifier
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': { 'notifier': '' }}})
     assert not 'notifier' in rez['rawUi']['defaults']
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': { 'notifier': 3 }}})
@@ -149,10 +151,108 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert rez['rawUi']['defaults']['notifier'] == 'foo2'
     assert hass_storage['alert2.storage']['data']['config']['defaults']['notifier'] == 'foo2'
     assert isinstance(gad.topConfig['defaults']['notifier'], template_helper.Template)
+    # foo2,foo3 ends up being interpreted as a single "notifier" with a funny name here.
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': { 'notifier': 'foo2,foo3' }}})
     assert isinstance(gad.topConfig['defaults']['notifier'], template_helper.Template)
-    hmm, want this to fail with decent error message. detect that template without {{ should not have special chars
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': { 'notifier': '[foo4,foo5 ]' }}})
+    assert rez['rawUi']['defaults']['notifier'] == '[foo4,foo5 ]'
+    assert hass_storage['alert2.storage']['data']['config']['defaults']['notifier'] == '[foo4,foo5 ]'
+    assert gad.topConfig['defaults']['notifier'] == ['foo4', 'foo5']
+    rez = await tpost("/api/alert2/loadTopConfig", {})
+    assert rez['raw']['defaults']['notifier'] == ['foo4','foo5']
+    assert rez['rawUi']['defaults']['notifier'] == '[foo4,foo5 ]'
+    #    Clearing notifier should remove it from the rawUi cfg
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': { 'notifier': '' }}})
+    assert not 'notifier' in rez['rawUi']['defaults']
+    rez = await tpost("/api/alert2/loadTopConfig", {})
+    assert not 'notifier' in rez['rawUi']['defaults']
 
+    # summary_notifier
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'summary_notifier': False} }})
+    assert re.search('non-string value', rez['error'])
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'summary_notifier': 'false'} }})
+    assert rez['rawUi']['defaults']['summary_notifier'] == 'false'
+    assert hass_storage['alert2.storage']['data']['config']['defaults']['summary_notifier'] == 'false'
+    assert gad.topConfig['defaults']['summary_notifier'] == False
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'summary_notifier': 'ick'} }})
+    assert rez['rawUi']['defaults']['summary_notifier'] == 'ick'
+    assert isinstance(gad.topConfig['defaults']['summary_notifier'], template_helper.Template)
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'summary_notifier': '[foo,bar ]'} }})
+    assert rez['rawUi']['defaults']['summary_notifier'] == '[foo,bar ]'
+    assert gad.topConfig['defaults']['summary_notifier'] == ['foo','bar']
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'summary_notifier': '["foo","bar" ]'} }})
+    assert rez['rawUi']['defaults']['summary_notifier'] == '["foo","bar" ]'
+    assert gad.topConfig['defaults']['summary_notifier'] == ['foo','bar']
+
+    # annotate_messages
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'annotate_messages': 'FAlse'} }})
+    assert rez['rawUi']['defaults']['annotate_messages'] == 'FAlse'
+    assert hass_storage['alert2.storage']['data']['config']['defaults']['annotate_messages'] == 'FAlse'
+    assert gad.topConfig['defaults']['annotate_messages'] == False
+
+    # reminder_frequency_mins
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'reminder_frequency_mins': 3} }})
+    assert re.search('non-string value', rez['error'])
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'reminder_frequency_mins': '4'} }})
+    assert rez['rawUi']['defaults']['reminder_frequency_mins'] == '4'
+    assert hass_storage['alert2.storage']['data']['config']['defaults']['reminder_frequency_mins'] == '4'
+    assert gad.topConfig['defaults']['reminder_frequency_mins'] == [4]
+    rez = await tpost("/api/alert2/loadTopConfig", {})
+    assert rez['raw']['defaults']['reminder_frequency_mins'] == 4
+    assert rez['rawUi']['defaults']['reminder_frequency_mins'] == '4'
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'reminder_frequency_mins': '-4'} }})
+    assert re.search('be at least 0.01', rez['error'])
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'reminder_frequency_mins': '[5,6]'} }})
+    assert rez['rawUi']['defaults']['reminder_frequency_mins'] == '[5,6]'
+    assert hass_storage['alert2.storage']['data']['config']['defaults']['reminder_frequency_mins'] == '[5,6]'
+    assert gad.topConfig['defaults']['reminder_frequency_mins'] == [5,6]
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'reminder_frequency_mins': '["5","7"]'} }})
+    assert rez['rawUi']['defaults']['reminder_frequency_mins'] == '["5","7"]'
+    assert hass_storage['alert2.storage']['data']['config']['defaults']['reminder_frequency_mins'] == '["5","7"]'
+    assert gad.topConfig['defaults']['reminder_frequency_mins'] == [5,7]
+
+    # throttle_fires_per_mins
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'throttle_fires_per_mins': ''} }})
+    #   pick up the default val
+    assert rez['raw']['defaults']['throttle_fires_per_mins'] == [1,2]
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'throttle_fires_per_mins': 'null'} }})
+    assert rez['rawUi']['defaults']['throttle_fires_per_mins'] == 'null'
+    assert hass_storage['alert2.storage']['data']['config']['defaults']['throttle_fires_per_mins'] == 'null'
+    assert rez['raw']['defaults']['throttle_fires_per_mins'] == None
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'throttle_fires_per_mins': '[3,5.2]'} }})
+    assert rez['rawUi']['defaults']['throttle_fires_per_mins'] == '[3,5.2]'
+    assert hass_storage['alert2.storage']['data']['config']['defaults']['throttle_fires_per_mins'] == '[3,5.2]'
+    assert rez['raw']['defaults']['throttle_fires_per_mins'] == [3, 5.2]
+
+    ########################
+    # Now try full save
+    uiCfg = { 'defaults' : {
+        'notifier' : 'n2',
+        'summary_notifier' : 'sn2',
+        'reminder_frequency_mins': '[4]',
+        'throttle_fires_per_mins': '[1,3]',
+    },
+              'skip_internal_errors': 'true',
+              'notifier_startup_grace_secs': '5',
+              'defer_startup_notifications': 'True',
+             }
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': uiCfg })
+    assert rez['rawUi'] == uiCfg
+    assert hass_storage['alert2.storage']['data']['config'] == uiCfg
+    rez = await tpost("/api/alert2/loadTopConfig", {})
+    assert rez['rawUi'] == uiCfg
+    # And remove all fields and make sure config shrinks down
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': {} })
+    _LOGGER.warning(rez)
+    assert rez['rawUi'] == { 'defaults': {} }
+    rez = await tpost("/api/alert2/loadTopConfig", {})
+    assert rez['rawUi'] == { 'defaults': {} }
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': '' })
+    assert rez['rawUi'] == { 'defaults': {} }
+    rez = await tpost("/api/alert2/loadTopConfig", {})
+    assert rez['rawUi'] == { 'defaults': {} }
+    
+    
 async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     cfg = { 'alert2' : {
         'defaults' : {
@@ -169,6 +269,8 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
         'defer_startup_notifications': True, # yaml comes through
     } }
     cfga = cfg['alert2']
+    #fix so is stirngs only
+    assert False
     uiCfg = { 'defaults' : { 'reminder_frequency_mins': [4],
                               'throttle_fires_per_mins': [5,6]
                              },
