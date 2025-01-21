@@ -16,6 +16,7 @@ if os.environ.get('JTESTDIR'):
 from custom_components.alert2 import (DOMAIN, Alert2Data)
 import custom_components.alert2 as alert2
 import custom_components.alert2.entities as a2Entities
+from custom_components.alert2.util import (     GENERATOR_DOMAIN )
 import homeassistant.const
 from homeassistant import config as conf_util
 
@@ -1845,6 +1846,38 @@ async def test_generator3(hass, service_calls):
     service_calls.popNotifySearch('persistent_notification', 't62', 'Alert2 test_t62: turned on')
     service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t63: turned on')
 
+
+async def test_generator3a(hass, service_calls):
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': '{{ states("sensor.a") }}',
+          'condition': '{{ False }}' },
+        { 'domain': 'test', 'name': 't64aa', 'condition': '{{ False }}' },
+        { 'domain': GENERATOR_DOMAIN, 'name': 't64ab', 'condition': '{{ False }}' },
+        { 'domain': '{{ genElem }}', 'name': 't64ac', 'generator_name': 'g2', 'generator': '{{ states("sensor.b") }}',
+          'condition': '{{ False }}' },
+    ] } }
+    hass.states.async_set("sensor.a", '')
+    hass.states.async_set("sensor.b", '')
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'reserved for generators.*t64ab')
+
+    # Generator can't create a duplicate alert
+    await setAndWait(hass, "sensor.a", 't64ad')
+    gad = hass.data[DOMAIN]
+    assert list(gad.alerts['test'].keys()) == [ 't64aa', 't64ad' ]
+    await setAndWait(hass, "sensor.a", 't64aa')
+    service_calls.popNotifyEmpty('persistent_notification', 'Duplicate declaration.*t64aa')
+    assert list(gad.alerts['test'].keys()) == [ 't64aa', 't64ad' ]
+
+    # can't create alert in generator domain
+    await setAndWait(hass, "sensor.b", 'test')
+    assert list(gad.alerts['test'].keys()) == [ 't64aa', 't64ad', 't64ac' ]
+    await setAndWait(hass, "sensor.b", GENERATOR_DOMAIN)
+    service_calls.popNotifyEmpty('persistent_notification', 'reserved for generators.*t64ac')
+    
+    
 async def test_generator4(hass, service_calls):
     cfg = { 'alert2' : { 'alerts' : [
         { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g5', 'generator': '{{ foo ',

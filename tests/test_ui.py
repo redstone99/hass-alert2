@@ -17,6 +17,7 @@ from custom_components.alert2 import (DOMAIN, Alert2Data)
 import custom_components.alert2 as alert2
 import custom_components.alert2.entities as a2Entities
 import custom_components.alert2.ui as a2Ui
+from custom_components.alert2.util import (     GENERATOR_DOMAIN )
 from homeassistant.util import json as json_util
 from homeassistant.helpers import json as json_helper
 from   homeassistant.helpers import template as template_helper
@@ -731,12 +732,25 @@ async def test_create2(hass, service_calls, hass_client, hass_storage):
             { 'domain':'d', 'name':'{{genElem}}z', 'condition':'sensor.a', 'generator_name':'g1', 'generator': 'n5' } })
     assert rez == {}
     assert set(gad.alerts['d'].keys()) == set([ 'n5z' ])
-    assert hass.states.get('alert2.d_n5').state == None
+    assert hass.states.get('alert2.d_n5') == None
     assert hass.states.get('alert2.d_n5z').state == 'off'
-    
-    assert False
 
-    #what if generator creates an alert that already exists?
+    # can't delete non-existent
+    rez = await tpost("/api/alert2/manageAlert", {'update':
+            { 'domain':'d', 'name':'{{genElem}}z', 'condition':'sensor.a', 'generator_name':'g2', 'generator': 'n5' } })
+    assert re.search('Can\'t update alert that does not exist', rez['error'])
+
+    # delete generator removes alerts with it
+    assert 'alerts' in hass_storage['alert2.storage']['data']['config']
+    assert hass.states.get('sensor.alert2generator_g1').state == '1'
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain': GENERATOR_DOMAIN, 'name': 'g1' } })
+    assert rez == {}
+    assert hass.states.get('sensor.alert2generator_g1') == None
+    assert hass.states.get('alert2.d_n5z') == None
+    assert gad.generators == {}
+    assert gad.alerts == {}
+    assert not 'alerts' in hass_storage['alert2.storage']['data']['config']
+    
     
 async def test_reload(hass, service_calls, hass_client, hass_storage, monkeypatch):
     cfg = { 'alert2' : {
