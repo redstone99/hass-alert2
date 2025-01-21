@@ -734,7 +734,7 @@ async def test_create2(hass, service_calls, hass_client, hass_storage):
     assert hass.states.get('alert2.d_n5').state == None
     assert hass.states.get('alert2.d_n5z').state == 'off'
     
-
+    assert False
 
     #what if generator creates an alert that already exists?
     
