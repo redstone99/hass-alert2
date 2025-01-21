@@ -20,9 +20,30 @@ import custom_components.alert2.ui as a2Ui
 from homeassistant.util import json as json_util
 from homeassistant.helpers import json as json_helper
 from   homeassistant.helpers import template as template_helper
+from homeassistant import config as conf_util
 
 a2Ui.SAVE_DELAY = 0
 
+async def setAndWait(hass, eid, state): 
+    hass.states.async_set(eid, state)
+    await asyncio.sleep(0.05)
+    await hass.async_block_till_done()
+
+async def startAndTpost(hass, service_calls, hass_client, cfg):
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    client = await hass_client()
+    async def tpost(url, adict):
+        resp = await client.post(url, json=adict)
+        assert resp.status == 200
+        rez = await resp.json()
+        await hass.async_block_till_done()
+        return rez
+    gad = hass.data[DOMAIN]
+    return (tpost, client, gad)
+    
 async def test_defaults(hass, service_calls, hass_client, hass_storage):
     cfg = { 'alert2' : {
         'defaults' : {
@@ -38,11 +59,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
         'notifier_startup_grace_secs': 4,
         'defer_startup_notifications': True,
     } }
-    assert await async_setup_component(hass, DOMAIN, cfg)
-    await hass.async_start()
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    gad = hass.data[DOMAIN]
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
     # Test top-level flags were set
     assert hass.states.get('alert2.error') == None # skip_internal_errors
     cfga = cfg['alert2']
@@ -57,7 +74,6 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert t1.movingSum.intervalSecs == cfga['defaults']['throttle_fires_per_mins'][1]*60
 
     # Get defaults.   No UI changes so far
-    client = await hass_client()
     resp = await client.post("/api/alert2/loadTopConfig", json={})
     assert resp.status == 200
     rez = await resp.json()
@@ -79,13 +95,6 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     rez = await resp.json()
     assert re.search('extra keys not allowed', rez['error'])
 
-    async def tpost(url, adict):
-        resp = await client.post(url, json=adict)
-        assert resp.status == 200
-        rez = await resp.json()
-        await hass.async_block_till_done()
-        return rez
-    
     # Check bad values for all parameters
     #
     # First skip_internal_errors
@@ -243,11 +252,6 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert rez['rawUi'] == uiCfg
     # And remove all fields and make sure config shrinks down
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': {} })
-    _LOGGER.warning(rez)
-    assert rez['rawUi'] == { 'defaults': {} }
-    rez = await tpost("/api/alert2/loadTopConfig", {})
-    assert rez['rawUi'] == { 'defaults': {} }
-    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': '' })
     assert rez['rawUi'] == { 'defaults': {} }
     rez = await tpost("/api/alert2/loadTopConfig", {})
     assert rez['rawUi'] == { 'defaults': {} }
@@ -269,13 +273,11 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
         'defer_startup_notifications': True, # yaml comes through
     } }
     cfga = cfg['alert2']
-    #fix so is stirngs only
-    assert False
-    uiCfg = { 'defaults' : { 'reminder_frequency_mins': [4],
-                              'throttle_fires_per_mins': [5,6]
+    uiCfg = { 'defaults' : { 'reminder_frequency_mins': '[4]',
+                              'throttle_fires_per_mins': '[5,6]',
                              },
                'skip_internal_errors': 'true',
-               'notifier_startup_grace_secs': 7,
+               'notifier_startup_grace_secs': '7',
               }
     hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
                                        'data': { 'config': uiCfg } }
@@ -287,14 +289,479 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     # Test top-level flags were set
     assert hass.states.get('alert2.alert2_error') is None # skip_internal_errors
     cfga = cfg['alert2']
-    assert gad.delayedNotifierMgr.notifier_startup_grace_secs == uiCfg['notifier_startup_grace_secs']
+    assert gad.delayedNotifierMgr.notifier_startup_grace_secs == float(uiCfg['notifier_startup_grace_secs'])
     assert gad.delayedNotifierMgr.defer_startup_notifications == cfga['defer_startup_notifications']
     t1 = gad.alerts['test']['t1']
     # and check all the defaults
     assert t1._notifier_list_template.template == cfga['defaults']['notifier']
     assert t1._summary_notifier == False
-    assert t1.reminder_frequency_mins == uiCfg['defaults']['reminder_frequency_mins']
-    assert t1.movingSum.maxCount == uiCfg['defaults']['throttle_fires_per_mins'][0]
-    assert t1.movingSum.intervalSecs == uiCfg['defaults']['throttle_fires_per_mins'][1]*60
+    assert t1.reminder_frequency_mins == [4] # uiCfg['defaults']['reminder_frequency_mins']
+    assert t1.movingSum.maxCount == 5 # uiCfg['defaults']['throttle_fires_per_mins'][0]
+    assert t1.movingSum.intervalSecs == 60*6 # uiCfg['defaults']['throttle_fires_per_mins'][1]*60
 
-    # And test overriding all at once
+async def test_render_v(hass, service_calls, hass_client, hass_storage):
+    cfg = { 'alert2': {} }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+
+    # notifier
+    rez = await tpost("/api/alert2/renderValue", {'name': 'notifier', 'txt': '' })
+    assert rez == { 'rez': [] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'notifier', 'txt': 'foo' })
+    assert rez == { 'rez': ['foo'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'notifier', 'txt': '"foo"' })
+    assert rez == { 'rez': ['foo'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'notifier', 'txt': '{{ "a"+"b"}}' })
+    assert rez == { 'rez': ['ab'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'notifier', 'txt': '{{ ["a"+"b", "c"] }}' })
+    assert rez == { 'rez': ['ab', 'c'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'notifier', 'txt': '\'{{ "a"+"b"}}\'' })
+    assert rez == { 'rez': ['ab'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'notifier', 'txt': '[aa,bb]' })
+    assert rez == { 'rez': ['aa','bb'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'notifier', 'txt': '["aa",bb]' })
+    assert rez == { 'rez': ['aa','bb'] }
+
+    # summary_notifier
+    rez = await tpost("/api/alert2/renderValue", {'name': 'summary_notifier', 'txt': 'foo' })
+    assert rez == { 'rez': ['foo'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'summary_notifier', 'txt': '"foo"' })
+    assert rez == { 'rez': ['foo'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'summary_notifier', 'txt': '{{ "a"+"b"}}' })
+    assert rez == { 'rez': ['ab'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'summary_notifier', 'txt': '{{ ["a"+"b", "c"] }}' })
+    assert rez == { 'rez': ['ab', 'c'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'summary_notifier', 'txt': '\'{{ "a"+"b"}}\'' })
+    assert rez == { 'rez': ['ab'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'summary_notifier', 'txt': '[aa,bb]' })
+    assert rez == { 'rez': ['aa','bb'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'summary_notifier', 'txt': '["aa",bb]' })
+    assert rez == { 'rez': ['aa','bb'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'summary_notifier', 'txt': 'false' })
+    assert rez == { 'rez': False }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'summary_notifier', 'txt': 'on' })
+    assert rez == { 'rez': True }
+
+    # annotate_messages
+    rez = await tpost("/api/alert2/renderValue", {'name': 'annotate_messages', 'txt': 'yes' })
+    assert rez == { 'rez': True }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'annotate_messages', 'txt': '{{ true }}' })
+    assert re.search('invalid boolean value', rez['error'])
+
+    # reminder_frequency_mins
+    rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_frequency_mins', 'txt': '3' })
+    assert rez == { 'rez': [3] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_frequency_mins', 'txt': '[3,4]' })
+    assert rez == { 'rez': [3,4] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_frequency_mins', 'txt': '"[3,5]"' })
+    assert re.search('expected float', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_frequency_mins', 'txt': '-3' })
+    assert re.search('must be at least', rez['error'])
+
+    # throttle_fires_per_mins
+    rez = await tpost("/api/alert2/renderValue", {'name': 'throttle_fires_per_mins', 'txt': '[2,4]' })
+    assert rez == { 'rez': [2,4] }
+    #    problem is that "1" is a string, not an int
+    rez = await tpost("/api/alert2/renderValue", {'name': 'throttle_fires_per_mins', 'txt': '["1",4]' })
+    assert re.search('not a valid value', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'throttle_fires_per_mins', 'txt': 'null' })
+    assert rez == { 'rez': None }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'throttle_fires_per_mins', 'txt': '[-3,4]' })
+    assert re.search('not a valid value', rez['error'])
+    
+    # friendly_name
+    rez = await tpost("/api/alert2/renderValue", {'name': 'friendly_name', 'txt': 'joe  ' })
+    assert rez == { 'rez': 'joe' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'friendly_name', 'txt': '{{ "joe"+"sss" }}' })
+    assert rez == { 'rez': 'joesss' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'friendly_name', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
+    assert rez == { 'rez': 'joeyay' }
+    
+    # title
+    rez = await tpost("/api/alert2/renderValue", {'name': 'title', 'txt': 'joe  ' })
+    assert rez == { 'rez': 'joe' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'title', 'txt': '{{ "joe"+"sss" }}' })
+    assert rez == { 'rez': 'joesss' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'title', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
+    assert rez == { 'rez': 'joeyay' }
+
+    # target
+    rez = await tpost("/api/alert2/renderValue", {'name': 'target', 'txt': 'joe  ' })
+    assert rez == { 'rez': 'joe' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'target', 'txt': '{{ "joe"+"sss" }}' })
+    assert rez == { 'rez': 'joesss' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'target', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
+    assert rez == { 'rez': 'joeyay' }
+
+    # data
+    rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{ a: b, c: "d" }' })
+    assert rez == { 'rez': { 'a': 'b', 'c': 'd' } }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '"{ e:f}"' })
+    assert re.search('expected dict', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{}' })
+    assert rez == { 'rez': {} }
+
+    # domain
+    rez = await tpost("/api/alert2/renderValue", {'name': 'domain', 'txt': 'foo' })
+    assert rez == { 'rez': 'foo' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'domain', 'txt': '"bar"' })
+    assert rez == { 'rez': 'bar' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'domain', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
+    assert rez == { 'rez': 'joeyay' }
+
+    # name
+    rez = await tpost("/api/alert2/renderValue", {'name': 'name', 'txt': 'foo' })
+    assert rez == { 'rez': 'foo' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'name', 'txt': '"bar"' })
+    assert rez == { 'rez': 'bar' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'name', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
+    assert rez == { 'rez': 'joeyay' }
+
+    # message
+    rez = await tpost("/api/alert2/renderValue", {'name': 'message', 'txt': 'foo' })
+    assert rez == { 'rez': 'foo' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'message', 'txt': '"bar"' })
+    assert rez == { 'rez': 'bar' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'message', 'txt': '{{ "joe"+"ggg" }}' })
+    assert rez == { 'rez': 'joeggg' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'message', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
+    assert rez == { 'rez': 'joeyay' }
+
+    # done_message
+    rez = await tpost("/api/alert2/renderValue", {'name': 'done_message', 'txt': 'foo' })
+    assert rez == { 'rez': 'foo' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'done_message', 'txt': '"bar"' })
+    assert rez == { 'rez': 'bar' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'done_message', 'txt': '{{ "joe"+"ggg" }}' })
+    assert rez == { 'rez': 'joeggg' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'done_message', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
+    assert rez == { 'rez': 'joeyay' }
+    
+    # trigger
+    rez = await tpost("/api/alert2/renderValue", {'name': 'trigger', 'txt': "[{'platform':'state','entity_id':'sensor.zz'}]" })
+    assert rez == { 'rez': [{'platform':'state','entity_id':'sensor.zz'}] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'trigger', 'txt': "[{'trigger':'template','value_template':'{{ true }}'}]" })
+    assert rez == { 'rez': [{'platform':'template','value_template':'{{ true }}'}] }
+
+    # condition
+    rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': 'on' })
+    assert rez == { 'rez': True }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': '{{ "n" + "o" }}' })
+    assert rez == { 'rez': False }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': '{{ ggg }}' , 'extraVars': { 'ggg': 'yes' }})
+    assert rez == { 'rez': True }
+
+    # early_start
+    rez = await tpost("/api/alert2/renderValue", {'name': 'early_start', 'txt': 'yes' })
+    assert rez == { 'rez': True }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'early_start', 'txt': '{{ true }}' })
+    assert re.search('invalid boolean value', rez['error'])
+
+    # threshold: value
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.value', 'txt': 'foo' })
+    assert re.search('not a float', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.value', 'txt': '3' })
+    assert rez == { 'rez': 3 }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.value', 'txt': '"3"' })
+    assert rez == { 'rez': 3 }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.value', 'txt': '{{ 5+6 }}' })
+    assert rez == { 'rez': 11 }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.value', 'txt': '{{ 5 + ggg }}' , 'extraVars': { 'ggg': 7 }})
+    assert rez == { 'rez': 12 }
+
+    # threshold: hysteresis
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.hysteresis', 'txt': 'foo' })
+    assert re.search('expected float', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.hysteresis', 'txt': '-3' })
+    assert re.search('be at least', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.hysteresis', 'txt': '3' })
+    assert rez == { 'rez': 3 }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.hysteresis', 'txt': '"3"' })
+    assert rez == { 'rez': 3 }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.hysteresis', 'txt': '{{ 5+6 }}' })
+    assert re.search('expected float', rez['error'])
+
+    # threshold: minimum
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.minimum', 'txt': 'foo' })
+    assert re.search('expected float', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.minimum', 'txt': '3' })
+    assert rez == { 'rez': 3 }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.minimum', 'txt': '"3"' })
+    assert rez == { 'rez': 3 }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.minimum', 'txt': '{{ 5+6 }}' })
+    assert re.search('expected float', rez['error'])
+
+    # threshold: maximum
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.maximum', 'txt': 'foo' })
+    assert re.search('expected float', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.maximum', 'txt': '3' })
+    assert rez == { 'rez': 3 }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.maximum', 'txt': '"3"' })
+    assert rez == { 'rez': 3 }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.maximum', 'txt': '{{ 5+6 }}' })
+    assert re.search('expected float', rez['error'])
+
+    # delay_on_secs
+    rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': 'foo' })
+    assert re.search('expected float', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': '-3' })
+    assert re.search('be at least', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': '3' })
+    assert rez == { 'rez': 3 }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': '"3"' })
+    assert rez == { 'rez': 3 }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': '{{ 5+6 }}' })
+    assert re.search('expected float', rez['error'])
+
+    # generator_name
+    rez = await tpost("/api/alert2/renderValue", {'name': 'generator_name', 'txt': 'foo' })
+    assert rez == { 'rez': 'foo' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'generator_name', 'txt': '"bar"' })
+    assert rez == { 'rez': 'bar' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'generator_name', 'txt': '{{"bar"}}' })
+    assert re.search('Illegal characters', rez['error'])
+
+    # generator
+    rez = await tpost("/api/alert2/renderValue", {'name': 'generator', 'txt': 'foo' })
+    assert rez == { 'rez': {'list': ['foo'], 'len': 1, 'firstElemVars': {'genRaw': 'foo', 'genElem': 'foo'}} }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'generator', 'txt': '"fooz"' })
+    assert rez == { 'rez': {'list': ['fooz'], 'len': 1, 'firstElemVars': {'genRaw': 'fooz', 'genElem': 'fooz'}} }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'generator', 'txt': '{{ "a"+"b"}}' })
+    assert rez == { 'rez': {'list': ['ab'], 'len': 1, 'firstElemVars': {'genRaw': 'ab', 'genElem': 'ab'}} }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'generator', 'txt': '{{ ["a"+"b", "c"] }}' })
+    assert rez == { 'rez': {'list': ['ab','c'], 'len': 2, 'firstElemVars': {'genRaw': 'ab', 'genElem': 'ab'}} }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'generator', 'txt': '\'{{ "a"+"b"}}\'' })
+    assert rez == { 'rez': {'list': ['ab'], 'len': 1, 'firstElemVars': {'genRaw': 'ab', 'genElem': 'ab'}} }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'generator', 'txt': '[aa,bb]' })
+    assert rez == { 'rez': {'list': ['aa','bb'], 'len': 2, 'firstElemVars': {'genRaw': 'aa', 'genElem': 'aa'}} }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'generator', 'txt': '["aa",bb]' })
+    assert rez == { 'rez': {'list': ['aa','bb'], 'len': 2, 'firstElemVars': {'genRaw': 'aa', 'genElem': 'aa'}} }
+    await setAndWait(hass, 'sensor.ff', 'ick')
+    rez = await tpost("/api/alert2/renderValue", {'name': 'generator', 'txt': 'sensor.ff' })
+    assert rez == { 'rez': {'list': ['sensor.ff'], 'len': 1, 'firstElemVars': {'genRaw': 'sensor.ff', 'genEntityId': 'sensor.ff'}} }
+    await setAndWait(hass, 'sensor.ff2', 'ick2')
+    rez = await tpost("/api/alert2/renderValue", {'name': 'generator', 'txt': "{{ states.sensor|selectattr('entity_id', 'match', 'sensor.ff.*') | map(attribute='entity_id')|list }}" })
+    assert rez == { 'rez': {'list': ['sensor.ff', 'sensor.ff2'], 'len': 2,
+                            'firstElemVars': {'genRaw': 'sensor.ff', 'genEntityId': 'sensor.ff' }} }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'generator', 'txt': "{{ states|entity_regex('sensor.(ff.*)')|list }}" })
+    assert rez == { 'rez': {'list': [{'genEntityId':'sensor.ff', 'genGroups':['ff']},
+                                     {'genEntityId':'sensor.ff2', 'genGroups':['ff2']}], 'len': 2,
+                            'firstElemVars': {'genRaw': {'genEntityId':'sensor.ff', 'genGroups':['ff']}, 'genEntityId': 'sensor.ff', 'genGroups': ['ff'] }} }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'generator', 'txt': "{{ {'a':3, 'b':'ff' } }}"})
+    _LOGGER.warning(rez)
+    assert rez == { 'rez': {'list': [{'a':3, 'b':'ff' }], 'len': 1,
+                            'firstElemVars': {'genRaw': {'a':3, 'b':'ff' }, 'a': 3, 'b': 'ff' }} }
+
+async def test_validate(hass, service_calls, hass_client, hass_storage):
+    cfg = { 'alert2': {} }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+
+    # condition alert
+    rez = await tpost("/api/alert2/manageAlert", {'validate': { 'domain':'d', 'name':'n', 'condition':'on' } })
+    assert rez == {}
+    rez = await tpost("/api/alert2/manageAlert", {'validate': { 'domain':'d', 'name':'n', 'condition':'on',
+                                                                'throttle_fires_per_mins':'[3,4]' } })
+    assert rez == {}
+    rez = await tpost("/api/alert2/manageAlert", {'validate': { 'domain':'d', 'name':'n', 'condition':'on',
+                                                                'threshold': { 'value': '4', 'hysteresis': '5', 'minimum': '6' } }})
+    assert rez == {}
+    
+    # generator
+    rez = await tpost("/api/alert2/manageAlert", {'validate': { 'domain':'d', 'name':'n', 'condition':'on',
+                                                                'generator': 'foo' } })
+    assert re.search('required key not provided', rez['error'])
+    rez = await tpost("/api/alert2/manageAlert", {'validate': { 'domain':'d', 'name':'n', 'condition':'on',
+                                                                'generator': 'foo', 'generator_name': 'ick' } })
+    assert rez == {}
+
+    # event alert
+    rez = await tpost("/api/alert2/manageAlert", {'validate': { 'domain':'d', 'name':'n', 'condition':'on',
+                                                                'trigger': "[{'platform':'state','entity_id':'sensor.zz'}]" } })
+    assert rez == {}
+
+
+async def test_create(hass, service_calls, hass_client, hass_storage):
+    cfg = { 'alert2': {} }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+
+    await setAndWait(hass, 'sensor.a', 'off')
+    rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n1', 'condition':'sensor.a' } })
+    assert rez == {}
+    n1 = gad.alerts['d']['n1']
+    assert hass.states.get('alert2.d_n1').state == 'off'
+    assert hass_storage['alert2.storage']['data']['config']['alerts'][0]['name'] == 'n1'
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.a', 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 'd.n1: turned on')
+    await setAndWait(hass, 'sensor.a', 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 'd.n1: turned off')
+
+    # Create dup should fail
+    rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n1', 'condition':'sensor.a' } })
+    assert re.search('Duplicate declaration', rez['error'])
+    # validation fails
+    rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n2' } })
+    assert re.search('must contain', rez['error'])
+    # bad delete
+    resp = await client.post("/api/alert2/manageAlert", json={'delete': { 'domain':'d' } })
+    assert resp.status == 400
+    # delete nonexistent
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'n3' } })
+    assert re.search('unknown alert', rez['error'])
+    assert service_calls.isEmpty()
+
+    # load
+    rez = await tpost("/api/alert2/manageAlert", {'load': { 'domain':'d', 'name':'n3' } })
+    assert re.search('alert not found', rez['error'])
+    rez = await tpost("/api/alert2/manageAlert", {'load': { 'domain':'d', 'name':'n1' } })
+    assert rez == {'condition': '{{ states("sensor.a") }}', 'domain': 'd', 'name': 'n1'} 
+    assert service_calls.isEmpty()
+    
+    # delete alert
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'n1' } })
+    assert rez == {}
+    assert 'n1' not in gad.alerts['d']
+    assert hass.states.get('alert2.d_n1') == None
+    assert 'alerts' not in hass_storage['alert2.storage']['data']['config']
+    assert service_calls.isEmpty()
+
+    rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n1', 'condition':'sensor.a' } })
+    assert rez == {}
+    rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n2', 'condition':'sensor.a' } })
+    assert rez == {}
+    assert service_calls.isEmpty()
+
+    # Search
+    rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'' } })
+    assert rez == { 'results': [
+        { 'domain':'d', 'name':'n1', 'id':'alert2.d_n1' },
+        { 'domain':'d', 'name':'n2', 'id':'alert2.d_n2' }
+    ]}
+    rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'d_n' } })
+    assert rez == { 'results': [
+        { 'domain':'d', 'name':'n1', 'id':'alert2.d_n1' },
+        { 'domain':'d', 'name':'n2', 'id':'alert2.d_n2' }
+    ]}
+    rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'alert2.d_n' } })
+    assert rez == { 'results': [
+        { 'domain':'d', 'name':'n1', 'id':'alert2.d_n1' },
+        { 'domain':'d', 'name':'n2', 'id':'alert2.d_n2' }
+    ]}
+    rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'d_n1' } })
+    assert rez == { 'results': [
+        { 'domain':'d', 'name':'n1', 'id':'alert2.d_n1' },
+    ]}
+    rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'d_n2' } })
+    assert rez == { 'results': [
+        { 'domain':'d', 'name':'n2', 'id':'alert2.d_n2' },
+    ]}
+    rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'d_n3' } })
+    assert rez == { 'results': [] }
+    
+    # Update
+    assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])
+    assert hass.states.get('alert2.d_n1').state == 'off'
+    assert hass.states.get('alert2.d_n2').state == 'off'
+    # Redo an alert
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'n1', 'condition':'off', 'delay_on_secs':'4', 'threshold': { 'value': '4', 'hysteresis': '5', 'minimum': '6' } } })
+    assert rez == {}
+    assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])
+    assert hass.states.get('alert2.d_n1').state == 'off'
+    rez = await tpost("/api/alert2/manageAlert", {'load': { 'domain':'d', 'name':'n1' } })
+    assert rez == {'condition': 'off', 'domain': 'd', 'name': 'n1', 'delay_on_secs':'4',
+                   'threshold': { 'value': '4', 'hysteresis': '5', 'minimum': '6' }}
+    # delay_on_secs goes away when deleted
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'n1', 'condition':'off',
+                                                              'threshold': { 'value': '4', 'hysteresis': '5', 'maximum': '6' }} })
+    assert rez == {}
+    assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])
+    assert hass.states.get('alert2.d_n1').state == 'off'
+    rez = await tpost("/api/alert2/manageAlert", {'load': { 'domain':'d', 'name':'n1' } })
+    assert rez == {'condition': 'off', 'domain': 'd', 'name': 'n1',
+                   'threshold': { 'value': '4', 'hysteresis': '5', 'maximum': '6' }}
+    # threshold also disappears
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'n1', 'condition':'false' } })
+    assert rez == {}
+    assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])
+    assert hass.states.get('alert2.d_n1').state == 'off'
+    rez = await tpost("/api/alert2/manageAlert", {'load': { 'domain':'d', 'name':'n1' } })
+    assert rez == {'condition': 'false', 'domain': 'd', 'name': 'n1' }
+    
+    # can't create new alert via update
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'n3', 'condition':'off' } })
+    assert re.search('update alert that does not exist', rez['error'])
+
+async def test_create2(hass, service_calls, hass_client, hass_storage):
+    cfg = { 'alert2': {} }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+
+    await setAndWait(hass, 'sensor.a', 'off')
+
+    # Create should do data prep
+    rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n2', 'condition':'sensor.a',
+                                                              'throttle_fires_per_mins': '[3,4]'} })
+    assert rez == {}
+    # Update should do data prep
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'n2', 'condition':'sensor.a',
+                                                              'throttle_fires_per_mins': '[3,5]'} })
+    assert rez == {}
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'n2' } })
+    assert rez == {}
+
+    #######
+    # try lifecycle ops with generators
+    #
+    rez = await tpost("/api/alert2/manageAlert", {'create':
+            { 'domain':'d', 'name':'{{genElem}}', 'condition':'sensor.a', 'generator_name':'g1', 'generator': 'n5' } })
+    assert rez == {}
+    n5 = gad.alerts['d']['n5']
+    g1 = gad.generators['g1']
+    assert set(gad.alerts['d'].keys()) == set([ 'n5' ])
+    assert hass.states.get('alert2.d_n5').state == 'off'
+    assert hass.states.get('sensor.alert2generator_g1').state == '1'
+    assert hass_storage['alert2.storage']['data']['config']['alerts'][0]['name'] == '{{genElem}}'
+    assert service_calls.isEmpty()
+
+    # same gen is duplicate
+    rez = await tpost("/api/alert2/manageAlert", {'create':
+            { 'domain':'d', 'name':'{{genElem}}2', 'condition':'sensor.a', 'generator_name':'g1', 'generator': 'n5' } })
+    assert re.search('Duplicate generator', rez['error'])
+
+    # Update to different name doesn't leave behind n5 entity from first generation
+    rez = await tpost("/api/alert2/manageAlert", {'update':
+            { 'domain':'d', 'name':'{{genElem}}z', 'condition':'sensor.a', 'generator_name':'g1', 'generator': 'n5' } })
+    assert rez == {}
+    assert set(gad.alerts['d'].keys()) == set([ 'n5z' ])
+    assert hass.states.get('alert2.d_n5').state == None
+    assert hass.states.get('alert2.d_n5z').state == 'off'
+    
+
+
+    #what if generator creates an alert that already exists?
+    
+async def test_reload(hass, service_calls, hass_client, hass_storage, monkeypatch):
+    cfg = { 'alert2' : {
+    } }
+    uiCfg = { 'defaults' : { },
+              'alerts': [
+                  { 'domain': 'd', 'name': 'n1', 'condition':'off', 'throttle_fires_per_mins': '[3,4]' }
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    assert hass.states.get('alert2.d_n1').state == 'off'
+    assert set(gad.alerts['d'].keys()) == set([ 'n1' ])
+
+    rez = await tpost("/api/alert2/manageAlert", {'create':
+            { 'domain':'d', 'name':'n2', 'condition':'off', 'throttle_fires_per_mins': '[4,5]' } })
+    assert rez == {}
+    assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])
+    assert service_calls.isEmpty()
+
+    async def fake_cfg(thass):
+        return cfg
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])

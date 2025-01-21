@@ -1901,7 +1901,7 @@ async def test_generator5(hass, service_calls):
         # Check genEntityId auto-populates
         { 'domain': 'test', 'name': '{{ genEntityId|replace("sensor.foo1_bar","foo1") }}d', 'generator_name': 'g15',
           'generator': "{{ states|selectattr('entity_id','equalto','sensor.foo1_bar')|map(attribute='entity_id')|list }}",
-          'message': 'ee={{genRaw}}',
+          'message': 'ee={{genRaw}} rr={{genEntityId}}',
           'condition': '{{ states(genEntityId) }}' }
     ]}}
     hass.states.async_set("sensor.ickbar", 'foo')
@@ -1914,7 +1914,7 @@ async def test_generator5(hass, service_calls):
     await hass.async_block_till_done()
 
     service_calls.popNotifySearch('persistent_notification', 'test_foo1c', 'test_foo1c: turned on')
-    service_calls.popNotifyEmpty('persistent_notification', 'test.foo1d: ee=sensor.foo1_bar') # turned on
+    service_calls.popNotifyEmpty('persistent_notification', 'test.foo1d: ee=sensor.foo1_bar rr=sensor.foo1_bar') # turned on
     gad = hass.data[DOMAIN]
     assert len(gad.generators) == 5
     g11 = gad.generators['g11']
