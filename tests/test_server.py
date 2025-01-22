@@ -30,8 +30,10 @@ class TestView(HomeAssistantView):
     async def post(self, request: web.Request, data: dict[str, Any]) -> web.Response:
         gad = self.hass.data[DOMAIN]
         if 'stage' in data:
-            if data['stage'] == 't1':
-                assert gad.uiMgr.data == { 'config': { 'defaults': {} } }
+            if data['stage'] == 'getUiData':
+                return self.json(gad.uiMgr.data)
+            elif data['stage'] == 'reset':
+                gad.uiMgr.saveTopConfig({ 'defaults': {} })
             else:
                 assert False
         else:
