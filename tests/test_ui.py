@@ -614,13 +614,13 @@ async def test_create(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/manageAlert", {'load': { 'domain':'d', 'name':'n3' } })
     assert re.search('alert not found', rez['error'])
     rez = await tpost("/api/alert2/manageAlert", {'load': { 'domain':'d', 'name':'n1' } })
-    assert rez == {'condition': '{{ states("sensor.a") }}', 'domain': 'd', 'name': 'n1'} 
+    assert rez == {'condition': 'sensor.a', 'domain': 'd', 'name': 'n1'} 
     assert service_calls.isEmpty()
     
     # delete alert
     rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'n1' } })
     assert rez == {}
-    assert 'n1' not in gad.alerts['d']
+    assert gad.alerts == {}
     assert hass.states.get('alert2.d_n1') == None
     assert 'alerts' not in hass_storage['alert2.storage']['data']['config']
     assert service_calls.isEmpty()
