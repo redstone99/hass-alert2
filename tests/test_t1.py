@@ -1074,6 +1074,7 @@ async def test_event3(hass, service_calls):
     cfg = { 'alert2' : { 'alerts' : [
         { 'domain': 'test', 'name': 't28',  'trigger':  [{'platform':'state','entity_id':'sensor.t28'}], 'condition': 'sensor.c28' },
         { 'domain': 'test', 'name': 't28a',  'trigger': [{'platform':'state','entity_id':'sensor.t28a'}], 'message': '{{ 3+4 }}' },
+        { 'domain': 'test', 'name': 't28b',  'trigger': 'yes', 'message': '{{ 3+4 }}' },
         { 'domain': 'test', 'name': 't29',  'trigger': [{'platform':'state','entity_id':'sensor.t29'}], 'condition': 'sensor.t29', 'friendly_name': 'friendly-t29'  },
     ], } }
     hass.states.async_set("sensor.c28", "off")
@@ -1083,7 +1084,8 @@ async def test_event3(hass, service_calls):
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
-    assert service_calls.isEmpty()
+    service_calls.popNotifyEmpty('persistent_notification', 'expected a dictionary.*t28b')
+    #assert service_calls.isEmpty()
 
     # condition is false, so no alert
     await setAndWait(hass, 'sensor.t28', '2')
@@ -2240,3 +2242,109 @@ async def test_declare_event(hass, service_calls, monkeypatch):
     alert2.report('test', 't88', 'foo')
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t88: foo')
+
+async def test_bad2(hass, service_calls):
+    # Try to get template validation code to crash
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 't01', 'name': 3, 'condition': 'off' },  # 3 becomes '3'
+        { 'domain': 't02', 'name': True, 'condition': 'off' }, # True becomes something
+        { 'domain': 't02a', 'name': '', 'condition': 'off' },
+        { 'domain': 't02b', 'name': None, 'condition': 'off' },
+        { 'domain': 't03', 'name': ['x'], 'condition': 'off' },
+        { 'domain': 't04', 'name': { 'y': 3 }, 'condition': 'off' },
+        { 'domain': 't05', 'name': 'x', 'condition': ['x'] },
+        { 'domain': 't05a', 'name': 'x', 'condition': '' },
+        { 'domain': 't05b', 'name': 'x', 'condition': None },
+        { 'domain': 't06', 'name': 'x', 'condition': { 'y': 4} },
+        { 'domain': 't07', 'name': 'x', 'condition': 'off', 'annotate_messages': 3 },
+        { 'domain': 't08', 'name': 'x', 'condition': 'off', 'annotate_messages': None },
+        { 'domain': 't09', 'name': 'x', 'condition': 'off', 'annotate_messages': '' },
+        { 'domain': 't10', 'name': 'x', 'condition': 'off', 'annotate_messages': [2] },
+        { 'domain': 't11', 'name': 'x', 'condition': 'off', 'annotate_messages': { 'x':2} },
+        { 'domain': 't12', 'name': 'x', 'condition': 'off', 'generator_name':'g1',
+          'generator': None },
+        { 'domain': 't13', 'name': 'x', 'condition': 'off', 'generator_name':'g2',
+          'generator': '' },  # I guess this is ok?
+        { 'domain': 't14', 'name': 'x', 'condition': 'off', 'generator_name':'g3',
+          'generator': False },
+        { 'domain': 't15', 'name': 'x', 'condition': 'off', 'generator_name':'g4',
+          'generator': [None] },
+        { 'domain': 't16', 'name': 'x', 'condition': 'off', 'generator_name':'g5',
+          'generator': { 'x':3 } },
+        { 'domain': 't16a', 'name': 'x', 'condition': 'off', 'generator_name':'g6',
+          'generator': [ [4] ] },
+
+        { 'domain': 't17', 'name': 'x', 'condition': 'on', 'notifier': None }, # ok, no notifier specified
+        { 'domain': 't18', 'name': 'x', 'condition': 'on', 'notifier': 3 },
+        { 'domain': 't19', 'name': 'x', 'condition': 'off', 'notifier': [ {'a':2} ] },
+        { 'domain': 't20', 'name': 'x', 'condition': 'off', 'notifier': [ None ] },
+        
+        { 'domain': 't21', 'name': 'x', 'condition': 'on', 'message': False }, # ok
+        { 'domain': 't22', 'name': 'x', 'condition': 'on', 'message': 3 },  # ok
+        { 'domain': 't23', 'name': 'x', 'condition': 'on', 'message': [ 3 ] },
+
+        { 'domain': 't24', 'name': 'x', 'threshold': { 'value': None, 'hysteresis': 10, 'minimum':11 } },
+        { 'domain': 't25', 'name': 'x', 'threshold': { 'value': False, 'hysteresis': 10, 'minimum':11 } },
+        { 'domain': 't26', 'name': 'x', 'threshold': { 'value': [2], 'hysteresis': 10, 'minimum':11 } },
+        { 'domain': 't27', 'name': 'x', 'threshold': { 'value': {'a':3}, 'hysteresis': 10, 'minimum':11 } },
+
+        { 'domain': 't28', 'name': 'x', 'trigger': None }, # ok - I guess this just never triggers
+        { 'domain': 't29', 'name': 'x', 'trigger': 3 }, 
+        { 'domain': 't30', 'name': 'x', 'trigger': 'foo' }, 
+        { 'domain': 't31', 'name': 'x', 'trigger': False },
+        { 'domain': 't32', 'name': 'x', 'trigger': {'a': 3} }, 
+        { 'domain': 't33', 'name': 'x', 'trigger': [ None ] }, 
+        { 'domain': 't34', 'name': 'x', 'trigger': [ 3 ] }, 
+        { 'domain': 't35', 'name': 'x', 'trigger': [ 'foo' ] }, 
+        { 'domain': 't36', 'name': 'x', 'trigger': [ False ] }, 
+        { 'domain': 't37', 'name': 'x', 'trigger': [ { 'a' : 4} ] }, 
+        
+        # others where template becomes false or something weird?
+    ], } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+
+    service_calls.popNotifySearch('persistent_notification', 't02a', 'required key not provided')
+    service_calls.popNotifySearch('persistent_notification', 't02b', 'None for dictionary value')
+    service_calls.popNotifySearch('persistent_notification', 't03', 'should be a string')
+    service_calls.popNotifySearch('persistent_notification', 't04', 'should be a string')
+    service_calls.popNotifySearch('persistent_notification', 't05', 'should be a string')
+    service_calls.popNotifySearch('persistent_notification', 't05b', 'template value is None')
+    service_calls.popNotifySearch('persistent_notification', 't06', 'should be a string')
+    service_calls.popNotifySearch('persistent_notification', 't05a', 'which is not truthy')
+    service_calls.popNotifySearch('persistent_notification', 't08', 'invalid boolean value None')
+    service_calls.popNotifySearch('persistent_notification', 't09', 'invalid boolean value')
+    service_calls.popNotifySearch('persistent_notification', 't10', 'invalid boolean value')
+    service_calls.popNotifySearch('persistent_notification', 't11', 'invalid boolean value')
+    service_calls.popNotifySearch('persistent_notification', 't12', 'template is None')
+    service_calls.popNotifySearch('persistent_notification', 'g3', 'generator produced non-string or dict')
+    service_calls.popNotifySearch('persistent_notification', 't15', 'None.*rather than string')
+    service_calls.popNotifySearch('persistent_notification', 't16', 'should be a string')
+    service_calls.popNotifySearch('persistent_notification', 't16a', 'Notifier.*rather than string')
+    # service_calls.popNotifySearch('persistent_notification', 't17', 'no notifier specified')
+    service_calls.popNotifySearch('persistent_notification', 't18', 'not a string')
+    service_calls.popNotifySearch('persistent_notification', 't19', 'should be a string')
+    service_calls.popNotifySearch('persistent_notification', 't20', 'should be a string')
+    service_calls.popNotifySearch('persistent_notification', 't21', 't21_x: False')
+    service_calls.popNotifySearch('persistent_notification', 't22', 't22_x: 3')
+    service_calls.popNotifySearch('persistent_notification', 't23', 'should be a string')
+    service_calls.popNotifySearch('persistent_notification', 't24', 'template value is None')
+    service_calls.popNotifySearch('persistent_notification', 't25', 'rather than a float')
+    service_calls.popNotifySearch('persistent_notification', 't26', 'template value should be a string')
+    service_calls.popNotifySearch('persistent_notification', 't27', 'template value should be a string')
+    service_calls.popNotifySearch('persistent_notification', 't29', 'is not iterable')
+    service_calls.popNotifySearch('persistent_notification', 't30', 'expected a dictionary')
+    service_calls.popNotifySearch('persistent_notification', 't31', 'is not iterable')
+    service_calls.popNotifySearch('persistent_notification', 't32', 'required key not provided')
+    service_calls.popNotifySearch('persistent_notification', 't33', 'is not iterable')
+    service_calls.popNotifySearch('persistent_notification', 't34', 'is not iterable')
+    service_calls.popNotifySearch('persistent_notification', 't35', 'expected a dictionary')
+    service_calls.popNotifySearch('persistent_notification', 't36', 'is not iterable')
+    service_calls.popNotifySearch('persistent_notification', 't37', 'required key not provided')
+    _LOGGER.warning(service_calls.allCalls)
+    gad = hass.data[DOMAIN]
+    _LOGGER.info(gad.alerts['t17']['x']._notifier_list_template)
+    _LOGGER.info(gad.alerts['t18']['x']._notifier_list_template)
+    assert service_calls.isEmpty()
+

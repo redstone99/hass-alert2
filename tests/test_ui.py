@@ -442,6 +442,8 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert rez == { 'rez': [{'platform':'state','entity_id':'sensor.zz'}] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger', 'txt': "[{'trigger':'template','value_template':'{{ true }}'}]" })
     assert rez == { 'rez': [{'platform':'template','value_template':'{{ true }}'}] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'trigger', 'txt': "yes" })
+    assert re.search("'bool' is not iterable", rez['error'])
 
     # condition
     rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': 'on' })
@@ -779,3 +781,45 @@ async def test_reload(hass, service_calls, hass_client, hass_storage, monkeypatc
         await hass.services.async_call('alert2','reload', {})
         await hass.async_block_till_done()
     assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])
+
+async def test_conflict1(hass, service_calls, hass_client, hass_storage):
+    # Make sure UI alert can not overwrite a YAML alert.
+    cfg = { 'alert2': {
+        'alerts': [
+            { 'domain': 'd', 'name': 'n1', 'condition':'off' },
+            { 'domain': 'd', 'name': 'n2', 'condition':'off' }
+        ] } }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n1', 'condition':'on' } })
+    assert re.search('Duplicate declaration.*name=n1', rez['error'])
+    n1 = gad.alerts['d']['n1']
+    assert hass.states.get('alert2.d_n1').state == 'off'
+
+    rez = await tpost("/api/alert2/manageAlert", {'create': {
+        'domain':'d', 'name':'{{genElem}}', 'condition':'on', 'generator_name': 'g1', 'generator': 'n2' } })
+    assert rez == {}
+    service_calls.popNotifyEmpty('persistent_notification', 'Duplicate declaration.*name=n2')
+    n1 = gad.alerts['d']['n2']
+    assert hass.states.get('alert2.d_n2').state == 'off'
+    
+async def test_conflict2(hass, service_calls, hass_client, hass_storage):
+    # Make sure UI alert can not overwrite a YAML alert at startup
+    cfg = { 'alert2': {
+        'alerts': [
+            { 'domain': 'd', 'name': 'n1', 'condition':'off' }
+        ] } }
+    uiCfg = { 'defaults' : { },
+              'alerts': [
+                  { 'domain': 'd', 'name': 'n1', 'condition':'on' }
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    gad = hass.data[DOMAIN]
+    service_calls.popNotifyEmpty('persistent_notification', 'Duplicate declaration.*name=n1')
+    n1 = gad.alerts['d']['n1']
+    assert hass.states.get('alert2.d_n1').state == 'off'
