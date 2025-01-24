@@ -34,8 +34,10 @@ class TestView(HomeAssistantView):
         gad = self.hass.data[DOMAIN]
         if 'stage' in data:
             if data['stage'] == 'getUiData':
+                await self.hass.async_block_till_done()
                 return self.json(gad.uiMgr.data)
             elif data['stage'] == 'reset':
+                await self.hass.async_block_till_done()
                 uiCfg = { 'defaults': {} }
                 self.hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
                                                         'data': { 'config': uiCfg } }

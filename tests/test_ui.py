@@ -724,6 +724,10 @@ async def test_create2(hass, service_calls, hass_client, hass_storage):
     assert hass_storage['alert2.storage']['data']['config']['alerts'][0]['name'] == '{{genElem}}'
     assert service_calls.isEmpty()
 
+    # try load
+    rez = await tpost("/api/alert2/manageAlert", {'load': { 'domain': GENERATOR_DOMAIN, 'name':'g1' } })
+    assert rez == { 'domain':'d', 'name':'{{genElem}}', 'condition':'sensor.a', 'generator_name':'g1', 'generator': 'n5' }
+    
     # same gen is duplicate
     rez = await tpost("/api/alert2/manageAlert", {'create':
             { 'domain':'d', 'name':'{{genElem}}2', 'condition':'sensor.a', 'generator_name':'g1', 'generator': 'n5' } })
