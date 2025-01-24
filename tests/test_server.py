@@ -12,6 +12,7 @@ import custom_components.alert2.entities as a2Entities
 import custom_components.alert2.ui as a2Ui
 from homeassistant.components import http
 from aiohttp.web import middleware
+from homeassistant import config as conf_util
 from homeassistant.components.http.const import KEY_AUTHENTICATED
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.components.http.data_validator import RequestDataValidator
@@ -20,8 +21,10 @@ from aiohttp import web
 from typing import Any
 
 class TestView(HomeAssistantView):
-    def __init__(self, hass):
+    def __init__(self, hass, hass_storage, monkeypatch):
         self.hass = hass
+        self.hass_storage = hass_storage
+        self.monkeypatch = monkeypatch
     url = "/api/alert2test/tcheck"
     name = "api:alert2test:tcheck"
     @RequestDataValidator(vol.Schema({
@@ -33,7 +36,16 @@ class TestView(HomeAssistantView):
             if data['stage'] == 'getUiData':
                 return self.json(gad.uiMgr.data)
             elif data['stage'] == 'reset':
-                gad.uiMgr.saveTopConfig({ 'defaults': {} })
+                uiCfg = { 'defaults': {} }
+                self.hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                                        'data': { 'config': uiCfg } }
+                #gad.uiMgr.saveTopConfig({ 'defaults': {} })
+                cfg = {'alert2': {}}
+                async def fake_cfg(thass):
+                    return cfg
+                with self.monkeypatch.context() as m:
+                    m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+                    await gad.reload_service_handler(None)
             else:
                 assert False
         else:
@@ -41,12 +53,16 @@ class TestView(HomeAssistantView):
         return self.json({})
 
 
-async def test_server(hass, monkeypatch): #, unused_tcp_port_factory):
+async def test_server(hass, hass_storage, monkeypatch): #, unused_tcp_port_factory):
+    cfg = {'alert2': {},
+           http.DOMAIN: {http.CONF_SERVER_PORT: 50005}
+           }
+    assert await async_setup_component(hass, DOMAIN, cfg)
     await async_setup_component(
         hass,
         http.DOMAIN,
-        {http.DOMAIN: {http.CONF_SERVER_PORT: 50005}},
-    )
+        cfg )
+    #        {http.DOMAIN: {http.CONF_SERVER_PORT: 50005}},  )
     cfg = { 'alert2': {} }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.http.async_register_static_paths([
@@ -59,7 +75,7 @@ async def test_server(hass, monkeypatch): #, unused_tcp_port_factory):
         request[KEY_AUTHENTICATED] = True
         return await handler(request)
     hass.http.app.middlewares.append(auth_middleware)
-    hass.http.register_view(TestView(hass))
+    hass.http.register_view(TestView(hass, hass_storage, monkeypatch))
     await hass.async_start()
     await asyncio.sleep(55555555)
     

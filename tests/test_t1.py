@@ -1863,7 +1863,7 @@ async def test_generator3a(hass, service_calls):
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'reserved for generators.*t64ab')
+    service_calls.popNotifyEmpty('persistent_notification', 'required key not provided.*generator.*t64ab')
 
     # Generator can't create a duplicate alert
     await setAndWait(hass, "sensor.a", 't64ad')
@@ -1877,7 +1877,7 @@ async def test_generator3a(hass, service_calls):
     await setAndWait(hass, "sensor.b", 'test')
     assert list(gad.alerts['test'].keys()) == [ 't64aa', 't64ad', 't64ac' ]
     await setAndWait(hass, "sensor.b", GENERATOR_DOMAIN)
-    service_calls.popNotifyEmpty('persistent_notification', 'reserved for generators.*t64ac')
+    service_calls.popNotifyEmpty('persistent_notification', 'required key not provided.*generator.*t64ac')
     
     
 async def test_generator4(hass, service_calls):

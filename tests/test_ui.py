@@ -609,7 +609,7 @@ async def test_create(hass, service_calls, hass_client, hass_storage):
     assert resp.status == 400
     # delete nonexistent
     rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'n3' } })
-    assert re.search('unknown alert', rez['error'])
+    assert re.search('can not find existing', rez['error'])
     assert service_calls.isEmpty()
 
     # load
@@ -691,7 +691,7 @@ async def test_create(hass, service_calls, hass_client, hass_storage):
     
     # can't create new alert via update
     rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'n3', 'condition':'off' } })
-    assert re.search('update alert that does not exist', rez['error'])
+    assert re.search('can not find existing', rez['error'])
 
 async def test_create2(hass, service_calls, hass_client, hass_storage):
     cfg = { 'alert2': {} }
@@ -740,7 +740,7 @@ async def test_create2(hass, service_calls, hass_client, hass_storage):
     # can't delete non-existent
     rez = await tpost("/api/alert2/manageAlert", {'update':
             { 'domain':'d', 'name':'{{genElem}}z', 'condition':'sensor.a', 'generator_name':'g2', 'generator': 'n5' } })
-    assert re.search('Can\'t update alert that does not exist', rez['error'])
+    assert re.search('can not find existing', rez['error'])
 
     # delete generator removes alerts with it
     assert 'alerts' in hass_storage['alert2.storage']['data']['config']
@@ -752,6 +752,22 @@ async def test_create2(hass, service_calls, hass_client, hass_storage):
     assert gad.generators == {}
     assert gad.alerts == {}
     assert not 'alerts' in hass_storage['alert2.storage']['data']['config']
+
+async def test_create3(hass, service_calls, hass_client, hass_storage):
+    cfg = { 'alert2': {} }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+
+    # create n1
+    rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n1', 'condition':'off' } })
+    assert rez == {}
+    n1 = gad.alerts['d']['n1']
+    assert hass.states.get('alert2.d_n1').state == 'off'
+
+    # do update that fails validate.  Alert should still exist
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'n1', 'condition':'{{ick' } })
+    assert re.search('invalid template', rez['error'])
+    n1 = gad.alerts['d']['n1']
+    assert hass.states.get('alert2.d_n1').state == 'off'
     
     
 async def test_reload(hass, service_calls, hass_client, hass_storage, monkeypatch):
@@ -801,6 +817,13 @@ async def test_conflict1(hass, service_calls, hass_client, hass_storage):
     service_calls.popNotifyEmpty('persistent_notification', 'Duplicate declaration.*name=n2')
     n1 = gad.alerts['d']['n2']
     assert hass.states.get('alert2.d_n2').state == 'off'
+
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'n1' } })
+    assert re.search('can not find', rez['error'])
+    n1 = gad.alerts['d']['n1']
+    assert hass.states.get('alert2.d_n1').state == 'off'
+
+
     
 async def test_conflict2(hass, service_calls, hass_client, hass_storage):
     # Make sure UI alert can not overwrite a YAML alert at startup
