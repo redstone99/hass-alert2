@@ -282,11 +282,8 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
               }
     hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
                                        'data': { 'config': uiCfg } }
-    assert await async_setup_component(hass, DOMAIN, cfg)
-    await hass.async_start()
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    gad = hass.data[DOMAIN]
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    
     # Test top-level flags were set
     assert hass.states.get('alert2.alert2_error') is None # skip_internal_errors
     cfga = cfg['alert2']
@@ -300,6 +297,23 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     assert t1.movingSum.maxCount == 5 # uiCfg['defaults']['throttle_fires_per_mins'][0]
     assert t1.movingSum.intervalSecs == 60*6 # uiCfg['defaults']['throttle_fires_per_mins'][1]*60
 
+    # Check how defaults are sent to UI
+    rez = await tpost("/api/alert2/loadTopConfig", {})
+    assert rez == {'rawYaml': {'defaults': {'reminder_frequency_mins': [60], 'notifier': 'n',
+                                            'summary_notifier': False, 'annotate_messages': True,
+                                            'throttle_fires_per_mins': [1, 2]},
+                               'skip_internal_errors': False, 'notifier_startup_grace_secs': 4,
+                               'defer_startup_notifications': True},
+                   'raw': {'defaults': {'reminder_frequency_mins': [4], 'notifier': 'n',
+                                        'summary_notifier': False, 'annotate_messages': True,
+                                        'throttle_fires_per_mins': [5, 6]},
+                           'skip_internal_errors': True, 'notifier_startup_grace_secs': 7,
+                           'defer_startup_notifications': True},
+                   'rawUi': {'defaults': {'reminder_frequency_mins': '[4]',
+                                          'throttle_fires_per_mins': '[5,6]'},
+                             'skip_internal_errors': 'true', 'notifier_startup_grace_secs': '7'}}
+
+    
 async def test_render_v(hass, service_calls, hass_client, hass_storage):
     cfg = { 'alert2': {} }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)

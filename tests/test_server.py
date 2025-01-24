@@ -43,6 +43,8 @@ class TestView(HomeAssistantView):
                                                         'data': { 'config': uiCfg } }
                 #gad.uiMgr.saveTopConfig({ 'defaults': {} })
                 cfg = {'alert2': {}}
+                if 'yaml' in data and isinstance(data['yaml'], dict):
+                    cfg['alert2'] = data['yaml']
                 async def fake_cfg(thass):
                     return cfg
                 with self.monkeypatch.context() as m:
