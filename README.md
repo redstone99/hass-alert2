@@ -41,12 +41,12 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - **Native event-based alerting**. No need to approximate it with conditions and time windows.
 - **Template conditions**.  No need for extra binary sensors. Also means the logic for an alert is in one place in your config file, which makes it easier to manage.
 - **Snooze / disable / throttle notifications**. Handy for noisy sensors or while developing your alerts.
-- **Persistent notification details**. In your HA dashboard, you can view past alert firings as well as the message text sent in notifications.
-- **Custom frontend card**. Makes it easier to view and manage recent alerts.
-- **Hysteresis**. Reduce spurious alerts as sensors fluctuate.
 - **Template notifiers**. Dynamically specify who gets notified.
 - **Generator patterns**. Dynamically define multiple similar alerts, with wildcard support.
-- **YAML reload**. Update your alert2 config without restarting HA.
+- **Manage alerts in UI**. Create or edit alerts via the UI. Reload YAML via the UI without restarting HA.
+- **Persistent notification details**. In your HA dashboard, you can view past alert firings as well as the message text sent in notifications.
+- **Custom frontend cards**. Makes it easier to view and manage alerts.
+- **Hysteresis**. Reduce spurious alerts as sensors fluctuate.
 
 Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-alert2/discussions) or file an [Issue](https://github.com/redstone99/hass-alert2/issues).  Or follow the [development thread](https://community.home-assistant.io/t/alert2-a-new-alerting-component).
 
@@ -642,11 +642,16 @@ alert2:
 
 ## Front-end UI
 
-We recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui), which includes a card for compactly viewing and managing Alert2 alerts.  It also enhances the information shown in the "more-info" dialog when viewing Alert2 entities.
+We recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui), which includes one card for viewing recenlty active alerts and another card for creating or editing alerts. Alert2 UI also enhances the information shown in the "more-info" dialog when viewing Alert2 entities.
+
+Defaults set via the UI take priority over defaults set in YAML for both YAML alerts and UI-created alerts.  The search and editing interface in the UI only applies to alerts created via the UI.
+
+Alert2 supports reloading configuration via the UI.  Go to "Developer Tools" -> "YAML" and click on "Alert2".  That will reload the YAML config as well as all UI-created alerts.
 
 ![Alert2 overview card](resources/overview.png)
+![Alert2 management card](resources/manager.png)
 
-Without [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) you can still view and manage Alert2 alerts, but the process is a bit more involved.
+Without [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) you can still view and do some management of Alert2 alerts, but the process is a bit more involved.
 
 
 ## Service calls
