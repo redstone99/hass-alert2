@@ -644,7 +644,7 @@ alert2:
 
 We recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui), which includes one card for viewing recenlty active alerts and another card for creating or editing alerts. Alert2 UI also enhances the information shown in the "more-info" dialog when viewing Alert2 entities.
 
-Defaults set via the UI take priority over defaults set in YAML for both YAML alerts and UI-created alerts.  The search and editing interface in the UI only applies to alerts created via the UI.
+Defaults set via the UI take priority over defaults set in YAML for both YAML alerts and UI-created alerts.
 
 Alert2 supports reloading configuration via the UI.  Go to "Developer Tools" -> "YAML" and click on "Alert2".  That will reload the YAML config as well as all UI-created alerts.
 
@@ -725,8 +725,6 @@ If an unhandled exception occurs, alert2 will fire an alert: `alert2.mydomain_un
 
 ## Contributing
 
-There are lots of great ideas for making Alert2 better and we'll take all the help we can get!
-A number of great ideas have arisen on the main [development thread](https://community.home-assistant.io/t/alert2-a-new-alerting-component) as well as on [Github issues](https://github.com/redstone99/hass-alert2/issues).
+We welcome ideas for improving Alert2 or help implementing any of the great ideas people have suggested so far. A number of great ideas have arisen on the main [development thread](https://community.home-assistant.io/t/alert2-a-new-alerting-component) as well as on [Github issues](https://github.com/redstone99/hass-alert2/issues).
 
-We happily accept help coding or UI design help.  Ask on that development thread or jump in and submit a PR!
-
+Feel free to jump in on any of the threads!
