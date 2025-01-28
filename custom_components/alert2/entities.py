@@ -8,6 +8,7 @@ import voluptuous as vol
 from   homeassistant.const import (
     EVENT_HOMEASSISTANT_STARTED
 )
+import homeassistant.helpers.config_validation as cv
 from   homeassistant.helpers.entity import Entity
 from   homeassistant.helpers.restore_state import RestoreEntity
 import homeassistant.const as haConst
@@ -29,6 +30,7 @@ from .util import (
     GENERATOR_DOMAIN,
     gAssertMsg
 )
+from .config import ( literalIllegalChar )
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -137,16 +139,14 @@ class MovingSum:
         _LOGGER.debug(f'remainingSecs: ret={secsToWait},  {self.buckets}')
         return secsToWait
 
-def getField(fieldName, config, defaults, requireDefault=True):
+def getField(fieldName, config, defaults):
     if fieldName in config:
         return config[fieldName]
     elif fieldName in defaults:
         return defaults[fieldName]
     else:
-        if requireDefault:
-            raise vol.Invalid(f'Alert {config["domain"]},{config["name"]} config or defaults must specify {fieldName}')
-        else:
-            return None
+        raise vol.Invalid(f'Alert {config["domain"]},{config["name"]} config or defaults must specify {fieldName}')
+
 def agoStr(secondsAgo):
     if secondsAgo < 1.5*60:
         astr = f'{round(secondsAgo)} s'
@@ -164,6 +164,19 @@ def agoStr(secondsAgo):
 
 def entNameFromDN(domain, name):
     return f'{domain}_{name}'
+
+def renderResultToList(arez):
+    if len(arez) == 0:
+        return []
+    #elif isinstance(arez, list):
+    #    return arez
+    else:
+        try:
+            literalList = ast.literal_eval(arez)
+        except Exception as ex:  # literal_eval can throw various kinds of exceptions
+            literalList = arez
+        # might not be [ str ], will check below.
+        return literalList if isinstance(literalList, list) else [ literalList ]
 
 
 # cfgList = [ { fieldName, type, template }, .. ]
@@ -199,6 +212,7 @@ class Tracker:
     def startWatchingEv(self, event):
         self.hass.loop.call_soon_threadsafe(self.startWatching)
     def startWatching(self):
+        #_LOGGER.warning(f'startWatching called for {self.cfgList}')
         trackers = []
         for x in self.cfgList:
             if isinstance(x['template'], template_helper.Template):
@@ -228,6 +242,7 @@ class Tracker:
     def _result_cb(self, 
                    event: Event[EventStateChangedData] | None,
                    updates: list[TrackTemplateResult]) -> None:
+        #_LOGGER.warning('_result_cb')
         if event:
             self.parentEnt.async_set_context(event.context)
         entity_id = event and event.data["entity_id"]
@@ -292,9 +307,12 @@ class Tracker:
                 results[idx] =  rez
             elif self.cfgList[idx]['type'] == Tracker.Type.Bool:
                 try:
-                    abool = template_helper.result_as_boolean(resultStrs[idx])
+                    # result_as_boolean converts vol.Invalid to False
+                    #abool = template_helper.result_as_boolean(resultStrs[idx])
+                    abool = cv.boolean(resultStrs[idx])
                 except vol.Invalid as err:
-                    report(DOMAIN, 'error', f'{self.parentEnt.name} {self.cfgList[idx]["fieldName"]} template rendered to "{resultStrs[idx]}", which is not truthy')
+                    _LOGGER.warning(self.cfgList[idx]['template'])
+                    report(DOMAIN, 'error', f'{self.parentEnt.name} {self.cfgList[idx]["fieldName"]} template rendered to "{resultStrs[idx]}", which is not truthy (e.g., "true", "on" or opposites) template="{self.cfgList[idx]["template"].template}"')
                     return
                 results[idx] = abool
             elif self.cfgList[idx]['type'] == Tracker.Type.Float:
@@ -305,31 +323,34 @@ class Tracker:
                     return
                 results[idx] = afloat
             elif self.cfgList[idx]['type'] == Tracker.Type.List:
-                if len(resultStrs[idx]) == 0:
-                    results[idx] = []
-                #elif isinstance(resultStrs[idx], list):
-                #    results[idx] = resultStrs[idx]
-                else:
-                    try:
-                        literalList = ast.literal_eval(resultStrs[idx])
-                    except Exception as ex:  # literal_eval can throw various kinds of exceptions
-                        literalList = resultStrs[idx]
-                    # might not be [ str], will check below.
-                    results[idx] = literalList if isinstance(literalList, list) else [ literalList ]
+                results[idx] = renderResultToList(resultStrs[idx])
 
         self.cb(results)
         
-                
+
+def generatorElemToVars(hass, elem):
+    svars = {'genRaw': elem }
+    if isinstance(elem, dict):
+        svars.update(elem)
+    elif hass.states.get(elem):
+        svars['genEntityId'] = elem
+    else:
+        svars['genElem'] = elem
+    return svars
+        
 class AlertGenerator(SensorEntity):
     _attr_should_poll = False
     _attr_device_class = SensorDeviceClass.DATA_SIZE #'problem'
     #_attr_available = True  defaults to True
-    def __init__(self, hass, alertData, config):
+    def __init__(self, hass, alertData, config, rawConfig):
         super().__init__()
         self.hass = hass
         self.alertData = alertData
         self.config = config
+        self.rawConfig = rawConfig
         self._attr_name = entNameFromDN(GENERATOR_DOMAIN, self.config["generator_name"])
+        self.alDomain = GENERATOR_DOMAIN
+        self.alName = self.config["generator_name"]
         self._generator_template = self.config['generator']
         self.tracker = Tracker(self, hass, alertData,
                                [ { 'fieldName': 'generator', 'type': Tracker.Type.List,
@@ -351,8 +372,7 @@ class AlertGenerator(SensorEntity):
         await super().async_will_remove_from_hass()
         self.tracker.shutdown()
         for ent in self.nameEntityMap.values():
-            await self.alertData.component.async_remove_entity(ent.entity_id)
-            self.alertData.undeclareCondition(ent.alDomain, ent.alName) # destroys ent
+            await self.alertData.undeclareAlert(ent.alDomain, ent.alName) # destroys ent
         self.nameEntityMap = {}
 
     async def async_update(self):
@@ -366,17 +386,14 @@ class AlertGenerator(SensorEntity):
         
         # Now see if entities are added or deleted
         needWrite = False
-        newEntities = []
         currNames = set() # entity names (ie the part after alert2.)
         sawError = False
         for elem in alist:
-            svars = { 'genRaw': elem }
-            if isinstance(elem, dict):
-                svars.update(elem)
-            elif self.hass.states.get(elem):
-                svars['genEntityId'] = elem
-            else:
-                svars['genElem'] = elem
+            if not (isinstance(elem, str) or isinstance(elem, dict)):
+                report(DOMAIN, 'error', f'{self.name} generator produced non-string or dict element "{elem}" of type {type(elem)}')
+                sawError = True
+                break
+            svars = generatorElemToVars(self.hass, elem)
             
             try:
                 nameStr = self.config['name'].async_render(variables=svars, parse_result=False).strip()
@@ -399,11 +416,24 @@ class AlertGenerator(SensorEntity):
             else:
                 # new entity added
                 if len(entName) == 0:
-                    report(DOMAIN, 'error', f'Domain+Name template for {self.name} rendered to empty string')
-                    continue
-                acfg = dict(self.config) # very shallow copy, don't copy object values
+                    report(DOMAIN, 'error', f'{self.name} Domain+Name template rendered to empty string')
+                    sawError = True
+                    break
+                if len(domainStr) == 0 or literalIllegalChar(domainStr):
+                    report(DOMAIN, 'error', f'{self.name} Domain template rendered to "{domainStr}" which is either empty or has illegal characters (like ' + '[]{}"\')')
+                    sawError = True
+                    break
+                if len(nameStr) == 0 or literalIllegalChar(nameStr):
+                    report(DOMAIN, 'error', f'{self.name} Name template rendered to "{nameStr}" which is either empty or has illegal characters (like ' + '[]{}"\')')
+                    sawError = True
+                    break
+                # very shallow copy, don't copy object values
+                # Also, use rawConfig so we don't double interpret the config dict.
+                acfg = dict(self.rawConfig) 
                 acfg['domain'] = domainStr
                 acfg['name'] = nameStr
+                del acfg['generator']
+                del acfg['generator_name']
                 #if 'friendly_name' in self.config:
                 #    try:
                 #        friendlyNameStr = self.config['friendly_name'].async_render(
@@ -413,14 +443,15 @@ class AlertGenerator(SensorEntity):
                 #        report(DOMAIN, 'error', f'{self.name} Friendly_name template returned err {err}')
                 #        sawError = True
                 #        break
-                _LOGGER.debug(f'{self.name} generator creating alert: {acfg} with vars {svars}')
-                ent = self.alertData.declareCondition(acfg, False, genVars=svars)
-                if ent is not None:
+                _LOGGER.info(f'{self.name} generator creating alert: {acfg} with vars {svars}')
+                ent = await self.alertData.declareAlert(acfg, genVars=svars)
+                if ent is None:
+                    sawError = True
+                    break
+                else:
                     _LOGGER.info(f'{self.name} generator created new alert entity {DOMAIN}.{ent.name}')
                     self.nameEntityMap[entName] = ent
-                    newEntities.append(ent)
                     needWrite = True
-        await self.alertData.component.async_add_entities(newEntities)
 
         if not sawError:
             # If we saw an error while processing templates, we might be missing entities
@@ -430,15 +461,57 @@ class AlertGenerator(SensorEntity):
                     # entity no longer in list
                     ent = self.nameEntityMap[aname]
                     _LOGGER.info(f'Generator {self.name} removing alert entity {DOMAIN}.{ent.name}')
-                    await self.alertData.component.async_remove_entity(ent.entity_id)
                     #await ent.async_remove() # I think this is the complement of async_add_entities
-                    self.alertData.undeclareCondition(ent.alDomain, ent.alName) # destroys ent
+                    await self.alertData.undeclareAlert(ent.alDomain, ent.alName) # destroys ent
                     del self.nameEntityMap[aname]
                     needWrite = True
         if needWrite:
             self.async_write_ha_state()
 
 
+def notifierTemplateToList(hass, extraVariables, templOrList, sourceTemplate):
+    errors = []
+    debugInfo = []
+    if isinstance(templOrList, list):
+        tnotifiers = templOrList
+        # config did some validation that it's list of non-empty strings
+    else:
+        try:
+            renderRez = templOrList.async_render(variables=extraVariables, parse_result=False).strip()
+        except TemplateError as err:
+            errors.append(f'{sourceTemplate} template: {err}')
+            tnotifiers = []
+            # Continue and notify anyways
+        else:
+            debugInfo.append(f'{sourceTemplate} template="{templOrList}"')
+            debugInfo.append(f'rendered="{renderRez}"')
+            toEval = renderRez
+            tstate = hass.states.get(renderRez)
+            if tstate is not None:
+                toEval = tstate.state
+                debugInfo.append(f'state="{toEval}"')
+            try:
+                literalList = ast.literal_eval(toEval)
+            except Exception as ex:  # literal_eval can throw various kinds of exceptions
+                # Could just be a literal notifier name, like 'foo'
+                # or could be real issue, like '[ "foo"'  (missing trailing bracket)
+                # we assume the best, and treat it like a literal notifier name.
+                # If it's not, then we'll get an error of notifier not existing
+                literalList = toEval
+            # might not be [ str], will check below.
+            tnotifiers = literalList if isinstance(literalList, list) else [ literalList ]
+
+    notifiers = []
+    for anotifier in tnotifiers:
+        if not isinstance(anotifier, str):
+            errors.append(f'a {sourceTemplate} is not a string but {type(anotifier)}: "{anotifier}"')
+        elif len(anotifier) == 0:
+            errors.append(f'a {sourceTemplate} cannot be the empty string')
+        elif literalIllegalChar(anotifier):
+            errors.append(f'a {sourceTemplate} single element has illegal characters (e.g., "[" or "\'"): "{anotifier}"')
+        else:
+            notifiers.append(anotifier)
+    return (notifiers, errors, debugInfo)
 
 # Functionality common to both event alerts and condition alerts
 class AlertBase(RestoreEntity):
@@ -500,7 +573,7 @@ class AlertBase(RestoreEntity):
         if isinstance(self._summary_notifier, template_helper.Template):
             self._summary_notifier.hass = hass
         self.annotate_messages = getField('annotate_messages', config, defaults)
-        throttle_fires_per_mins = getField('throttle_fires_per_mins', config, defaults, requireDefault=False)
+        throttle_fires_per_mins = getField('throttle_fires_per_mins', config, defaults)
         self.movingSum = None
         if throttle_fires_per_mins is not None:
             self.movingSum = MovingSum(throttle_fires_per_mins[0], throttle_fires_per_mins[1])
@@ -699,9 +772,6 @@ class AlertBase(RestoreEntity):
     # Returns [] if should not notify.
     def getNotifiers(self, args, reason: NotificationReason):
         # Get list of notifiers to notify
-        notifiers = [ ]
-        errors = [ ]
-        debugInfo = []
 
         sourceTemplate = 'notifier'
         notifier_template = self._notifier_list_template
@@ -713,45 +783,16 @@ class AlertBase(RestoreEntity):
             else:
                 sourceTemplate = 'summary_notifier'
                 notifier_template = self._summary_notifier
-        
-        if isinstance(notifier_template, list):
-            notifiers = notifier_template
-            # config did some validation that it's list of non-empty strings
-        else:
-            try:
-                renderRez = notifier_template.async_render(variables=self.extraVariables, parse_result=False).strip()
-            except TemplateError as err:
-                errors.append(f'{sourceTemplate} template: {err}')
-                # Continue and notify anyways
-            else:
-                debugInfo.append(f'{sourceTemplate} template="{notifier_template}"')
-                debugInfo.append(f'rendered="{renderRez}"')
-                toEval = renderRez
-                tstate = self.hass.states.get(renderRez)
-                if tstate is not None:
-                    toEval = tstate.state
-                    debugInfo.append(f'state="{toEval}"')
-                try:
-                    literalList = ast.literal_eval(toEval)
-                except Exception as ex:  # literal_eval can throw various kinds of exceptions
-                    # Could just be a literal notifier name, like 'foo'
-                    # or could be real issue, like '[ "foo"'  (missing trailing bracket)
-                    # we assume the best, and treat it like a literal notifier name.
-                    # If it's not, then we'll get an error of notifier not existing
-                    literalList = toEval
-                # might not be [ str], will check below.
-                notifiers = literalList if isinstance(literalList, list) else [ literalList ]
+
+        (notifiers, errors, debugInfo) = notifierTemplateToList(self.hass, self.extraVariables, notifier_template,
+                                                                sourceTemplate)
                     
-            #_LOGGER.warning(f'notifiers={notifiers} errors={errors} renderRez={renderRez} literalList={literalList}')
+        #_LOGGER.warning(f'notifiers={notifiers} errors={errors} renderRez={renderRez} literalList={literalList}')
         notifier_list = []
         defer_notifier_list = []
         alertData = self.hass.data[DOMAIN]
         for anotifier in notifiers:
-            if not isinstance(anotifier, str):
-                errors.append(f'a {sourceTemplate} is not a string but {type(anotifier)}: "{anotifier}"')
-            elif len(anotifier) == 0:
-                errors.append(f'a {sourceTemplate} cannot be the empty string')
-            elif alertData.delayedNotifierMgr.willDefer(anotifier, args):
+            if alertData.delayedNotifierMgr.willDefer(anotifier, args):
                 defer_notifier_list.append(anotifier)
             elif self.hass.services.has_service('notify', anotifier):
                 notifier_list.append(anotifier)
@@ -770,7 +811,7 @@ class AlertBase(RestoreEntity):
                 else:
                     # errors should have reason for missing notifiers, and it'll be reported
                     if len(errors) == 0:
-                        report(DOMAIN, 'error', f'For {self.name}: somehow no {sourceTemplate} specified')
+                        pass #report(DOMAIN, 'error', f'For {self.name}: somehow no {sourceTemplate} specified')
         if len(errors) > 0:
             errStr = f'{errors} with debugInfo {debugInfo}'
             if self.alDomain == DOMAIN and self.alName == 'error':
@@ -1126,9 +1167,11 @@ class EventAlert(AlertBase):
                 return
             _LOGGER.debug(f'Got result: {rez}')
             try:
-                brez = template_helper.result_as_boolean(rez)
+                # result_as_boolean converts vol.Invalid to False
+                #brez = template_helper.result_as_boolean(rez)
+                brez = cv.boolean(rez)
             except vol.Invalid as err:
-                report(DOMAIN, 'error', f'{self.name} condition template rendered to "{rez}", which is not truthy')
+                report(DOMAIN, 'error', f'{self.name} condition template rendered to "{rez}", which is not truthy (e.g., "true", "on" or opposites) template="{self._condition_template.template}"')
                 return
 
             #_LOGGER.warning(f' cond={self._condition_template.template} and is {rez} {type(rez)} {brez}')

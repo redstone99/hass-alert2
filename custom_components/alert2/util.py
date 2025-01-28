@@ -23,6 +23,8 @@ def report(domain: str, name: str, message: str | None = None, isException: bool
     if isException:
         _LOGGER.exception(f'Exception reported: {data}')
     else:
+        #import traceback
+        #_LOGGER.warning(f' err reported from: {"".join(traceback.format_stack())}')
         _LOGGER.error(f'Err reported: {data}')
     #_LOGGER.warning(f'  report() called from: {"".join(traceback.format_stack())}')
     ghass = global_hass
