@@ -648,6 +648,8 @@ Defaults set via the UI take priority over defaults set in YAML for both YAML al
 
 Alert2 supports reloading configuration via the UI.  Go to "Developer Tools" -> "YAML" and click on "Alert2".  That will reload the YAML config as well as all UI-created alerts.
 
+If you ever need to know, Alert2 stores the UI state, including entities defined, in your configuration directory in a JSON file called `.storage/alert2.storage`.
+
 ![Alert2 overview card](resources/overview.png)
 ![Alert2 management card](resources/manager.png)
 
