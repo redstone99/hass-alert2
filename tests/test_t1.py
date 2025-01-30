@@ -2465,3 +2465,172 @@ async def test_restore_on(hass, service_calls, hass_storage):
     await hass.async_block_till_done()
     await asyncio.sleep(0.3)
     service_calls.popNotifyEmpty('persistent_notification', 'test_t1 fired 7x')
+
+async def test_onoff_cond(hass, service_calls, caplog):
+    cfg = { 'alert2' : {  'alerts' : [
+        { 'domain': 'test', 'name': 't1', 'condition': 'off', 'condition_off': 'off', 'condition_on':'off' }, # bad
+        { 'domain': 'test', 'name': 't5', 'condition_off': 'off' }, # bad
+        { 'domain': 'test', 'name': 't2', 'trigger': [{'platform':'state','entity_id':'sensor.nope'}],
+          'condition': 'off', 'condition_off': 'off' }, # bad
+        
+        { 'domain': 'test', 'name': 't3', 'condition_on': 'sensor.3on', 'condition_off': 'sensor.3off' },
+        { 'domain': 'test', 'name': 't4', 'condition_on': 'sensor.4on', 'trigger_on': [{'platform':'state','entity_id':'sensor.4ton'}], 'condition_off': 'sensor.4off' }, 
+        { 'domain': 'test', 'name': 't6', 'trigger_on': [{'platform':'state','entity_id':'sensor.6ton'}], 'condition_on': 'sensor.6on', 'trigger_off': [{'platform':'state','entity_id':'sensor.6toff'}], 'condition_off': 'sensor.6off' },
+        { 'domain': 'test', 'name': 't7', 'trigger_on': [{'platform':'state','entity_id':'sensor.7ton'}], 'trigger_off': [{'platform':'state','entity_id':'sensor.7toff'}] },
+        { 'domain': 'test', 'name': 't8', 'trigger_on': [{'platform':'state','entity_id':'sensor.8ton'}], 'manual_on': True, 'trigger_off': [{'platform':'state','entity_id':'sensor.8toff'}] },
+        { 'domain': 'test', 'name': 't9', 'trigger_on': [{'platform':'state','entity_id':'sensor.9ton'}], 'manual_off': True },
+        # test delay_on_secs
+    ]}}
+    hass.states.async_set("sensor.3on", 'off')
+    hass.states.async_set("sensor.3off", 'off')
+    hass.states.async_set("sensor.4on", 'off')
+    hass.states.async_set("sensor.4off", 'off')
+    hass.states.async_set("sensor.6on", 'off')
+    hass.states.async_set("sensor.6off", 'off')
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    
+    service_calls.popNotifySearch('persistent_notification', 't1', 'Can not mix condition')
+    service_calls.popNotifySearch('persistent_notification', 't5', 'off. criteria must also include an .on')
+    service_calls.popNotifySearch('persistent_notification', 't2', 'extra keys not allowed')
+    assert service_calls.isEmpty()
+    # Invalid call, so nothing turns on
+    await hass.services.async_call('alert2', 'manual_on', {'entity_id':'alert2.test_t3'})
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert 'manual_on called but alert alert2.test_t3 does not have manual_on enabled' in caplog.text
+    # Invalid call, so nothing turns on
+    await hass.services.async_call('alert2', 'manual_off', {'entity_id':'alert2.test_t3'})
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert 'manual_off called but alert alert2.test_t3 does not have manual_off enabled' in caplog.text
+
+    # t3 tests
+    await setAndWait(hass, "sensor.3on", 'false')
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.3on", 'no')
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.3on", 'on')
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t3: turned on')
+    # cond on/of is edge triggered, so turning off sensor shouldn't affect alert.
+    await setAndWait(hass, "sensor.3on", 'off')
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t3').state == 'on'
+    await setAndWait(hass, "sensor.3on", 'on')
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t3').state == 'on'
+    await setAndWait(hass, "sensor.3off", 'false')
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t3').state == 'on'
+    # sensor.3on is still on, alert is on.  Since cond on/off is edge triggered, now
+    # switching edges of 3off to on should turn off alert.
+    await setAndWait(hass, "sensor.3off", 'on')
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t3: turned off')
+    assert hass.states.get('alert2.test_t3').state == 'off'
+    # and with edge trigger, changing form of yes for 3on should turn it back on
+    await setAndWait(hass, "sensor.3on", 'yes')
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t3: turned on')
+    assert hass.states.get('alert2.test_t3').state == 'on'
+    # But edge trigger of moving off should change state
+    await setAndWait(hass, "sensor.3off", 'off')
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t3').state == 'on'
+    await setAndWait(hass, "sensor.3on", 'off')
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t3').state == 'on'
+
+    # t4 tests
+    #
+    # Cond is false, so triggering shouldn't turn on
+    await setAndWait(hass, "sensor.4on", 'off')
+    await setAndWait(hass, "sensor.4ton", '1')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t4').state == 'off'
+    # turning on condition doesn't trigger anything
+    await setAndWait(hass, "sensor.4on", 'on')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t4').state == 'off'
+    # now triggering will turn on
+    await setAndWait(hass, "sensor.4ton", '2')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t4: turned on')
+    assert hass.states.get('alert2.test_t4').state == 'on'
+    # change to cond off that's off doesn't change anything
+    await setAndWait(hass, "sensor.4off", 'false')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t4').state == 'on'
+    # change of off one to on does
+    await setAndWait(hass, "sensor.4off", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t4: turned off')
+    assert hass.states.get('alert2.test_t4').state == 'off'
+
+    # t6 tests
+    await setAndWait(hass, "sensor.6ton", '1')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t6').state == 'off'
+    await setAndWait(hass, "sensor.6toff", '1')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t6').state == 'off'
+    await setAndWait(hass, "sensor.6on", 'yes')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t6').state == 'off'
+    await setAndWait(hass, "sensor.6off", 'yes')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t6').state == 'off'
+    # now trigger should work
+    await setAndWait(hass, "sensor.6toff", '2')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t6').state == 'off'
+    await setAndWait(hass, "sensor.6ton", '2')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t6: turned on')
+    assert hass.states.get('alert2.test_t6').state == 'on'
+    await setAndWait(hass, "sensor.6toff", '3')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t6: turned off')
+    assert hass.states.get('alert2.test_t6').state == 'off'
+    
+    # t7 tests
+    await setAndWait(hass, "sensor.7ton", '1')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t7: turned on')
+    assert hass.states.get('alert2.test_t7').state == 'on'
+    await setAndWait(hass, "sensor.7ton", '2')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t7').state == 'on'
+    await setAndWait(hass, "sensor.7toff", '1')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t7: turned off')
+    assert hass.states.get('alert2.test_t7').state == 'off'
+
+    # t8 tests
+    await hass.services.async_call('alert2', 'manual_on', {'entity_id':'alert2.test_t8'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t8: turned on')
+    assert hass.states.get('alert2.test_t8').state == 'on'
+    # manual off is not enabled
+    await hass.services.async_call('alert2', 'manual_off', {'entity_id':'alert2.test_t8'})
+    await hass.async_block_till_done()
+    assert hass.states.get('alert2.test_t8').state == 'on'
+    await setAndWait(hass, "sensor.8toff", '1')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t8: turned off')
+    assert hass.states.get('alert2.test_t8').state == 'off'
+    await setAndWait(hass, "sensor.8ton", '1')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t8: turned on')
+    assert hass.states.get('alert2.test_t8').state == 'on'
+
+    # t9 tests
+    await setAndWait(hass, "sensor.9ton", '1')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t9: turned on')
+    assert hass.states.get('alert2.test_t9').state == 'on'
+    await hass.services.async_call('alert2', 'manual_off', {'entity_id':'alert2.test_t9'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t9: turned off')
+    assert hass.states.get('alert2.test_t9').state == 'off'
+    
