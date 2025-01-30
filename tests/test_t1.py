@@ -16,9 +16,16 @@ if os.environ.get('JTESTDIR'):
 from custom_components.alert2 import (DOMAIN, Alert2Data)
 import custom_components.alert2 as alert2
 import custom_components.alert2.entities as a2Entities
-from custom_components.alert2.util import (     GENERATOR_DOMAIN )
+from custom_components.alert2.util import (     GENERATOR_DOMAIN,
+                                                EVENT_ALERT2_CREATE,
+                                                EVENT_ALERT2_DELETE,
+                                                EVENT_ALERT2_FIRE,
+                                                EVENT_ALERT2_ON,
+                                                EVENT_ALERT2_OFF,
+                                           )
 import homeassistant.const
 from homeassistant import config as conf_util
+import homeassistant.helpers.restore_state as rs
 
 async def test_cfg1(hass):
     assert await async_setup_component(hass, DOMAIN, { 'alert2': {} })
@@ -2062,7 +2069,7 @@ async def test_generator7(hass, service_calls):
     await hass.async_block_till_done()
 
     service_calls.popNotifySearch('persistent_notification', 't69', 't69.* turned on')
-    service_calls.popNotifyEmpty('persistent_notification', 'must contain at least one of.*g16')
+    service_calls.popNotifyEmpty('persistent_notification', 'Must specify either.*g16')
 
     gad = hass.data[DOMAIN]
     assert len(gad.generators) == 1
@@ -2090,7 +2097,7 @@ async def test_late_state(hass, service_calls):
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 't70 condition template rendered to "unknown", which is not truthy')
+    service_calls.popNotifyEmpty('persistent_notification', 't70.*condition template rendered to "unknown", which is not truthy')
     gad = hass.data[DOMAIN]
     t70 = gad.alerts['test']['t70']
     assert re.search('states."sensor.ick"', t70._condition_template.template)
@@ -2348,3 +2355,113 @@ async def test_bad2(hass, service_calls):
     _LOGGER.info(gad.alerts['t18']['x']._notifier_list_template)
     assert service_calls.isEmpty()
 
+async def test_ha_event(hass, service_calls):
+    cfg = { 'alert2' : {  'alerts' : [
+        { 'domain': 'test', 'name': 't9', 'condition': 'sensor.a' },
+        { 'domain': 'test', 'name': 't10', 'trigger': [{'platform':'state','entity_id':'sensor.b'}] }, 
+        { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off', 'generator_name':'g1', 'generator':"{{ states('sensor.c')}}" }, 
+        ], 'tracked': [
+            { 'domain': 'test', 'name': 't11' },
+        ]}}
+    hass.states.async_set("sensor.a", 'off')
+    hass.states.async_set("sensor.b", '3')
+    hass.states.async_set("sensor.c", '[]')
+    calls = []
+    hass.bus.async_listen(EVENT_ALERT2_CREATE, lambda ev: calls.append({EVENT_ALERT2_CREATE: ev }))
+    hass.bus.async_listen(EVENT_ALERT2_DELETE, lambda ev: calls.append({EVENT_ALERT2_DELETE: ev }))
+    hass.bus.async_listen(EVENT_ALERT2_FIRE, lambda ev: calls.append({EVENT_ALERT2_FIRE: ev }))
+    hass.bus.async_listen(EVENT_ALERT2_ON, lambda ev: calls.append({EVENT_ALERT2_ON: ev }))
+    hass.bus.async_listen(EVENT_ALERT2_OFF, lambda ev: calls.append({EVENT_ALERT2_OFF: ev }))
+    def callHas(an, eid):
+        idx = next((i for i, x in enumerate(calls) if an in x and x[an].data['entity_id'] == eid), -1)
+        assert idx >= 0
+        robj = calls[idx][an].data
+        del calls[idx]
+        return robj
+    assert len(calls) == 0
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+
+    # Check creation and deletion
+    assert callHas(EVENT_ALERT2_CREATE, 'alert2.test_t9') == { 'entity_id': 'alert2.test_t9', 'domain': 'test', 'name': 't9' }
+    assert callHas(EVENT_ALERT2_CREATE, 'alert2.test_t10') == { 'entity_id': 'alert2.test_t10', 'domain': 'test', 'name': 't10' }
+    assert callHas(EVENT_ALERT2_CREATE, 'alert2.test_t11') == { 'entity_id': 'alert2.test_t11', 'domain': 'test', 'name': 't11' }
+    assert callHas(EVENT_ALERT2_CREATE, 'sensor.alert2generator_g1') == { 'entity_id': 'sensor.alert2generator_g1', 'domain': 'alert2generator', 'name': 'g1' }
+    assert callHas(EVENT_ALERT2_CREATE, 'alert2.alert2_error') == { 'entity_id': 'alert2.alert2_error', 'domain': 'alert2', 'name': 'error' }
+    assert not calls
+
+    await setAndWait(hass, "sensor.c", '[ "x1" ]')
+    assert callHas(EVENT_ALERT2_CREATE, 'alert2.test_x1') == { 'entity_id': 'alert2.test_x1', 'domain': 'test', 'name': 'x1' }
+    assert not calls
+    await setAndWait(hass, "sensor.c", '[]')
+    assert callHas(EVENT_ALERT2_DELETE, 'alert2.test_x1') == { 'entity_id': 'alert2.test_x1', 'domain': 'test', 'name': 'x1' }
+    assert not calls
+
+    # Check condition turning on and off
+    await setAndWait(hass, "sensor.a", 'on')
+    assert callHas(EVENT_ALERT2_ON, 'alert2.test_t9') == { 'entity_id': 'alert2.test_t9', 'domain': 'test', 'name': 't9' }
+    assert not calls
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t9: turned on')
+    await setAndWait(hass, "sensor.a", 'off')
+    assert callHas(EVENT_ALERT2_OFF, 'alert2.test_t9') == { 'entity_id': 'alert2.test_t9', 'domain': 'test', 'name': 't9' }
+    assert not calls
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t9: turned off')
+    
+    # Check event triggering
+    await setAndWait(hass, "sensor.b", '4')
+    assert callHas(EVENT_ALERT2_FIRE, 'alert2.test_t10') == { 'entity_id': 'alert2.test_t10', 'domain': 'test', 'name': 't10' }
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t10')
+    assert not calls
+
+    # check event reported
+    alert2.report('test', 't11', 'foo')
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t11: foo')
+    assert callHas(EVENT_ALERT2_FIRE, 'alert2.test_t11') == { 'entity_id': 'alert2.test_t11', 'domain': 'test', 'name': 't11' }
+    assert not calls
+
+async def test_restore_on(hass, service_calls, hass_storage):
+    # test that alert sends reminders if was on when HA restarts
+    now = rawdt.datetime.now(rawdt.timezone.utc)
+    def hrsAgoStr(anum):
+        return str(now - rawdt.timedelta(hours=anum))
+    # Create an alert that's fired 7 times since the last notification
+    hass_storage['core.restore_state'] = { 'version': 1, 'minor_version': 1, 'key': 'core.restore_state',
+        'data': [
+            {
+                "state": {"entity_id":"alert2.test_t1","state":"off",
+                          "attributes":{"icon":"mdi:alert","custom_ui_more_info":"more-info-alert2",
+                                        "custom_ui_state_card":"state-card-alert2",
+                                        "last_notified_time":hrsAgoStr(7),
+                                        "last_fired_time":hrsAgoStr(5),
+                                        "last_fired_message":"",
+                                        "last_ack_time":None,"friendly_name2":None,
+                                        "fires_since_last_notify":7, ######
+                                        "notified_max_on":0,
+                                        "notification_control":"enabled",
+                                        "last_on_time":hrsAgoStr(5),
+                                        "last_off_time":hrsAgoStr(4),
+                                        "reminders_since_fire":0,"cond_true_time":None,
+                                        "device_class":"problem","friendly_name":"test_t1"},
+                          "last_changed":hrsAgoStr(1),
+                          "last_reported":hrsAgoStr(1),
+                          "last_updated":hrsAgoStr(1),
+                          "context":{"id":"01JJVFG73JJNRX1A4B2E92D98G","parent_id":None,"user_id":None}},
+                "extra_data": None,
+                "last_seen": hrsAgoStr(1)
+            },
+        ] }
+    cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True }, 'alerts' : [
+                             { 'domain': 'test', 'name': 't1', 'condition': 'off' },
+                         ] } }
+    await rs.async_load(hass)
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await asyncio.sleep(0.1)
+    gad = hass.data[DOMAIN]
+    t1 = gad.alerts['test']['t1']
+    assert t1.fires_since_last_notify > 0
+    await hass.async_start()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.3)
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t1 fired 7x')

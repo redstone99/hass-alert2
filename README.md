@@ -644,7 +644,7 @@ alert2:
 
 We recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui), which includes one card for viewing recenlty active alerts and another card for creating or editing alerts. Alert2 UI also enhances the information shown in the "more-info" dialog when viewing Alert2 entities.
 
-Defaults set via the UI take priority over defaults set in YAML for both YAML alerts and UI-created alerts.
+Defaults set via the UI take priority over defaults set in YAML for both YAML alerts and UI-created alerts.  Alert2 does not allow any two alerts created via the UI or YAML to have the same domain and name.
 
 Alert2 supports reloading configuration via the UI.  Go to "Developer Tools" -> "YAML" and click on "Alert2".  That will reload the YAML config as well as all UI-created alerts.
 
