@@ -2634,3 +2634,22 @@ async def test_onoff_cond(hass, service_calls, caplog):
     service_calls.popNotifyEmpty('persistent_notification', 'test_t9: turned off')
     assert hass.states.get('alert2.test_t9').state == 'off'
     
+async def test_empty(hass, service_calls):
+    cfg = { 'alert2' : {  'alerts' : [
+        { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a', 'message': ''  },
+        { 'domain': 'test', 'name': 't2', 'condition': 'sensor.a', 'message': '{{ states("sensor.b") }}'  },
+    ]}}
+    hass.states.async_set("sensor.a", 'off')
+    hass.states.async_set("sensor.b", '')
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifySearch('persistent_notification', 't1', 'test_t1')
+    service_calls.popNotifySearch('persistent_notification', 't2', 'test_t2')
+    assert service_calls.isEmpty()
+
+    await hass.async_stop()
+    await hass.async_block_till_done()
