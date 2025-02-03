@@ -865,18 +865,57 @@ async def test_conflict2(hass, service_calls, hass_client, hass_storage):
     assert hass.states.get('alert2.d_n1').state == 'off'
 
 async def test_display_msg(hass, service_calls, hass_client, hass_ws_client):
+    async def checkNoMsg(aclient):
+        with pytest.raises(TimeoutError) as excinfo:
+            async with asyncio.timeout(0.05):
+                msg = await aclient.receive_json()
+
     await setAndWait(hass, 'sensor.a', '')
     cfg = { 'alert2': {
         'alerts': [
             { 'domain': 'd', 'name': 'n2', 'condition':'off', 'display_msg': '{{ states("sensor.a") }}' }
         ] } }
     assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    # HA hasn't started yet
+    
+    websocket_client2 = await hass_ws_client(hass)
+    msg_id = 5
+    await websocket_client2.send_json({ "id": msg_id, "type": "alert2_watch_display_msg",
+                                       'domain': 'd', 'name': 'n2' } )
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    # Now get reply from server
+    msg = await websocket_client2.receive_json()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    #_LOGGER.warning(f'first resp {msg}')
+    assert msg["type"] == wsapi.TYPE_RESULT
+    assert msg["success"], msg['error']
+    assert msg["result"] is None
+    await checkNoMsg(websocket_client2)
+
+    # HA starts
     await hass.async_start()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
+
+    # Should now get event
+    msg = await websocket_client2.receive_json()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    #_LOGGER.warning(f'first resp {msg}')
+    assert msg["id"] == msg_id
+    assert msg["type"] == "event"
+    result = msg["event"]['rendered']
+    assert result == ''
+    await checkNoMsg(websocket_client2)
+
     
     websocket_client = await hass_ws_client(hass)
-    msg_id = 5
+    msg_id = 6
     await websocket_client.send_json({ "id": msg_id, "type": "alert2_watch_display_msg",
                                        'domain': 'd', 'name': 'n2' } )
     await hass.async_block_till_done()
@@ -885,7 +924,7 @@ async def test_display_msg(hass, service_calls, hass_client, hass_ws_client):
     msg = await websocket_client.receive_json()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    _LOGGER.warning(f'first resp {msg}')
+    #_LOGGER.warning(f'first resp {msg}')
     assert msg["id"] == msg_id
     assert msg["type"] == "event"
     result = msg["event"]['rendered']
@@ -897,17 +936,33 @@ async def test_display_msg(hass, service_calls, hass_client, hass_ws_client):
     assert msg["success"], msg['error']
     assert msg["result"] is None
 
-
-
-    fuck
+    # Should be no more messages
+    await checkNoMsg(websocket_client)
+    
+    # Now if template changes, should get update msg
+    await setAndWait(hass, 'sensor.a', 'bb')
     async with asyncio.timeout(0.1):
         msg = await websocket_client.receive_json()
-    _LOGGER.warning(msg)
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
     assert msg["id"] == msg_id
     assert msg["type"] == "event"
-    event = msg["event"]
-
-    assert event["event_type"] == "test_event"
-    assert event["data"] == {"hello": "world"}
-    assert event["origin"] == "LOCAL"
+    result = msg["event"]['rendered']
+    assert result == 'bb'
+    await checkNoMsg(websocket_client)
+    
+    async with asyncio.timeout(0.1):
+        msg = await websocket_client2.receive_json()
+    await hass.async_block_till_done()
     assert service_calls.isEmpty()
+    assert msg["id"] == 5
+    assert msg["type"] == "event"
+    result = msg["event"]['rendered']
+    assert result == 'bb'
+    await checkNoMsg(websocket_client2)
+
+    await websocket_client.close()
+    await websocket_client2.close()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    

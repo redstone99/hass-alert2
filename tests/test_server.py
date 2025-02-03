@@ -1,3 +1,7 @@
+#
+# must set JTEST_JS_DIR when running to be root of hass-alert2-ui
+#
+
 import asyncio
 import logging
 import sys
@@ -69,10 +73,10 @@ async def test_server(hass, hass_storage, monkeypatch): #, unused_tcp_port_facto
     #        {http.DOMAIN: {http.CONF_SERVER_PORT: 50005}},  )
     cfg = { 'alert2': {} }
     assert await async_setup_component(hass, DOMAIN, cfg)
+    jsdir = os.environ.get('JTEST_JS_DIR')
+    assert isinstance(jsdir, str) and len(jsdir) > 0
     await hass.http.async_register_static_paths([
-        http.StaticPathConfig('/jtest',
-                         '/home/redstone/tmp/hass-alert2-ui',
-                         False)])
+        http.StaticPathConfig('/jtest', jsdir, False)])
     # Override http/auth.py::auth_middleware authentication to say everything's authenticated.
     @middleware
     async def auth_middleware(request, handler):
