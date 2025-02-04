@@ -363,6 +363,18 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'annotate_messages', 'txt': '{{ true }}' })
     assert re.search('invalid boolean value', rez['error'])
 
+    # manual_off
+    rez = await tpost("/api/alert2/renderValue", {'name': 'manual_off', 'txt': 'yes' })
+    assert rez == { 'rez': True }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'manual_off', 'txt': '{{ true }}' })
+    assert re.search('invalid boolean value', rez['error'])
+
+    # manual_on
+    rez = await tpost("/api/alert2/renderValue", {'name': 'manual_on', 'txt': 'yes' })
+    assert rez == { 'rez': True }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'manual_on', 'txt': '{{ true }}' })
+    assert re.search('invalid boolean value', rez['error'])
+
     # reminder_frequency_mins
     rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_frequency_mins', 'txt': '3' })
     assert rez == { 'rez': [3] }
@@ -460,12 +472,44 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger', 'txt': "yes" })
     assert re.search("'bool' is not iterable", rez['error'])
 
+    # trigger_on
+    rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_on', 'txt': "[{'platform':'state','entity_id':'sensor.zz'}]" })
+    assert rez == { 'rez': [{'platform':'state','entity_id':'sensor.zz'}] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_on', 'txt': "[{'trigger':'template','value_template':'{{ true }}'}]" })
+    assert rez == { 'rez': [{'platform':'template','value_template':'{{ true }}'}] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_on', 'txt': "yes" })
+    assert re.search("'bool' is not iterable", rez['error'])
+    
+    # trigger_off
+    rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_off', 'txt': "[{'platform':'state','entity_id':'sensor.zz'}]" })
+    assert rez == { 'rez': [{'platform':'state','entity_id':'sensor.zz'}] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_off', 'txt': "[{'trigger':'template','value_template':'{{ true }}'}]" })
+    assert rez == { 'rez': [{'platform':'template','value_template':'{{ true }}'}] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_off', 'txt': "yes" })
+    assert re.search("'bool' is not iterable", rez['error'])
+    
     # condition
     rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': 'on' })
     assert rez == { 'rez': True }
     rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': '{{ "n" + "o" }}' })
     assert rez == { 'rez': False }
     rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': '{{ ggg }}' , 'extraVars': { 'ggg': 'yes' }})
+    assert rez == { 'rez': True }
+
+    # condition_on
+    rez = await tpost("/api/alert2/renderValue", {'name': 'condition_on', 'txt': 'on' })
+    assert rez == { 'rez': True }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'condition_on', 'txt': '{{ "n" + "o" }}' })
+    assert rez == { 'rez': False }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'condition_on', 'txt': '{{ ggg }}' , 'extraVars': { 'ggg': 'yes' }})
+    assert rez == { 'rez': True }
+
+    # condition_off
+    rez = await tpost("/api/alert2/renderValue", {'name': 'condition_off', 'txt': 'on' })
+    assert rez == { 'rez': True }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'condition_off', 'txt': '{{ "n" + "o" }}' })
+    assert rez == { 'rez': False }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'condition_off', 'txt': '{{ ggg }}' , 'extraVars': { 'ggg': 'yes' }})
     assert rez == { 'rez': True }
 
     # early_start
@@ -569,6 +613,18 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert rez == { 'rez': {'list': [{'a':3, 'b':'ff' }], 'len': 1,
                             'firstElemVars': {'genRaw': {'a':3, 'b':'ff' }, 'a': 3, 'b': 'ff' }} }
 
+    # display_msg
+    rez = await tpost("/api/alert2/renderValue", {'name': 'display_msg', 'txt': 'joe  ' })
+    assert rez == { 'rez': 'joe' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'display_msg', 'txt': '{{ "joe"+"sss" }}' })
+    assert rez == { 'rez': 'joesss' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'display_msg', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
+    assert rez == { 'rez': 'joeyay' }
+
+
+
+
+    
 async def test_validate(hass, service_calls, hass_client, hass_storage):
     cfg = { 'alert2': {} }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
@@ -618,7 +674,7 @@ async def test_create(hass, service_calls, hass_client, hass_storage):
     assert re.search('Duplicate declaration', rez['error'])
     # validation fails
     rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n2' } })
-    assert re.search('must contain', rez['error'])
+    assert re.search('Must specify', rez['error'])
     # bad delete
     resp = await client.post("/api/alert2/manageAlert", json={'delete': { 'domain':'d' } })
     assert resp.status == 400
