@@ -17,8 +17,10 @@ import custom_components.alert2.ui as a2Ui
 from homeassistant.components import http
 from aiohttp.web import middleware
 from homeassistant import config as conf_util
+#import homeassistant.auth as hauth
 from homeassistant.components.http.const import KEY_AUTHENTICATED
 from homeassistant.components.http import HomeAssistantView
+import homeassistant.components.websocket_api.auth as wsauth
 from homeassistant.components.http.data_validator import RequestDataValidator
 import voluptuous as vol
 from aiohttp import web
@@ -54,6 +56,9 @@ class TestView(HomeAssistantView):
                 with self.monkeypatch.context() as m:
                     m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
                     await gad.reload_service_handler(None)
+            elif data['stage'] == 'setEnt':
+                _LOGGER.info(f'test server setting ent {data["entity_id"]} to {data["state"]}')
+                self.hass.states.async_set(data['entity_id'], data['state'])
             else:
                 assert False
         else:
@@ -61,15 +66,24 @@ class TestView(HomeAssistantView):
         return self.json({})
 
 
-async def test_server(hass, hass_storage, monkeypatch): #, unused_tcp_port_factory):
+async def test_server(hass, hass_storage, monkeypatch, hass_access_token):
     cfg = {'alert2': {},
            http.DOMAIN: {http.CONF_SERVER_PORT: 50005}
            }
+
+    oldAsyncHandle = wsauth.AuthPhase.async_handle
+    async def fake_handle(obj, msg):
+        #_LOGGER.warning(f'replacing {msg["access_token"]} with {hass_access_token}')
+        msg['access_token'] = hass_access_token
+        return await oldAsyncHandle(obj, msg)
+    monkeypatch.setattr(wsauth.AuthPhase, 'async_handle', fake_handle)
+    
     assert await async_setup_component(hass, DOMAIN, cfg)
     await async_setup_component(
         hass,
         http.DOMAIN,
         cfg )
+    assert await async_setup_component(hass, "websocket_api", {})
     #        {http.DOMAIN: {http.CONF_SERVER_PORT: 50005}},  )
     cfg = { 'alert2': {} }
     assert await async_setup_component(hass, DOMAIN, cfg)
@@ -86,4 +100,3 @@ async def test_server(hass, hass_storage, monkeypatch): #, unused_tcp_port_facto
     hass.http.register_view(TestView(hass, hass_storage, monkeypatch))
     await hass.async_start()
     await asyncio.sleep(55555555)
-    
