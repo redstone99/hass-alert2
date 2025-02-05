@@ -2654,3 +2654,54 @@ async def test_empty(hass, service_calls):
 
     await hass.async_stop()
     await hass.async_block_till_done()
+
+async def test_start(hass, service_calls):
+    # Check early_start for each kind of timing - friendly_name, generators, and cond_on/cond_ff fields
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': 't10', 'friendly_name': '{{ states("sensor.a") }}', 'condition': 'off' },
+        { 'domain': 'test', 'name': 't11', 'friendly_name': '{{ states("sensor.a") }}', 'condition': 'off', 'early_start': True },
+        { 'domain': 'test', 'name': 't12{{genElem}}', 'condition': 'off', 'generator_name': 'g1', 'generator':'{{ states("sensor.g") }}' },
+        { 'domain': 'test', 'name': 't13{{genElem}}', 'condition': 'off', 'generator_name': 'g2', 'generator':'{{ states("sensor.g") }}', 'early_start': True },
+        { 'domain': 'test', 'name': 't14', 'condition_on': '{{ states("sensor.c") }}', 'manual_off': True },
+        { 'domain': 'test', 'name': 't15', 'condition_on': '{{ states("sensor.c") }}', 'manual_off': True, 'early_start': True },
+        { 'domain': 'test', 'name': 't16', 'manual_on': True, 'condition_off': '{{ states("sensor.d") }}' },
+        { 'domain': 'test', 'name': 't17', 'manual_on': True, 'condition_off': '{{ states("sensor.d") }}', 'early_start': True },
+        ]}}
+    hass.states.async_set("sensor.a", '3')
+    hass.states.async_set("sensor.g", '[ "x" ]')
+    hass.states.async_set("sensor.c", 'on')
+    hass.states.async_set("sensor.d", 'off')
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_block_till_done()
+    gad = hass.data[DOMAIN]
+
+    t10 = gad.alerts['test']['t10']
+    t11 = gad.alerts['test']['t11']
+    assert t10.extra_state_attributes['friendly_name2'] == None
+    assert t11.extra_state_attributes['friendly_name2'] == '3'
+    assert not 't12x' in gad.alerts['test']
+    assert 't13x' in gad.alerts['test']
+    service_calls.popNotifyEmpty('persistent_notification', 't15: turned on')
+    assert service_calls.isEmpty()
+
+    await hass.services.async_call('alert2', 'manual_on', {'entity_id':'alert2.test_t16'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 't16: turned on')
+    await hass.services.async_call('alert2', 'manual_on', {'entity_id':'alert2.test_t17'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 't17: turned on')
+
+    # should trigger one of the condition_off alerts turning off
+    await setAndWait(hass, "sensor.d", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't17: turned off')
+
+    await hass.async_start()
+    await hass.async_block_till_done()
+
+    assert t10.extra_state_attributes['friendly_name2'] == '3'
+    assert t11.extra_state_attributes['friendly_name2'] == '3'
+    assert 't12x' in gad.alerts['test']
+    assert 't13x' in gad.alerts['test']
+    service_calls.popNotifySearch('persistent_notification', 't14', 't14: turned on')
+    service_calls.popNotifySearch('persistent_notification', 't16', 't16: turned off')
+    assert service_calls.isEmpty()

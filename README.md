@@ -39,7 +39,7 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 ## New features
 
 - **Native event-based alerting**. No need to approximate it with conditions and time windows.
-- **Expressive conditions**
+- **Expressive condition-based alerts**
    - **Templates**.  No need for extra binary sensors. Also means the logic for an alert is in one place in your config file, which makes it easier to manage.
    - **Split on/off**.  Separately specify how a condition alert turns on & off. 
 - **Snooze / disable / throttle notifications**. Handy for noisy sensors or while developing your alerts.
@@ -124,7 +124,7 @@ Configuration syntax and examples are in the [Configuration section]((#configura
 
 Condition alerts can be specified in one of two modes:
 
-1. **Simple on/off**:  Condition alerts can specify a `condition` as a template or entity name. The alert turns on when the condition evaluates to true and turns off when the condition evaluates to false.
+1. **Standard**:  Condition alerts can specify a `condition` as a template or entity name. The alert turns on when the condition evaluates to true and turns off when the condition evaluates to false.
 
    The alert can also specify a `threshold` dict that includes min/max limits and optional hysteresis.  If a threshold is specified, the alert is firing if the threshold is exceeded AND any `condition` specified is true.
 
@@ -285,15 +285,15 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 |`domain` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `domain` is typically the object causing the alert (e.g., garage door).<br>Can be a template when used with [generator patterns](#generator-patterns). |
 | `name` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `name` is typically the particular fault occurring (e.g., open_too_long).<br>Can be a template when used with [generator patterns](#generator-patterns). |
 | `friendly_name` | template | optional | Name to display instead of the entity name. Surfaces in the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) overview card. Template tracks changes. |
-| `condition` | string | optional | Template string or entity name. Alert is firing if the template or entity state evaluates to truthy AND any optional `trigger` or `threshold` criteria are also satisfied.<br>May not be combined with `condition_on`, `trigger_on`,`manual_on` or any of the "off" equivalents. |
+| `condition` | string | optional | Template string or entity name. Alert is firing if the template or entity state evaluates to truthy AND any optional `trigger` or `threshold` criteria are also satisfied.<br>May not be combined with `condition_on`, `trigger_on`,`manual_on` or the "*_off" equivalents. |
 | `trigger` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Indicates an event-based alert. Alert fires when the trigger does, if also any `condition` specified is truthy. |
 | `threshold:` | dict | optional | Subsection specifying a threshold criteria with hysteresis. Alert is firing if the threshold value exceeds bounds AND any `condition` specified is truthy. Not available for event-based alerts. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`value` | string | required | A template or entity name that evaluates to a float to be compared to threshold limits. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`hysteresis` | float | required | Compare `value` to limits using hysteresis. threshold is considered exceeded if value exceeds min/max, but does not reset until value increases past min+hysteresis or decreases past max-hysteresis. (see description below) |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`maximum` | float | optional | Maximum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`minimum` | float | optional | Minimum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
-| `condition_on` | string | optional | Template string or entity name. Alert starts firing if the template or entity state switches to truthy AND any optional `trigger_on` criteria is also satisfied. |
-| `condition_off` | string | optional | Template string or entity name. Alert stops firing if the template or entity state switches to truthy AND any optional `trigger_off` criteria is also satisfied. |
+| `condition_on` | string | optional | Template string or entity name. Alert starts firing if the template or entity state switches to truthy AND any optional `trigger_on` criteria is also satisfied. This is edge-triggered - no change in alert state happens when `condition_on` becomes falsey. |
+| `condition_off` | string | optional | Template string or entity name. Alert stops firing if the template or entity state switches to truthy AND any optional `trigger_off` criteria is also satisfied. This is edge-triggered - no change in alert state happens when `condition_off` becomes falsey. |
 | `trigger_on` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Alert turns on when the trigger triggers, if also any `condition_on` specified is truthy. |
 | `trigger_off` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Alert turns off when the trigger triggers, if also any `condition_off` specified is truthy. |
 | `manual_on` | boolean | optional | Enables the service call `alert2.manual_on` to turn the alert on. |
@@ -301,7 +301,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `delay_on_secs` | float | optional | Specifies number of seconds that any `condition` must be true and any threshold specified must be exceeded before the alert starts firing. Similar in motivation to the `skip_first` option in the old Alert integration. |
 | `message` | template | optional | Template string evaluated when the alert fires. This text is included in notifications. For event-based alerts, the message can reference the `trigger` variable (see example below). Because notifications by default include context information like the alert domain and name, the message can be brief or even omitted all together |
 | `done_message` | template | optional | Message to send when a condition alert turns off.  Replaces the default message (e.g., "Alert2 [name] turned off after x minutes") |
-| `display_msg` | template | optional | Message to display in the Alert2 UI overview card below the alert line while the alert is shown. If not specified or specified as "null", no message is shown. |
+| `display_msg` | template | optional | Message to display in the Alert2 UI overview card below the alert line.  Appears while the alert is visible in the card. If not specified or specified as "null", no message is shown. |
 | `data` | dict | optional | Optional dictionary passed as the "data" parameter to the notify service call |
 | `target` | template | optional | Passed as the "target" parameter to the notify service call |
 | `title` | template | optional | Passed as the "title" parameter to the notify service call |
@@ -369,6 +369,28 @@ An alert can alternatively specify a threshold with hysteresis.  So the previous
 This alert would start firing if the temperature drops below 50 and won't stop firing until the temperature rises to at least 55.  A corresponding logic applies when a `maximum` is specified. Both `minimum` and `maximum` may be specified together.
 
 A `condition` may be specified along with a `threshold`. In this case, the alert fires when the condition is true AND the threshold value is out of bounds.  `delay_on_secs` is another form of hysteresis that may be specified to reduce false alarms. It requires an alert condition be true or threshold be exceed for at least the specified number of seconds before firing. Note on a corner case: the count of seconds for delay_on_secs does not reset if the value switches instantaneously from exceeding the minimum to exceeding the maximum.
+
+##### Split on/off condition alerts
+
+Instead of specifying `condition` or `threshold`, an alert may specify a combination of `condition_on`, `trigger_on`,`manual_on` and `condition_off`, `trigger_off`,`manual_off`.  At least one of the *_on must be specified and at least one of *_off must be specified.  Any combination is ok.
+
+The semantics of trigger+condition are the same as for an event alert - e.g., if both `trigger_on` and `condition_on` are specified, the alert turns on if the trigger triggers and the condition is truthy.  Note that `condition_on` and `condition_off` are edge-triggered.  They cause state change only when the switch from falsey to truthy.  No alert state change happens when they switch back to falsey.
+
+`delay_on_secs` is available with split on/off condition alerts.
+
+Example:
+
+    alert2:
+      alerts:
+        # This alert starts firing when the smoke detector goes off, and continues to fire until
+        # it is manually turned off.  The idea is to keep the alert firing until a person can
+        # manually confirm the basement is ok, even if the smoke detector happens to turn off.
+        - domain: basement
+          name: possible_fire
+          condition_on: "{{ states('binary_sensor.smoke_detector_basement') }}"
+          manual_off: true
+          display_msg: Smoke detector is "{{ states('binary_sensor.smoke_detector_basement') }}"
+
 
 #### Common alert features
 
