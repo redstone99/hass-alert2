@@ -2638,6 +2638,7 @@ async def test_empty(hass, service_calls):
     cfg = { 'alert2' : {  'alerts' : [
         { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a', 'message': ''  },
         { 'domain': 'test', 'name': 't2', 'condition': 'sensor.a', 'message': '{{ states("sensor.b") }}'  },
+        { 'domain': 'test', 'name': 't3', 'condition': 'sensor.a', 'message': 'yay', 'notifier': None  },
     ]}}
     hass.states.async_set("sensor.a", 'off')
     hass.states.async_set("sensor.b", '')

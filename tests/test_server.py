@@ -77,7 +77,7 @@ async def test_server(hass, hass_storage, monkeypatch, hass_access_token):
         msg['access_token'] = hass_access_token
         return await oldAsyncHandle(obj, msg)
     monkeypatch.setattr(wsauth.AuthPhase, 'async_handle', fake_handle)
-    
+
     assert await async_setup_component(hass, DOMAIN, cfg)
     await async_setup_component(
         hass,

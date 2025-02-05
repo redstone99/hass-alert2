@@ -929,7 +929,8 @@ async def test_display_msg(hass, service_calls, hass_client, hass_ws_client):
     await setAndWait(hass, 'sensor.a', '')
     cfg = { 'alert2': {
         'alerts': [
-            { 'domain': 'd', 'name': 'n2', 'condition':'off', 'display_msg': '{{ states("sensor.a") }}' }
+            { 'domain': 'd', 'name': 'n2', 'condition':'off', 'display_msg': '{{ states("sensor.a") }}' },
+            { 'domain': 'd', 'name': 'n3', 'condition':'off', 'display_msg': None }
         ] } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_block_till_done()
@@ -1006,7 +1007,7 @@ async def test_display_msg(hass, service_calls, hass_client, hass_ws_client):
     result = msg["event"]['rendered']
     assert result == 'bb'
     await checkNoMsg(websocket_client)
-    
+    # and check client2
     async with asyncio.timeout(0.1):
         msg = await websocket_client2.receive_json()
     await hass.async_block_till_done()
@@ -1017,8 +1018,68 @@ async def test_display_msg(hass, service_calls, hass_client, hass_ws_client):
     assert result == 'bb'
     await checkNoMsg(websocket_client2)
 
+    # Should get update msg even if empty
+    await setAndWait(hass, 'sensor.a', '')
+    async with asyncio.timeout(0.1):
+        msg = await websocket_client.receive_json()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert msg["id"] == msg_id
+    assert msg["type"] == "event"
+    result = msg["event"]['rendered']
+    assert result == ''
+    await checkNoMsg(websocket_client)
+    # and check client2
+    async with asyncio.timeout(0.1):
+        msg = await websocket_client2.receive_json()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert msg["id"] == 5
+    assert msg["type"] == "event"
+    result = msg["event"]['rendered']
+    assert result == ''
+    await checkNoMsg(websocket_client2)
+
+    # n2 has display_msg set to None, so should not get any updates
+    websocket_client3 = await hass_ws_client(hass)
+    msg_id = 7
+    await websocket_client3.send_json({ "id": msg_id, "type": "alert2_watch_display_msg",
+                                       'domain': 'd', 'name': 'n3' } )
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    async with asyncio.timeout(0.1):
+        msg = await websocket_client3.receive_json()
+    assert msg["type"] == wsapi.TYPE_RESULT
+    assert msg['error']['code'] == 'no_display_msg'
+
+    # Should be no more messages
+    await checkNoMsg(websocket_client)
+
+
+    
     await websocket_client.close()
     await websocket_client2.close()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     
+async def test_display_msg2(hass, service_calls, hass_client, hass_storage, caplog):
+    # Check null values for display_msg and notifier
+    cfg = { 'alert2': { } }
+    uiCfg = { 'defaults' : { },
+              'alerts': [
+                  { 'domain': 'd', 'name': 'n2', 'condition':'on', 'notifier': 'null', 'display_msg': 'null', 'message': 'happy' }
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    gad = hass.data[DOMAIN]
+    assert service_calls.isEmpty()
+    n2 = gad.alerts['d']['n2']
+    assert hass.states.get('alert2.d_n2').state == 'on'
+    assert n2._display_msg_template is None
+    assert 'Activity alert2.d_n2 turned on' in caplog.text
+    assert 'd_n2: happy' in caplog.text

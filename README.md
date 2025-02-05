@@ -31,7 +31,7 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - [Configuration](#configuration)
 - [Generator patterns (Advanced)](#generator-patterns)
 - [Front-end UI](#front-end-ui)
-- [Service calls](#service-calls)
+- [Service calls and events](#service-calls-and-events)
 - [Python alerting](#python-alerting)
 - [Contributing](#contributing)
 
@@ -39,7 +39,9 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 ## New features
 
 - **Native event-based alerting**. No need to approximate it with conditions and time windows.
-- **Template conditions**.  No need for extra binary sensors. Also means the logic for an alert is in one place in your config file, which makes it easier to manage.
+- **Expressive conditions**
+   - **Templates**.  No need for extra binary sensors. Also means the logic for an alert is in one place in your config file, which makes it easier to manage.
+   - **Split on/off**.  Separately specify how a condition alert turns on & off. 
 - **Snooze / disable / throttle notifications**. Handy for noisy sensors or while developing your alerts.
 - **Template notifiers**. Dynamically specify who gets notified.
 - **Generator patterns**. Dynamically define multiple similar alerts, with wildcard support.
@@ -112,19 +114,23 @@ Setup is done through editing your `configuration.yaml` file.
 
 Alert2 supports two kinds of alerts:
 
-- **Condition-based alerts**. The alert watches a specified condition. It is "firing", aka "on", while the condition is true. This is similar to the existing [Alert](https://www.home-assistant.io/integrations/alert/) integration. Example: a temperature sensor that reports a high temperature.
+- **Condition-based alerts**. The alert is "firing", aka "on", for a period of time, such as while a condition is true. This is similar to the existing [Alert](https://www.home-assistant.io/integrations/alert/) integration. Example: a temperature sensor that reports a high temperature.
 
-- **Event-based alerts**. The alert waits for a specified trigger to occur and is "firing" for just that moment.  Example: a problematic MQTT message arrives.
+- **Event-based alerts**. The alert is "firing" for just a moment, such as when a specified trigger occurs. Example: a problematic MQTT message arrives.
 
 Configuration syntax and examples are in the [Configuration section]((#configuration)). Here is an overview:
 
 ### Condition alerts
 
-Condition alerts can specify a `condition` as a template or entity name. The alert is firing when the condition evaluates to true.
+Condition alerts can be specified in one of two modes:
 
-An alert can also specify a `threshold` dict that includes min/max limits and optional hysteresis.  If a threshold is specified, the alert is firing if the threshold is exceeded AND any `condition` specified is true.
+1. **Simple on/off**:  Condition alerts can specify a `condition` as a template or entity name. The alert turns on when the condition evaluates to true and turns off when the condition evaluates to false.
 
-Hysteresis is also available via the `delay_on_secs` parameter. If specified, the alert starts firing once any `threshold` is exceeded AND any `condition` is true for at least the time interval specified. This is similar in motivation to the `skip_first` option in the old Alert integration.
+   The alert can also specify a `threshold` dict that includes min/max limits and optional hysteresis.  If a threshold is specified, the alert is firing if the threshold is exceeded AND any `condition` specified is true.
+
+2. **Separate on/off**: Alternatively, the alert can specify separate criteria for turning on and off. A set of config fields: `trigger_on`, `condition_on` and `manual_on` offer options for when the alert will turn on. And a corresponding set of config fields: `trigger_off`, `condition_off` and `manual_off` determine when the alert will turn off.
+
+For either condition alert mode, hysteresis is available via the `delay_on_secs` parameter. If specified, the alert starts firing once the "on" criteria have been satisfied for the time interval specified. This is similar in motivation to the `skip_first` option in the old Alert integration.
 
 ### Event alerts
 
@@ -247,7 +253,7 @@ The `defaults:` subsection specifies optional default values for parameters comm
 | Key | Type | Description |
 |---|---|---|
 | `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. Minimum is 0.01 min. |
-| `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers, an entity name whose state is a list of notifiers, or a template that evaluates to either. See [Notifier Config](#notifier-config) section below for possibilities here.  |
+| `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers, an entity name whose state is a list of notifiers, a template that evaluates to either, or "null" to indicate no notification. See [Notifier Config](#notifier-config) section below for possibilities here.  |
 | `summary_notifier` | bool or template | True to send summaries (see [Notifiers](#notifiers) section for detail) using the same notifier as other notifications.  False to not send summaries.  Or can be a template similar to `notifier` parameter to specify notifier to use for summaries. Default is `false`. |
 | `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notification, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
 | `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on a list of two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, "[10, 60]" means you'll receive no more than 10 notifications of the alert firing every hour.<br><br>Default is no throttling. You can set `summary_notifier` to be notified when throttling ends (by default you won't be). |
@@ -279,16 +285,23 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 |`domain` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `domain` is typically the object causing the alert (e.g., garage door).<br>Can be a template when used with [generator patterns](#generator-patterns). |
 | `name` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `name` is typically the particular fault occurring (e.g., open_too_long).<br>Can be a template when used with [generator patterns](#generator-patterns). |
 | `friendly_name` | template | optional | Name to display instead of the entity name. Surfaces in the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) overview card. Template tracks changes. |
-| `condition` | string | optional | Template string or entity name. Alert is firing if the template or entity state evaluates to truthy AND any other alert options specified below are also true.  |
+| `condition` | string | optional | Template string or entity name. Alert is firing if the template or entity state evaluates to truthy AND any optional `trigger` or `threshold` criteria are also satisfied.<br>May not be combined with `condition_on`, `trigger_on`,`manual_on` or any of the "off" equivalents. |
 | `trigger` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Indicates an event-based alert. Alert fires when the trigger does, if also any `condition` specified is truthy. |
 | `threshold:` | dict | optional | Subsection specifying a threshold criteria with hysteresis. Alert is firing if the threshold value exceeds bounds AND any `condition` specified is truthy. Not available for event-based alerts. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`value` | string | required | A template or entity name that evaluates to a float to be compared to threshold limits. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`hysteresis` | float | required | Compare `value` to limits using hysteresis. threshold is considered exceeded if value exceeds min/max, but does not reset until value increases past min+hysteresis or decreases past max-hysteresis. (see description below) |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`maximum` | float | optional | Maximum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`minimum` | float | optional | Minimum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
+| `condition_on` | string | optional | Template string or entity name. Alert starts firing if the template or entity state switches to truthy AND any optional `trigger_on` criteria is also satisfied. |
+| `condition_off` | string | optional | Template string or entity name. Alert stops firing if the template or entity state switches to truthy AND any optional `trigger_off` criteria is also satisfied. |
+| `trigger_on` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Alert turns on when the trigger triggers, if also any `condition_on` specified is truthy. |
+| `trigger_off` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Alert turns off when the trigger triggers, if also any `condition_off` specified is truthy. |
+| `manual_on` | boolean | optional | Enables the service call `alert2.manual_on` to turn the alert on. |
+| `manual_off` | boolean | optional | Enables the service call `alert2.manual_off` to turn the alert off. |
 | `delay_on_secs` | float | optional | Specifies number of seconds that any `condition` must be true and any threshold specified must be exceeded before the alert starts firing. Similar in motivation to the `skip_first` option in the old Alert integration. |
 | `message` | template | optional | Template string evaluated when the alert fires. This text is included in notifications. For event-based alerts, the message can reference the `trigger` variable (see example below). Because notifications by default include context information like the alert domain and name, the message can be brief or even omitted all together |
 | `done_message` | template | optional | Message to send when a condition alert turns off.  Replaces the default message (e.g., "Alert2 [name] turned off after x minutes") |
+| `display_msg` | template | optional | Message to display in the Alert2 UI overview card below the alert line while the alert is shown. If not specified or specified as "null", no message is shown. |
 | `data` | dict | optional | Optional dictionary passed as the "data" parameter to the notify service call |
 | `target` | template | optional | Passed as the "target" parameter to the notify service call |
 | `title` | template | optional | Passed as the "title" parameter to the notify service call |
@@ -656,7 +669,7 @@ If you ever need to know, Alert2 stores the UI state, including entities defined
 Without [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) you can still view and do some management of Alert2 alerts, but the process is a bit more involved.
 
 
-## Service calls
+## Service calls and events
 
 Alert2 defines a few new service calls.
 
@@ -681,8 +694,24 @@ A few other service calls are used internally by [Alert2 UI](https://github.com/
 <br>`alert2.notification_control` adjust the notification settings.
 <br>`alert2.ack` acks a single alert.
 <br>`alert2.unack` unacks a single alert.
+<br>`alert2.manual_on` turns on a condition alert that was configured with `manual_on: true`.
+<br>`alert2.manual_off` turns off a condition alert that was configured with `manual_off: true`.
 
 More details on these calls are in the [`services.yaml`](https://github.com/redstone99/hass-alert2/blob/master/custom_components/alert2/services.yaml) file in this repo, or in the UI by going to "Developer tools" -> "Actions".
+
+
+### Events
+
+Alert2 will fire events on the hass bus as follows:
+
+| event_type | data fields | description |
+|---|---|---|
+| `alert2_create` | <pre>entity_id<br>domain<br>name</pre> | Fires when an alert is created. Also fires on reloading or updating an alert via the UI. |
+| `alert2_delete` | <pre>entity_id<br>domain<br>name</pre> | Fires when an alert is deleted. Also fires on reloading or updating an alert via the UI. |
+| `alert2_alert_fire` | <pre>entity_id<br>domain<br>name</pre> | Fires when an event alert fires. |
+| `alert2_alert_on` | <pre>entity_id<br>domain<br>name</pre> | Fires when a condition alert turns on (starts firing). |
+| `alert2_alert_off` | <pre>entity_id<br>domain<br>name</pre> | Fires when an event alert turns off (stops firing). |
+
 
 ## Python alerting
 
