@@ -920,12 +920,20 @@ async def test_conflict2(hass, service_calls, hass_client, hass_storage):
     n1 = gad.alerts['d']['n1']
     assert hass.states.get('alert2.d_n1').state == 'off'
 
-async def test_display_msg(hass, service_calls, hass_client, hass_ws_client):
+async def test_display_msg(hass, service_calls, hass_client, hass_ws_client, monkeypatch):
     async def checkNoMsg(aclient):
         with pytest.raises(TimeoutError) as excinfo:
             async with asyncio.timeout(0.05):
                 msg = await aclient.receive_json()
-
+    async def getEvent(aclient, msg_id, rtxt):
+        msg = await aclient.receive_json()
+        await hass.async_block_till_done()
+        assert service_calls.isEmpty()
+        assert msg["id"] == msg_id
+        assert msg["type"] == "event"
+        result = msg["event"]['rendered']
+        assert result == rtxt
+                
     await setAndWait(hass, 'sensor.a', '')
     cfg = { 'alert2': {
         'alerts': [
@@ -939,8 +947,8 @@ async def test_display_msg(hass, service_calls, hass_client, hass_ws_client):
     # HA hasn't started yet
     
     websocket_client2 = await hass_ws_client(hass)
-    msg_id = 5
-    await websocket_client2.send_json({ "id": msg_id, "type": "alert2_watch_display_msg",
+    msg_id2 = 5
+    await websocket_client2.send_json({ "id": msg_id2, "type": "alert2_watch_display_msg",
                                        'domain': 'd', 'name': 'n2' } )
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
@@ -960,16 +968,8 @@ async def test_display_msg(hass, service_calls, hass_client, hass_ws_client):
     assert service_calls.isEmpty()
 
     # Should now get event
-    msg = await websocket_client2.receive_json()
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    #_LOGGER.warning(f'first resp {msg}')
-    assert msg["id"] == msg_id
-    assert msg["type"] == "event"
-    result = msg["event"]['rendered']
-    assert result == ''
+    await getEvent(websocket_client2, msg_id2, '')
     await checkNoMsg(websocket_client2)
-
     
     websocket_client = await hass_ws_client(hass)
     msg_id = 6
@@ -978,72 +978,40 @@ async def test_display_msg(hass, service_calls, hass_client, hass_ws_client):
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     # Now get reply from server
-    msg = await websocket_client.receive_json()
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    #_LOGGER.warning(f'first resp {msg}')
-    assert msg["id"] == msg_id
-    assert msg["type"] == "event"
-    result = msg["event"]['rendered']
-    assert result == ''
+    await getEvent(websocket_client, msg_id, '')
     
     async with asyncio.timeout(0.1):
         msg = await websocket_client.receive_json()
     assert msg["type"] == wsapi.TYPE_RESULT
     assert msg["success"], msg['error']
     assert msg["result"] is None
-
     # Should be no more messages
     await checkNoMsg(websocket_client)
     
     # Now if template changes, should get update msg
     await setAndWait(hass, 'sensor.a', 'bb')
     async with asyncio.timeout(0.1):
-        msg = await websocket_client.receive_json()
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    assert msg["id"] == msg_id
-    assert msg["type"] == "event"
-    result = msg["event"]['rendered']
-    assert result == 'bb'
+        await getEvent(websocket_client, msg_id, 'bb')
     await checkNoMsg(websocket_client)
     # and check client2
     async with asyncio.timeout(0.1):
-        msg = await websocket_client2.receive_json()
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    assert msg["id"] == 5
-    assert msg["type"] == "event"
-    result = msg["event"]['rendered']
-    assert result == 'bb'
+        await getEvent(websocket_client2, msg_id2, 'bb')
     await checkNoMsg(websocket_client2)
 
     # Should get update msg even if empty
     await setAndWait(hass, 'sensor.a', '')
     async with asyncio.timeout(0.1):
-        msg = await websocket_client.receive_json()
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    assert msg["id"] == msg_id
-    assert msg["type"] == "event"
-    result = msg["event"]['rendered']
-    assert result == ''
+        await getEvent(websocket_client, msg_id, '')
     await checkNoMsg(websocket_client)
     # and check client2
     async with asyncio.timeout(0.1):
-        msg = await websocket_client2.receive_json()
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    assert msg["id"] == 5
-    assert msg["type"] == "event"
-    result = msg["event"]['rendered']
-    assert result == ''
+        await getEvent(websocket_client2, msg_id2, '')
     await checkNoMsg(websocket_client2)
 
-    # n2 has display_msg set to None, so should not get any updates
+    # n3 has display_msg set to None, so should not get any updates
     websocket_client3 = await hass_ws_client(hass)
-    msg_id = 7
-    await websocket_client3.send_json({ "id": msg_id, "type": "alert2_watch_display_msg",
+    msg_id3 = 7
+    await websocket_client3.send_json({ "id": msg_id3, "type": "alert2_watch_display_msg",
                                        'domain': 'd', 'name': 'n3' } )
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
@@ -1054,11 +1022,44 @@ async def test_display_msg(hass, service_calls, hass_client, hass_ws_client):
 
     # Should be no more messages
     await checkNoMsg(websocket_client)
+    await checkNoMsg(websocket_client2)
 
+    # Now reload YAML, should get updated messages
+    async def fake_cfg(thass):
+        return cfg
+    cfg['alert2']['alerts'][0]['display_msg'] = '{{ states("sensor.a") }}z'
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        _LOGGER.info(f'requesting reload')
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    async with asyncio.timeout(0.1):
+        await getEvent(websocket_client, msg_id, 'z')
+    await checkNoMsg(websocket_client)
+    async with asyncio.timeout(0.1):
+        await getEvent(websocket_client2, msg_id2, 'z')
+    await checkNoMsg(websocket_client2)
 
-    
+    # Let's let one unsubscribe
     await websocket_client.close()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert service_calls.isEmpty()
+    
+    # Now reload again where display_msg doesn't exist anymore
+    cfg['alert2']['alerts'][0]['display_msg'] = None
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    async with asyncio.timeout(0.1):
+        msg = await websocket_client2.receive_json()
+        assert msg["type"] == wsapi.TYPE_RESULT
+        assert msg['error']['code'] == 'no_display_msg'
+    await checkNoMsg(websocket_client2)
+    
     await websocket_client2.close()
+    await websocket_client3.close()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     
