@@ -1052,12 +1052,14 @@ async def test_display_msg(hass, service_calls, hass_client, hass_ws_client, mon
         m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
         await hass.services.async_call('alert2','reload', {})
         await hass.async_block_till_done()
+    gad = hass.data[DOMAIN]
+    assert gad.alerts['d']['n2']._display_msg_template == None
     async with asyncio.timeout(0.1):
         msg = await websocket_client2.receive_json()
         assert msg["type"] == wsapi.TYPE_RESULT
         assert msg['error']['code'] == 'no_display_msg'
     await checkNoMsg(websocket_client2)
-    
+
     await websocket_client2.close()
     await websocket_client3.close()
     await hass.async_block_till_done()
