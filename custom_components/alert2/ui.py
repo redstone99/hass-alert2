@@ -5,6 +5,10 @@ import voluptuous as vol
 from   homeassistant.helpers.entity import Entity
 import homeassistant.helpers.config_validation as cv
 from   homeassistant.helpers import template as template_helper
+from   homeassistant.const import (
+    EVENT_HOMEASSISTANT_STARTED
+)
+from homeassistant.core import callback
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.components.http.data_validator import RequestDataValidator
 from homeassistant.exceptions import HomeAssistantError
@@ -22,7 +26,8 @@ from .config import ( TOP_LEVEL_SCHEMA, DEFAULTS_SCHEMA, SINGLE_TRACKED_SCHEMA_P
                       SINGLE_ALERT_SCHEMA_EVENT, SINGLE_ALERT_SCHEMA_CONDITION, THRESHOLD_SCHEMA,
                       GENERATOR_SCHEMA )
 from .util import (     GENERATOR_DOMAIN )
-from .entities import (notifierTemplateToList, renderResultToList, generatorElemToVars, AlertGenerator)
+from .entities import (notifierTemplateToList, renderResultToList, generatorElemToVars, AlertGenerator, Tracker)
+from homeassistant.components.websocket_api import (decorators, async_register_command)
 _LOGGER = logging.getLogger(__name__)
 
 def prepLoadTopConfig(uiMgr):
@@ -50,7 +55,6 @@ class ManageAlertView(HomeAssistantView):
     async def post(self, request: web.Request, data: dict[str, Any]) -> web.Response:
         if 'load' in data: 
             rez = self.uiMgr.loadAlert(data['load']['domain'], data['load']['name'])
-            #_LOGGER.warning(f'load of {data["load"]} produced {rez}')
             return self.json(rez)
         if 'create' in data:
             rez = await self.uiMgr.createAlert(data['create'])
@@ -93,7 +97,7 @@ class SaveDefaultsView(HomeAssistantView):
 # converts raw input txt string to val as if it were coming from YAML, so ready for validation
 def prepStrConfigField(fname, tval):
     parseYaml = True
-    if fname == 'trigger':
+    if fname in [ 'trigger', 'trigger_on', 'trigger_off' ]:
         pass # Always yaml eval, even if has template chars
     elif template_helper.is_template_string(tval):
         return tval
@@ -117,7 +121,6 @@ class RenderValueView(HomeAssistantView):
         }, extra=vol.ALLOW_EXTRA)) # For some HA auth stuff i think
 
     async def post(self, request: web.Request, data: dict[str, Any]) -> web.Response:
-        #_LOGGER.warning("Got get request with %s", data)
         ttxt  = data['txt']
         name = data['name']
         extraVars = data['extraVars'] if 'extraVars' in data and data['extraVars'] else {}
@@ -130,7 +133,7 @@ class RenderValueView(HomeAssistantView):
             if name in [ 'generator' ]:
                 # It can be either a list, or template, but not both.
                 parseYaml = not template_helper.is_template_string(ttxt)
-            elif name in ['data', 'trigger', 'throttle_fires_per_mins', 'defer_startup_notifications']:
+            elif name in ['data', 'trigger', 'trigger_on', 'trigger_off', 'throttle_fires_per_mins', 'defer_startup_notifications']:
                 # may need to first parse yaml
                 parseYaml = True
             if parseYaml:
@@ -145,13 +148,11 @@ class RenderValueView(HomeAssistantView):
                 
         def generatorListToResult(aList):
             kMaxToReturn = 5
-            #_LOGGER.warning(f'  so render got list: {aList}')
             if len(aList) == 0:
                 return {'list': [], 'len':0, 'firstElemVars': None }
             fvars = generatorElemToVars(self.uiMgr._hass, aList[0])
             return {'list': aList[:kMaxToReturn], 'len':len(aList), 'firstElemVars': fvars }
             
-        #_LOGGER.warning(f'in render ttxt={ttxt} for name={name}')
         try:
             if name in ['notifier','summary_notifier']:
                 tval = DEFAULTS_SCHEMA({ name: ttxt })[name]
@@ -164,9 +165,15 @@ class RenderValueView(HomeAssistantView):
             elif name in ['friendly_name', 'title', 'target']:
                 tval = SINGLE_TRACKED_SCHEMA_PRE_NAME({ name: ttxt })[name]
                 ttype = 'string'
-            elif name in ['message', 'done_message']:
+            elif name in ['message', 'done_message' ]:
                 tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME({ name: ttxt})[name]
                 ttype = 'string'
+            elif name in ['display_msg' ]:
+                tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME({ name: ttxt})[name]
+                if tval is None:
+                    simple = True
+                else:
+                    ttype = 'string'
             elif name in ['data']:
                 tval = SINGLE_TRACKED_SCHEMA_PRE_NAME({ name: ttxt})[name]
                 simple = True
@@ -187,13 +194,27 @@ class RenderValueView(HomeAssistantView):
                 except TypeError as v:
                     return self.json({ 'error': f'parse error: {str(v)}' })
                 simple = True
-            elif name in ['condition']:
-                obj = { 'domain': 'foo', 'name': 'bar', 'trigger': dummyTriggerDict, name: ttxt }
-                tval = SINGLE_ALERT_SCHEMA_EVENT(obj)[name]
+            elif name in ['trigger_on','trigger_off']:
+                obj = { name: ttxt }
+                # Triggers can puke with TypeError :(
+                try:
+                    tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME(obj)[name]
+                except TypeError as v:
+                    return self.json({ 'error': f'parse error: {str(v)}' })
+                simple = True
+            elif name in ['condition','condition_on','condition_off']:
+                #obj = { 'domain': 'foo', 'name': 'bar', 'trigger': dummyTriggerDict, name: ttxt }
+                #tval = SINGLE_ALERT_SCHEMA_EVENT(obj)[name]
+                obj = { name: ttxt }
+                tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME(obj)[name]
                 ttype = 'bool'
             elif name in ['early_start']:
                 obj = { 'domain': 'foo', 'name': 'bar', 'trigger': dummyTriggerDict, name: ttxt }
                 tval = SINGLE_ALERT_SCHEMA_EVENT(obj)[name]
+                simple = True
+            elif name in ['manual_on', 'manual_off']:
+                obj = { name: ttxt }
+                tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME(obj)[name]
                 simple = True
             elif name in ['threshold.value']:
                 obj = { 'value': ttxt, 'hysteresis': 3 }
@@ -242,7 +263,6 @@ class RenderValueView(HomeAssistantView):
                 return self.json({ 'error': f'Notifier list error: {errStr}', 'rez': notifiers })
             result = notifiers
         elif ttype in [ 'string', 'bool', 'float', 'generator' ]:
-            #_LOGGER.warning(f'rendering with extraVars={extraVars}')
             if not isinstance(tval, template_helper.Template):
                 msg = f'{gAssertMsg} somehow tval for {name} is not a template: {tval} {type(tval)}'
                 report(DOMAIN, 'error', msg)
@@ -321,10 +341,146 @@ def prepForValidation(acfg):
     except HomeAssistantError as ex:
         raise vol.Invalid(str(ex)) from ex
     return preppedConfig
+
+# Purpose is to support the UI watching for updates to the display_msg template.
+class WebSocketMgr:
+    def __init__(self, hass, alertData):
+        self.hass = hass
+        self.alertData = alertData
+        self.allSubscriptions = {} # indexed by domain/name
+        async_register_command(hass, self.async_handle_msg)
+        
+    def shutdown(self):
+        #_LOGGER.warning(f'WebSocketMgr shutting down all subscriptions')
+        for ad in self.allSubscriptions:
+            for an in self.allSubscriptions[ad]:
+                for asub in self.allSubscriptions[ad][an]:
+                    asub['tracker'].shutdown()
+        self.allSubscriptions = {}
+
+    def reloadSingleIfExists(self, domain, name):
+        #_LOGGER.warning(f'reloadSingleIfExists {domain} {name}')
+        self.hass.verify_event_loop_thread(f'checking loop thread in WebSocketMgr::reloadSingleIfExists')
+        if domain in self.allSubscriptions and name in self.allSubscriptions[domain]:
+            #_LOGGER.warning(f'reloadSingleIfExists found allSubscriptions for {domain} {name} ')
+            for asub in self.allSubscriptions[domain][name]:
+                asub['tracker'].shutdown()
+            newDisplayTemplate = None
+            if domain in self.alertData.alerts and name in self.alertData.alerts[domain]:
+                ent = self.alertData.alerts[domain][name]
+                newDisplayTemplate = ent._display_msg_template
+                if newDisplayTemplate:
+                    for subIdx in range(len(self.allSubscriptions[domain][name])):
+                        asub = self.allSubscriptions[domain][name][subIdx]
+                        #_LOGGER.warning(f'reloadSingleIfExists recreating tracker for {domain} {name} ')
+                        self.async_handle_msg2(asub['connection'], ent, asub['subscribeMsg'], updateIdx=subIdx)
+            if not newDisplayTemplate:
+                # If config no longer has a diplay message, we delete subscriptions to it.
+                # The new entity will have has_display_msg set to False, which will cause
+                # the front end to unsubscribe from its end.
+                # So then if later, the display_msg appears again, the front end will see has_display_msg
+                # turn to true and will re-subscribe
+                for asub in self.allSubscriptions[domain][name]:
+                    # Don't need to send anything here, but seems like could be useful for diagnostics
+                    asub['connection'].send_error(asub['subscribeMsg']['id'], 'no_display_msg', f'Recreate of entity domain={domain} name={name} does not specify display_msg')
+                del self.allSubscriptions[domain][name]
+                if not self.allSubscriptions[domain]:
+                    del self.allSubscriptions[domain]
     
+    # Command to watch display_msg for a single alert entity
+    @callback
+    @decorators.websocket_command(
+        {
+            vol.Required("type"): 'alert2_watch_display_msg',
+            vol.Required('domain'): cv.string,
+            vol.Required('name'): cv.string,
+        }
+    )
+    #@decorators.async_response
+    #async def async_handle_msg(self, hass, connection, msg):
+    def async_handle_msg(self, hass, connection, subscribeMsg):
+        self.hass.verify_event_loop_thread(f'checking loop thread in WebSocketMgr::async_handle_msg')
+        #_LOGGER.warning(f'got watch message {subscribeMsg}')
+        if hass != self.hass:
+            report(DOMAIN, 'error', f'{gAssertMsg} in WebSocketMgr, two "hass" variables are not identical')
+        domain = subscribeMsg['domain']
+        name = subscribeMsg['name']
+        msgId = subscribeMsg['id']
+        
+        if domain in self.alertData.tracked and name in self.alertData.tracked[domain]:
+            ent = self.alertData.tracked[domain][name]
+            connection.send_error(msgId, 'no_display_msg', f'Entity {ent.entity_id} is a tracked alert so does have a display_msg')
+            return
+            
+        if domain not in self.alertData.alerts:
+            connection.send_error(msgId, 'ent_not_found', f'domain {domain} not found')
+            return
+        if name not in self.alertData.alerts[domain]:
+            connection.send_error(msgId, 'ent_not_found', f'name {name} not found in domain {domain}')
+            return
+        ent = self.alertData.alerts[domain][name]
+        if not ent._display_msg_template:
+            connection.send_error(msgId, 'no_display_msg', f'Entity config for {ent.entity_id} does not specify display_msg')
+            return
+        self.async_handle_msg2(connection, ent, subscribeMsg)
+        connection.send_result(msgId)
+
+    def async_handle_msg2(self, connection, ent, subscribeMsg, updateIdx=None):
+        domain = subscribeMsg['domain']
+        name = subscribeMsg['name']
+        msgId = subscribeMsg['id']
+        tracker = None
+        def handle_rez(results):
+            if len(results) != 1:
+                report(DOMAIN, 'error', f'{gAssertMsg} {ent.entity_id} display_msg change tracker got result len={len(results)} results={results}')
+                return
+            _LOGGER.debug(f'{ent.entity_id} for tracker {id(tracker)} sending event for id {msgId}: {results[0]}')
+            connection.send_message({ "id": msgId,
+                                      "type": "event",
+                                      "event": {  # data to pass with event
+                                          'rendered': results[0]
+                                      }, } )
+
+        tracker = Tracker(ent, 'display_msg', self.hass, self.alertData,
+                          [ { 'fieldName': 'display_msg', 'type': Tracker.Type.StrEmptyOk,
+                              'template': ent._display_msg_template } ], handle_rez, extraVariables=ent.extraVariables)
+        #_LOGGER.warning(f'{ent.entity_id}: got subscribe msg {msgId} for tracker {id(tracker)}')
+        if ent.earlyStart or self.alertData.haStarted:
+            tracker.startWatching()
+        else:
+            async def doStart(ev): # async so that we're called in event loop thread
+                #self.hass.verify_event_loop_thread(f'checking loop thread in WebSocketMgr::doStart')
+                tracker.startWatching()
+            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, doStart)
+        subscriptionEntry = {'tracker':tracker, 'connection': connection, 'subscribeMsg': subscribeMsg }
+        if updateIdx is None:
+            if not domain in self.allSubscriptions:
+                self.allSubscriptions[domain] = {}
+            if not name in self.allSubscriptions[domain]:
+                self.allSubscriptions[domain][name] = []
+            self.allSubscriptions[domain][name].append(subscriptionEntry)
+        else:
+            self.allSubscriptions[domain][name][updateIdx] = subscriptionEntry
+        
+        def unsubscribe():
+            self.hass.verify_event_loop_thread(f'checking loop thread in WebSocketMgr::unsubscribe')
+            if domain in self.allSubscriptions and name in self.allSubscriptions[domain]:
+                subs = self.allSubscriptions[domain][name]
+                idx = next((i for i, item in enumerate(subs) if item['tracker'] is tracker), -1)
+                if idx == -1:
+                    _LOGGER.warning(f'{domain} {name} display_msg unsubscribe called, msgId={msgId} but no subscription found for tracker')
+                else:
+                    del subs[idx]
+                    if not subs:
+                        del self.allSubscriptions[domain][name]
+                    if not self.allSubscriptions[domain]:
+                        del self.allSubscriptions[domain]
+        connection.subscriptions[msgId] = unsubscribe
+        return subscriptionEntry
+
+
 class UiMgr:
     def __init__(self, hass, alertData):
-        #_LOGGER.warning('UiMgr initing')
         self._hass = hass
         self._alertData = alertData
         self.views = []
@@ -335,6 +491,7 @@ class UiMgr:
         self._store = MigratableStore(hass, STORAGE_VERSION, STORAGE_KEY)
         self.data = None
         self.entities = []
+        self.wsMgr = WebSocketMgr(hass, alertData)
         
     async def startup(self):
         # Store handles the case where there may be a write pending
@@ -342,11 +499,14 @@ class UiMgr:
         self.data = await self._store.async_load()
         if self.data is None:
             self.data = { 'config': { 'defaults': {} } }
+            
     def shutdown(self):
-        create_task(self._hass, DOMAIN, self.async_shutdown())
-    async def async_shutdown(self):
-        for aview in self.views:
-            await aview.shutdown()
+        #create_task(self._hass, DOMAIN, self.async_shutdown())
+        self.wsMgr.shutdown()
+    #async def async_shutdown(self):
+        #for aview in self.views:
+        #    await aview.shutdown()
+
     # Throws HomeAssistantError
     def getPreppedConfig(self):
         cfg = self.data['config'] if 'config' in self.data else {}
@@ -362,9 +522,9 @@ class UiMgr:
         cfg = self.getPreppedConfig()
         if cfg is not None:
             self.entities = await self._alertData.loadAlertBlock(cfg)
+            _LOGGER.info(f'Lifecycle created {len(self.entities)} alerts from UI config')
         
     def saveTopConfig(self, topConfig):
-        #_LOGGER.warning(f'saveTopConfig: received: {topConfig}')
         try:
             preppedConfig = prepForValidation(topConfig)
         except vol.Invalid as v:
@@ -399,6 +559,7 @@ class UiMgr:
         newEnt = await self._alertData.declareAlert(preppedConfig, doReport=False)
         if not isinstance(newEnt, Entity):
             return {'error': newEnt}
+        _LOGGER.info(f'Lifecycle created alert {newEnt.entity_id} via UI')
         if isinstance(newEnt, AlertGenerator):
             if newEnt.alName not in self._alertData.generators:
                 _LOGGER.error(self._alertData.generators)
@@ -472,10 +633,15 @@ class UiMgr:
         if not isinstance(newEnt, Entity):
             return {'error': newEnt}
 
+        _LOGGER.info(f'Lifecycle updated alert {newEnt.entity_id} via UI')
         self.entities[entIndex] = newEnt
         self.data['config']['alerts'][dataIndex] = acfg
         self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
+
         return {}
+
+    def alertCreated(self, domain, name):
+        self.wsMgr.reloadSingleIfExists(domain, name)
     
     async def deleteAlert(self, domain, name):
         entIndex = next((i for i, item in enumerate(self.entities) if item.alDomain == domain and item.alName == name), -1)
@@ -490,6 +656,7 @@ class UiMgr:
             report(DOMAIN, 'error', f'{gAssertMsg} deleteAlert: domain={domain} name={name} found in UI, but undeclareAlert failed')
             return {'error': rez}
        
+        _LOGGER.info(f'Lifecycle deleted alert {self.entities[entIndex].entity_id} via UI')
         del self.entities[entIndex]
         del self.data['config']['alerts'][dataIndex]
         if not self.data['config']['alerts']:
@@ -501,11 +668,9 @@ class UiMgr:
         return self.data
 
     def search(self, sTxt):
-        #_LOGGER.warning(f'Search for "{sTxt}"')
         terms = sTxt.lower().split()
         results = []
         for ent in self.entities:
-            #_LOGGER.warning(f'   looking for {terms} in {ent}')
             anid = ent.entity_id.lower()
             ok = True
             for term in terms:

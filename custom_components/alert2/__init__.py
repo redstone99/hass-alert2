@@ -38,7 +38,7 @@ from .config import (
     TOP_LEVEL_SCHEMA,
 )
 from .entities import (
-    EventAlert, ConditionAlert, ConditionAlertManual, AlertGenerator
+    EventAlert, ConditionAlert, AlertGenerator
 )
 from .ui import ( UiMgr )
 from .util import (
@@ -87,20 +87,16 @@ NOTIFICATION_CONTROL_SCHEMA = {
     vol.Required("enable"): cv.boolean, #vol.Any(STATE_ON, STATE_OFF, NOTIFICATION_SNOOZE),  ( from homeassistant.const )
     vol.Optional("snooze_until"): cv.datetime,
 }
-ACK_SCHEMA = {
-}
-UNACK_SCHEMA = {
-}
+EMPTY_SCHEMA = {}
 # Looks like in homeassistant/setup.py:_async_setup_component
 # it first calls component.async_setup,
 # then if there's a config entry it calls entry.async_setup_locked -> config_entries::async_setup -> async_setup_entry
 #
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    #_LOGGER.warning(f'async_setup_entry called: {"".join(traceback.format_stack())}')
     await hass.config_entries.async_forward_entry_setups(entry, ['binary_sensor'])
     return True
 async def async_setup(hass, config: ConfigType):
-    #_LOGGER.warning(f'async_setup called: {"".join(traceback.format_stack())}')
+    #_LOGGER.debug(f'async_setup called: {"".join(traceback.format_stack())}')
     _LOGGER.info('Setting up Alert2')
 
     set_global_hass(hass)
@@ -168,7 +164,7 @@ class DelayedNotifierMgr:
                     nlist = self.delayed_notifiers[anotifier]
                     del self.delayed_notifiers[anotifier]
                     for args in nlist:
-                        _LOGGER.warning(f'Notifying (delayed) {anotifier}: {args["message"]}')
+                        _LOGGER.info(f'Notifying (delayed) {anotifier}: {args["message"]}')
                         await self._hass.services.async_call('notify', anotifier, args)
             
             if self.startupWaitDone:
@@ -186,14 +182,14 @@ class DelayedNotifierMgr:
                     break
             report(DOMAIN, 'error', errMsg)
     def willDefer(self, anotifier, args):
-        #_LOGGER.warning(f'willDefer called for {anotifier} with {self.startupWaitDone} and {self.notifier_startup_grace_secs} and {self.notifier_deferred(anotifier)} and {self.defer_startup_notifications}')
+        #_LOGGER.debug(f'willDefer called for {anotifier} with {self.startupWaitDone} and {self.notifier_startup_grace_secs} and {self.notifier_deferred(anotifier)} and {self.defer_startup_notifications}')
         if self.startupWaitDone:
             return False
         if self._hass.services.has_service('notify', anotifier) and \
            not self.notifier_deferred(anotifier):
             return False
         if not anotifier in self.delayed_notifiers:
-            _LOGGER.debug(f'adding {anotifier} to delayed_notifiers')
+            _LOGGER.info(f'Adding {anotifier} to delayed_notifiers')
             self.delayed_notifiers[anotifier] = []
         self.delayed_notifiers[anotifier].append(args)
         return True
@@ -222,7 +218,6 @@ class Alert2Data:
         cfg = self.uiMgr.getPreppedConfig()
         if cfg is None:
             return None
-        #_LOGGER.info(f' read uiMgr.getConfig: {cfg}')
         if 'defaults' in cfg:
             tmpUiConfig['defaults'].update(cfg['defaults'])
         if 'skip_internal_errors' in cfg:
@@ -236,7 +231,6 @@ class Alert2Data:
             self.rawTopConfig = tmpUiConfig
         except vol.Invalid as v:
             return f'UI config: {v}'
-        #_LOGGER.info(f' read2 uiMgr.getConfig: {self.topConfig}')
         return None
     
     async def init2(self):
@@ -285,7 +279,6 @@ class Alert2Data:
         # Try updating defaults with ui
         #
         isFirstInit = (self.delayedNotifierMgr is None)
-        #_LOGGER.warning(f'init2(): isFirstInit={isFirstInit}')
         if isFirstInit:
             self.uiMgr = UiMgr(self._hass, self)
         try:
@@ -315,6 +308,7 @@ class Alert2Data:
                 errorEnt = self.declareEvent(DOMAIN, 'error')
             if isinstance(errorEnt, Entity):
                 await self.component.async_add_entities([ errorEnt ])
+                _LOGGER.debug(f'Lifecycle create alert {errorEnt.entity_id}')
             else:
                 report(DOMAIN, 'error', errorEnt) # errMsg
 
@@ -347,13 +341,13 @@ class Alert2Data:
                     oldHandler(loop, context)
                 self.inHandler = False
             loop.set_exception_handler(newHandler)
-            self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self.startShutdown)
+            self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self.shutdown)
+            #self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self.startShutdown)
             self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.haStartedEv)
         
             self._hass.bus.async_listen(EVENT_TYPE, self.handle_event_report)
             self._hass.services.async_register(DOMAIN, 'report', self.handle_service_report)
             self._hass.services.async_register(DOMAIN, 'ack_all', self.ackAll)
-            #self._hass.services.async_register(DOMAIN, 'log', self.dolog)
             self.component.async_register_entity_service(
                 'notification_control',
                 cv.make_entity_service_schema(NOTIFICATION_CONTROL_SCHEMA),
@@ -361,13 +355,23 @@ class Alert2Data:
             )
             self.component.async_register_entity_service(
                 'ack',
-                cv.make_entity_service_schema(ACK_SCHEMA),
+                cv.make_entity_service_schema(EMPTY_SCHEMA),
                 "async_ack",
             )
             self.component.async_register_entity_service(
                 'unack',
-                cv.make_entity_service_schema(UNACK_SCHEMA),
+                cv.make_entity_service_schema(EMPTY_SCHEMA),
                 "async_unack",
+            )
+            self.component.async_register_entity_service(
+                'manual_on',
+                cv.make_entity_service_schema(EMPTY_SCHEMA),
+                "async_manual_on",
+            )
+            self.component.async_register_entity_service(
+                'manual_off',
+                cv.make_entity_service_schema(EMPTY_SCHEMA),
+                "async_manual_off",
             )
             async_register_admin_service(
                 self._hass,
@@ -377,10 +381,8 @@ class Alert2Data:
             )
             
         await self.processConfig()
-        
-    async def reload_service_handler(self, service_call) -> None:
-        """Reload yaml entities."""
-        # First unload all entities. Start with generators since they'll remove condition alerts
+
+    async def unload_alerts(self):
         for aName in self.generators:
             agen = self.generators[aName]
             await self.sensorComponent.async_remove_entity(agen.entity_id)
@@ -390,22 +392,24 @@ class Alert2Data:
             for name in self.tracked[domain]:
                 ent = self.tracked[domain][name]
                 await self.component.async_remove_entity(ent.entity_id)
-                ent.shutdown()
         self.tracked = {}
         # then condition alerts
         for domain in self.alerts:
             for name in self.alerts[domain]:
                 ent = self.alerts[domain][name]
                 await self.component.async_remove_entity(ent.entity_id)
-                ent.shutdown()
         self.alerts = {}
         
+    async def reload_service_handler(self, service_call) -> None:
+        """Reload yaml entities."""
+        # First unload all entities. Start with generators since they'll remove condition alerts
+        await self.unload_alerts()
+        _LOGGER.info('Lifecycle reload first removed all Alert2 alerts before reloading')
+        
         conf = await self.component.async_prepare_reload(skip_reset=True)
-        #_LOGGER.warning(conf)
         if conf is None:
             conf = {DOMAIN: {}}
         self._rawYamlConfig = conf[DOMAIN]
-        _LOGGER.info('alert2 re-initing after config reload')
         await self.init2()
         # Redo prior calls to declareEventMulti() from other components
         if self.declEvMultiArr:
@@ -421,7 +425,9 @@ class Alert2Data:
         if self.earlyErrors:
             report(DOMAIN, 'error', f'{self.earlyErrors}')
 
-        await self.loadAlertBlock(self._rawYamlConfig)
+            
+        ents = await self.loadAlertBlock(self._rawYamlConfig)
+        _LOGGER.info(f'Lifecycle created {len(ents)} alerts from YAML config')
         
         # Now check the rest of the config
         # TODO - this is redoing a bunch of work parsing templates.
@@ -458,6 +464,8 @@ class Alert2Data:
                 elif not skipReport:
                     report(DOMAIN, 'error', newEnt) # errMsg
         await self.component.async_add_entities(entities)
+        for newEnt in entities:
+            _LOGGER.debug(f'Lifecycle created alert {newEnt.entity_id}')
 
         if 'alerts' in aRawCfg and isinstance(aRawCfg['alerts'], list):
             for obj in aRawCfg['alerts']:
@@ -468,7 +476,6 @@ class Alert2Data:
     # if doReport then return ent or None
     # if not doReport then return ent or errMsg string
     async def declareAlert(self, obj, genVars=None, doReport=True, checkForUpdate=False):
-        #_LOGGER.warning(f'declareAlert with {obj}')
         def adjustTemplateField(obj, name):
             # the alert may not have a condition if either it is a condition alert, or
             # it is a tracked alert specified without a trigger
@@ -489,6 +496,8 @@ class Alert2Data:
                 obj[name] = '{{ states("' + cond.strip() + '") }}'
         
         adjustTemplateField(obj, 'condition')
+        adjustTemplateField(obj, 'condition_on')
+        adjustTemplateField(obj, 'condition_off')
         if isinstance(obj, dict) and 'threshold' in obj:
             adjustTemplateField(obj['threshold'], 'value')
         newEnt = None
@@ -504,11 +513,10 @@ class Alert2Data:
                 aCfg = SINGLE_ALERT_SCHEMA_CONDITION(obj)
                 if checkForUpdate:
                     return None
-                #_LOGGER.warning(f'declareAlert post valid is {aCfg}')
                 if 'generator' in aCfg:
                     newEnt = self.declareGenerator(aCfg, rawConfig=obj)
                 else:
-                    newEnt = self.declareCondition(aCfg, False, genVars)
+                    newEnt = self.declareCondition(aCfg, genVars)
         except vol.Invalid as v:
             errMsg = f'alerts section of config: {v}. Relevant section: {obj}'
             if doReport:
@@ -522,6 +530,13 @@ class Alert2Data:
                 await self.sensorComponent.async_add_entities([newEnt])
             else:
                 await self.component.async_add_entities([newEnt])
+            if genVars is None:
+                _LOGGER.debug(f'Lifecycle created alert {newEnt.entity_id}')
+            else:
+                _LOGGER.info(f'Lifecycle created alert {newEnt.entity_id}')
+            # notify uiMgr so can update display_msg watcher if appropriate
+            #_LOGGER.warning(f'will call alertCreated: {"".join(traceback.format_stack())}')
+            self.uiMgr.alertCreated(newEnt.alDomain, newEnt.alName)
         elif doReport:
             # Must be error message
             report(DOMAIN, 'error', newEnt)
@@ -529,24 +544,24 @@ class Alert2Data:
         return newEnt
     
     async def undeclareAlert(self, domain, name, doReport=True):
-        _LOGGER.warning(f'undeclareAlert with domain={domain} name={name}')
         if domain in self.alerts and name in self.alerts[domain]:
             ent = self.alerts[domain][name]
-            ent.shutdown()
             del self.alerts[domain][name]
             if not self.alerts[domain]:
                 del self.alerts[domain]
+            _LOGGER.debug(f'Lifecycle undeclareAlert {ent.entity_id}')
             await self.component.async_remove_entity(ent.entity_id)
         elif domain in self.tracked and name in self.tracked[domain]:
             ent = self.tracked[domain][name]
-            ent.shutdown()
             del self.tracked[domain][name]
             if not self.tracked[domain]:
                 del self.tracked[domain]
+            _LOGGER.debug(f'Lifecycle undeclareAlert {ent.entity_id}')
             await self.component.async_remove_entity(ent.entity_id)
         elif domain == GENERATOR_DOMAIN and name in self.generators:
             agen = self.generators[name]
             del self.generators[name]
+            _LOGGER.debug(f'Lifecycle undeclareAlert {agen.entity_id}')
             await self.sensorComponent.async_remove_entity(agen.entity_id)
         else:
             errMsg = f'Trying to remove unknown alert domain={domain} name={name}'
@@ -555,9 +570,7 @@ class Alert2Data:
             return errMsg
         return None
     
-    def haStartedEv(self, event):
-        self._hass.loop.call_soon_threadsafe(self.haStartedEv2)
-    def haStartedEv2(self):
+    async def haStartedEv(self, event): # async so we're run in event loop
         # By the time EVENT_HOMEASSISTANT_STARTED has fired, the binary sensor should have initialized
         _LOGGER.debug(f'HA started')
         self.haStarted = True
@@ -565,34 +578,16 @@ class Alert2Data:
             self.binarySensorDict['hastarted']._attr_is_on = True
             self.binarySensorDict['hastarted'].async_write_ha_state()
         
-    def startShutdown(self, event):
-        self._hass.loop.call_soon_threadsafe(self.shutdown)
-    def shutdown(self):
+    #def startShutdown(self, event):
+    #    self._hass.loop.call_soon_threadsafe(self.shutdown)
+    async def shutdown(self, event):
+        await self.unload_alerts()
         if self.uiMgr:
             self.uiMgr.shutdown()
-        for adomain in self.alerts:
-            for alName in self.alerts[adomain]:
-                entity = self.alerts[adomain][alName]
-                entity.shutdown()
-        for adomain in self.tracked:
-            for alName in self.tracked[adomain]:
-                entity = self.tracked[adomain][alName]
-                entity.shutdown()
-        #for aName in self.generators:
-        #    self.generators[aName].shutdown()
         for atask in global_tasks:
             atask.cancel()
-    #async def slowStartup(self):
-    #    uptimeSecs = (dt.now() - moduleLoadTime).total_seconds()
-    #    graceRemainSecs = kNotifierInitGraceSecs - uptimeSecs
-    #    if graceRemainSecs > 0:
-    #        await asyncio.sleep(graceRemainSecs)
-    #    for ann in self.notifiers:
-    #        if not self._hass.services.has_service('notify', ann):
-    #            report(DOMAIN, 'error', f'notifier notify.{ann} referenced by an alert but is still not avaiable after startup grace period')
             
     def setBinarySensorDict(self, adict):
-        _LOGGER.debug(f'called setBinarySensorDict')
         self.binarySensorDict = adict
         if self.haStarted:
             self.binarySensorDict['hastarted']._attr_is_on = True
@@ -641,7 +636,7 @@ class Alert2Data:
     # NOTE - the validation code in UiMgr::updateAlert() assumes that
     # declareEventInt can't fail if the alert doesn't already exist.
     # so don't add any other error return paths here.
-    def declareCondition(self, config, isManual=False, genVars=None):
+    def declareCondition(self, config, genVars=None):
         domain = config['domain']
         name = config['name']
         errMsg = self.checkNewName(domain, name)
@@ -649,10 +644,7 @@ class Alert2Data:
             return errMsg
         if not domain in self.alerts:
             self.alerts[domain] = {}
-        if isManual:
-            entity = ConditionAlertManual(self._hass, self, config, self.topConfig['defaults'])
-        else:
-            entity = ConditionAlert(self._hass, self, config, self.topConfig['defaults'], genVars=genVars)
+        entity = ConditionAlert(self._hass, self, config, self.topConfig['defaults'], genVars=genVars)
         self.alerts[domain][name] = entity
         #self.notifiers.add(entity.notifier)
         return entity
@@ -688,15 +680,11 @@ class Alert2Data:
                     report(DOMAIN, 'error', ent2) # ent is errMsg
         self.declEvMultiArr = self.declEvMultiArr + arr
         await self.component.async_add_entities(entities)
+        for ent in entities:
+            _LOGGER.debug(f'Lifecycle created alert {ent.entity_id}')
         
-    #async def dolog(self, call):
-    #    logLevel = 'info'
-    #    if 'level' in call.data and call.data['level'] in [ 'debug', 'info', 'warning', 'error', 'critical' ]:
-    #        logLevel = call.data['level']
-    #    txt = call.data['message'] if 'message' in call.data else None
-    #    getattr(_LOGGER, logLevel)(f'Log: {txt}')
     async def ackAll(self, call):
-        _LOGGER.info(f'ackAll called')
+        _LOGGER.info(f'Activity ackAll called')
         now = dt.now()
         for adomain in self.tracked:
             for alName in self.tracked[adomain]:
@@ -728,8 +716,6 @@ class Alert2Data:
         if self.topConfig['skip_internal_errors']:
             if domain == DOMAIN and name == 'error':
                 # The internal error was logged back up in report(), so no need to log again
-                #msg = data['message'] if 'message' in data else ''
-                # _LOGGER.error(msg)
                 return
         
         if not domain in self.tracked or not name in self.tracked[domain]:

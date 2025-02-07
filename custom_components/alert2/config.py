@@ -112,6 +112,28 @@ def has_atleast_oneof(alist: list, aschema):
         return obj2
     return validate
 
+def check_off(aschema):
+    """Validate that the off conditions are legal."""
+
+    def validate(obj: dict) -> dict:
+        if not isinstance(obj, dict):
+            raise vol.Invalid("expected dictionary")
+        obj2 = aschema(obj)
+        has_off = any([k in obj2 for k in ['condition_off','trigger_off','manual_off']])
+        has_on = any([k in obj2 for k in ['condition_on','trigger_on','manual_on']])
+        has_both = any([k in obj2 for k in ['condition','threshold']])
+        if has_off ^ has_on:
+            raise vol.Invalid(f'Specs with an "off" criteria must also include an "on" criteria')
+
+        if has_on: # and so has_off
+            if has_both:
+                raise vol.Invalid(f'Can not mix condition/threshold with explicit on/off criteria')
+        else:
+            if not has_both:
+                raise vol.Invalid(f'Must specify either condition, threshold or the on/off criteria')
+        return obj2
+    return validate
+
 def jstringList(afield):
     alist = cv.ensure_list(afield)
     for elem in alist:
@@ -166,6 +188,7 @@ SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({
                                                                  # 0.001 hours is 3.6 seconds
                                                                  vol.ExactSequence([vol.Range(min=1.),vol.Range(min=0.01)]))),
     vol.Optional('annotate_messages'): cv.boolean,
+    vol.Optional('display_msg'): vol.Any(cv.template, None),
 })
 
 # So if 'generator' is present, then 'name' is a template. Otherwise it's a string.
@@ -196,9 +219,16 @@ THRESHOLD_SCHEMA = vol.Schema({
 SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Optional('condition'): cv.template,
     vol.Optional('threshold'): has_atleast_oneof(['minimum', 'maximum'], THRESHOLD_SCHEMA),
+    vol.Optional('condition_off'): cv.template,
+    vol.Optional('trigger_off'): jProtectedTrigger,
+    vol.Optional('manual_off'): cv.boolean,
+    vol.Optional('condition_on'): cv.template,
+    vol.Optional('trigger_on'): jProtectedTrigger,
+    vol.Optional('manual_on'): cv.boolean,
     vol.Optional('done_message'): cv.template,
     vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
     vol.Optional('delay_on_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
+    vol.Optional('early_start'): cv.boolean,
 })
 GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): cv.template,
@@ -206,13 +236,13 @@ GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('generator'): jtemplate,
     vol.Required('generator_name'): jstringName,
 })
-
-# If alert is a generator, then 'name' is a template, otherwise 'name' is a string
-SINGLE_ALERT_SCHEMA_CONDITION = has_atleast_oneof(['condition','threshold'], vol.Any(GENERATOR_SCHEMA, SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
+NO_GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): jDomain,
     vol.Required('name'): jstringName,
-    vol.Optional('early_start'): cv.boolean,
-})))
+})
+
+# If alert is a generator, then 'name' is a template, otherwise 'name' is a string
+SINGLE_ALERT_SCHEMA_CONDITION = check_off(vol.Any(GENERATOR_SCHEMA, NO_GENERATOR_SCHEMA))
 
 TOP_LEVEL_SCHEMA = vol.Schema({
     vol.Optional('defaults'): DEFAULTS_SCHEMA, #dict,

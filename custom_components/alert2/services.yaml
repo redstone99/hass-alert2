@@ -52,6 +52,17 @@ unack:
     entity:
       domain: alert2
 
+manual_on:
+  description: Turns on a condition alert that was configured with manual_on enabled
+  target:
+    entity:
+      domain: alert2
+manual_off:
+  description: Turns off a condition alert that was configured with manual_off enabled
+  target:
+    entity:
+      domain: alert2
+
 ack_all:
   name: Ack all
   description: Ack all alert2 alerts

@@ -10,6 +10,11 @@ DOMAIN = "alert2"
 GENERATOR_DOMAIN = "alert2generator"
 EVENT_TYPE = 'alert2_report'
 gAssertMsg = 'Internal error. Please report to Alert2 maintainers (github.com/redstone99/hass-alert2). Details:'
+EVENT_ALERT2_CREATE = 'alert2_create'
+EVENT_ALERT2_DELETE  = 'alert2_delete'
+EVENT_ALERT2_FIRE = 'alert2_alert_fire'
+EVENT_ALERT2_ON = 'alert2_alert_on'
+EVENT_ALERT2_OFF = 'alert2_alert_off'
 
 #
 # report() - report that an event alert has fired.
@@ -28,7 +33,7 @@ def report(domain: str, name: str, message: str | None = None, isException: bool
         _LOGGER.error(f'Err reported: {data}')
     #_LOGGER.warning(f'  report() called from: {"".join(traceback.format_stack())}')
     ghass = global_hass
-    if ghass:
+    if ghass and ghass.loop.is_running():
         ghass.loop.call_soon_threadsafe(lambda: ghass.bus.async_fire(EVENT_TYPE, data))
     else:
         _LOGGER.error('report() called before Alert2 has initialized. reporting skipped.')
