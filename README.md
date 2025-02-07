@@ -45,9 +45,10 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - **Snooze / disable / throttle notifications**. Handy for noisy sensors or while developing your alerts.
 - **Template notifiers**. Dynamically specify who gets notified.
 - **Generator patterns**. Dynamically define multiple similar alerts, with wildcard support.
-- **Manage alerts in UI**. Create or edit alerts via the UI. Reload YAML via the UI without restarting HA.
+- **UI**
+   - Create or edit alerts via the UI. Also reload YAML without restarting HA.
+   - Overview card showing recently active alerts and custom, dynamic messages.
 - **Persistent notification details**. In your HA dashboard, you can view past alert firings as well as the message text sent in notifications.
-- **Custom frontend cards**. Makes it easier to view and manage alerts.
 - **Hysteresis**. Reduce spurious alerts as sensors fluctuate.
 
 Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-alert2/discussions) or file an [Issue](https://github.com/redstone99/hass-alert2/issues).  Or follow the [development thread](https://community.home-assistant.io/t/alert2-a-new-alerting-component).
