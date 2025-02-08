@@ -1065,24 +1065,72 @@ async def test_display_msg(hass, service_calls, hass_client, hass_ws_client, mon
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     
-async def test_display_msg2(hass, service_calls, hass_client, hass_storage, caplog):
-    # Check null values for display_msg and notifier
+async def test_display_msg2(hass, service_calls, hass_storage, caplog):
+    # Check null values for display_msg and notifier and summary_notifier
     cfg = { 'alert2': { } }
     uiCfg = { 'defaults' : { },
               'alerts': [
-                  { 'domain': 'd', 'name': 'n2', 'condition':'on', 'notifier': 'null', 'display_msg': 'null', 'message': 'happy' }
+                  { 'domain': 'd', 'name': 'n2', 'condition':'on', 'notifier': 'null', 'display_msg': 'null', 'message': 'happy' },
+                  { 'domain': 'd', 'name': 'n5', 'condition':'sensor.b', 'notifier': 'null' },
+                  { 'domain': 'd', 'name': 'n3', 'condition':'sensor.a', 'notifier': 'null', 'summary_notifier': 'yes' },
+                  { 'domain': 'd', 'name': 'n4', 'condition':'sensor.a', 'summary_notifier': 'null' },
               ]
              }
     hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
                                        'data': { 'config': uiCfg } }
+    await setAndWait(hass, 'sensor.a', 'off')
+    await setAndWait(hass, 'sensor.b', 'off')
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
     await asyncio.sleep(0.05)
     gad = hass.data[DOMAIN]
+    #assert service_calls.popNotifySearch('persistent_notification', 'n2', 'n2 turned on')
     assert service_calls.isEmpty()
     n2 = gad.alerts['d']['n2']
+    n3 = gad.alerts['d']['n3']
+    n4 = gad.alerts['d']['n4']
+    n5 = gad.alerts['d']['n4']
     assert hass.states.get('alert2.d_n2').state == 'on'
     assert n2._display_msg_template is None
     assert 'Activity alert2.d_n2 turned on' in caplog.text
     assert 'd_n2: happy' in caplog.text
+    await setAndWait(hass, 'sensor.b', 'on')
+    assert hass.states.get('alert2.d_n5').state == 'on'
+    assert 'Activity alert2.d_n5 turned on' in caplog.text
+    assert 'd_n5: turned on' in caplog.text
+
+    await setAndWait(hass, 'sensor.a', 'on')
+    #await asyncio.sleep(0.05)
+    assert 'Activity alert2.d_n3 turned on' in caplog.text
+    assert 'd_n3: turned on' in caplog.text
+    assert 'Activity alert2.d_n4 turned on' in caplog.text
+    assert 'd_n4: turned on' in caplog.text
+    #_LOGGER.info(service_calls.allCalls)
+    service_calls.popNotifyEmpty('persistent_notification', 'n4: turned on')
+
+    # Snooze n3 and n4
+    now = rawdt.datetime.now(rawdt.timezone.utc)
+    await hass.services.async_call('alert2','notification_control',
+        {'entity_id': 'alert2.d_n3', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
+    await hass.services.async_call('alert2','notification_control',
+        {'entity_id': 'alert2.d_n4', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
+    await hass.async_block_till_done()
+    assert isinstance(n3.notification_control, rawdt.datetime)
+    assert isinstance(n4.notification_control, rawdt.datetime)
+    await setAndWait(hass, 'sensor.a', 'off')
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert 'Activity alert2.d_n3 turned off' in caplog.text
+    assert 'Activity alert2.d_n4 turned off' in caplog.text
+    await setAndWait(hass, 'sensor.a', 'on')
+    await setAndWait(hass, 'sensor.a', 'off')
+    assert service_calls.isEmpty()
+    
+    # snooze expires, should get no summary notifications
+    await asyncio.sleep(2)
+    assert n3.notification_control == a2Entities.NOTIFICATIONS_ENABLED
+    assert n4.notification_control == a2Entities.NOTIFICATIONS_ENABLED
+    assert service_calls.isEmpty()
+    assert 'Summary: Alert2 d_n4 fired 1x' in caplog.text
+    assert 'Summary: Alert2 d_n3 fired 1x' in caplog.text

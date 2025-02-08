@@ -1500,6 +1500,7 @@ class ConditionAlert(AlertBase):
             self.last_on_time = now
         else:
             self.last_off_time = now
+        
         # If we haven't called async_added_to_hass, then we don't know if this state
         # is actually a state change or not, so we don't know whether to fire or not.
         # So let the reminder_check() call in async_added_to_hass() decide.

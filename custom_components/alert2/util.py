@@ -57,7 +57,7 @@ def create_task_int(domain, atask):
     global global_tasks
     cb = lambda ttask: taskDone(domain, ttask)
     atask.add_done_callback(cb)
-    _LOGGER.debug(f'create_task called for domain {domain}, {atask}')
+    #_LOGGER.debug(f'create_task called for domain {domain}, {atask}')
     global_tasks.add(atask)
     return atask
 
@@ -65,20 +65,20 @@ def create_task_int(domain, atask):
 # cancel_task - cancel a task created with create_task().  atask is the task returned by create_task()
 #
 def cancel_task(domain, atask):
-    _LOGGER.debug(f'Calling cancel_task for {domain} and {atask}')
+    #_LOGGER.debug(f'Calling cancel_task for {domain} and {atask}')
     # Cancelling a task means its done handler is called, so no need to remove task from global_tasks
     atask.cancel()
 
 def taskDone(domain, atask):
-    _LOGGER.debug(f'Calling taskDone for {domain} and {atask}')
+    #_LOGGER.debug(f'Calling taskDone for {domain} and {atask}')
     global global_tasks
     if atask in global_tasks:
-        _LOGGER.debug(f'taskDone.. called for domain {domain}, {atask}')
+        #_LOGGER.debug(f'taskDone.. called for domain {domain}, {atask}')
         global_tasks.remove(atask)
     else:
         report(DOMAIN, 'error', f'{gAssertMsg} taskDone called for domain {domain}, {atask} but is not in global_tasks')
     if atask.cancelled():
-        _LOGGER.debug(f'taskDone: task was cancelled: {atask}')
+        #_LOGGER.debug(f'taskDone: task was cancelled: {atask}')
         return
     ex = atask.exception()
     if ex:

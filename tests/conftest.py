@@ -1,8 +1,10 @@
-import logging
 import re
 import pytest
 from homeassistant.core import (ServiceRegistry)
-_LOGGER = logging.getLogger(None) # get root logger
+#import logging
+#_LOGGER = logging.getLogger(None) # get root logger
+#_LOGGER.setLevel(logging.INFO)
+#logging.basicConfig(level=logging.INFO)
 
 class CallCollector:
     def __init__(self, hass):
