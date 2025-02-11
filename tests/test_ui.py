@@ -920,11 +920,11 @@ async def test_conflict2(hass, service_calls, hass_client, hass_storage):
     n1 = gad.alerts['d']['n1']
     assert hass.states.get('alert2.d_n1').state == 'off'
 
+async def checkNoMsg(aclient):
+    with pytest.raises(TimeoutError) as excinfo:
+        async with asyncio.timeout(0.05):
+            msg = await aclient.receive_json()
 async def test_display_msg(hass, service_calls, hass_client, hass_ws_client, monkeypatch):
-    async def checkNoMsg(aclient):
-        with pytest.raises(TimeoutError) as excinfo:
-            async with asyncio.timeout(0.05):
-                msg = await aclient.receive_json()
     async def getEvent(aclient, msg_id, rtxt):
         msg = await aclient.receive_json()
         await hass.async_block_till_done()
@@ -1134,3 +1134,39 @@ async def test_display_msg2(hass, service_calls, hass_storage, caplog):
     assert service_calls.isEmpty()
     assert 'Summary: Alert2 d_n4 fired 1x' in caplog.text
     assert 'Summary: Alert2 d_n3 fired 1x' in caplog.text
+
+async def test_display_cfg(hass, service_calls, hass_client, hass_ws_client, monkeypatch):
+    async def getEvent(aclient, msg_id, rtxt):
+        msg = await aclient.receive_json()
+        await hass.async_block_till_done()
+        assert service_calls.isEmpty()
+        assert msg["id"] == msg_id
+        assert msg["type"] == "event"
+        result = msg["event"]['rendered']
+        assert result == rtxt
+                
+    cfg = { 'alert2': {
+        'alerts': [
+            { 'domain': 'd', 'name': 'n1', 'condition':'off' }
+        ] } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    wsc = await hass_ws_client(hass)
+    msg_id = 1
+    await wsc.send_json({ "id": msg_id, "type": "alert2_get_display_config" })
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    msg = await wsc.receive_json()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert msg["type"] == wsapi.TYPE_RESULT
+    assert msg["success"], msg['error']
+    assert msg["result"] is None
+    await checkNoMsg(wsc)
+
+
+
+    

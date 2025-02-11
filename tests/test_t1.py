@@ -2705,3 +2705,24 @@ async def test_start(hass, service_calls):
     service_calls.popNotifySearch('persistent_notification', 't14', 't14: turned on')
     service_calls.popNotifySearch('persistent_notification', 't16', 't16: turned off')
     assert service_calls.isEmpty()
+
+async def test_supersede_mgr(hass, service_calls):
+    cfg = { 'alert2' : { } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    
+    s = alert2.SupersedeMgr()
+    assert s.supersededByList('d', 'n1') == []
+    assert s.addNode('d', 'n1', []) is True
+    assert s.supersededByList('d', 'n1') == []
+    assert service_calls.isEmpty()
+    assert s.addNode('d', 'n2', [ { 'domain':'d', 'name': 'n1' }]) is True
+    assert s.supersededByList('d', 'n1') == [ ('d', 'n2') ]
+    assert service_calls.isEmpty()
+    # Trying to add dup throws error, but doesn't mess up results
+    assert s.addNode('d', 'n2', [ { 'domain':'d', 'name': 'n1' }]) is True
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'not creating duplicate entry')
+    assert s.supersededByList('d', 'n1') == [ ('d', 'n2') ]
