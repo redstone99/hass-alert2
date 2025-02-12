@@ -2712,17 +2712,155 @@ async def xxxxx____________test_supersede_mgr(hass, service_calls):
     await hass.async_start()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    
+
     s = alert2.SupersedeMgr()
-    assert s.supersededByList('d', 'n1') == []
+    assert s.supersededBySet('d', 'n1') == set()
     assert s.addNode('d', 'n1', []) is True
-    assert s.supersededByList('d', 'n1') == []
+    assert s.supersededBySet('d', 'n1') == set()
     assert service_calls.isEmpty()
+    # n2 supersedes n1
     assert s.addNode('d', 'n2', [ { 'domain':'d', 'name': 'n1' }]) is True
-    assert s.supersededByList('d', 'n1') == [ ('d', 'n2') ]
+    assert s.supersededBySet('d', 'n1') == set([('d', 'n2')])
     assert service_calls.isEmpty()
     # Trying to add dup throws error, but doesn't mess up results
     assert s.addNode('d', 'n2', [ { 'domain':'d', 'name': 'n1' }]) is True
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'not creating duplicate entry')
-    assert s.supersededByList('d', 'n1') == [ ('d', 'n2') ]
+    service_calls.popNotifyEmpty('persistent_notification', 'should not be adding duplicate')
+    assert s.supersededBySet('d', 'n1') == set([ ('d', 'n2') ])
+    assert s.supersededBySet('d', 'n2') == set()
+
+    # Trying to add n1 supersedes n2 should fail
+    s.removeNode('d', 'n1')
+    assert s.addNode('d', 'n1', [ { 'domain':'d', 'name': 'n2' }]) is False
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    #service_calls.popNotifyEmpty('persistent_notification', 'should not be adding duplicate')
+    assert s.supersededBySet('d', 'n1') == set([ ('d', 'n2') ])
+    assert s.supersededBySet('d', 'n2') == set()
+
+    # n3 supersedes n2
+    assert s.addNode('d', 'n3', [ { 'domain':'d', 'name': 'n2' }]) is True
+    assert s.supersededBySet('d', 'n1') == set([ ('d', 'n2'), ('d', 'n3') ])
+    assert s.supersededBySet('d', 'n2') == set([ ('d', 'n3') ])
+    assert s.supersededBySet('d', 'n3') == set([ ])
+
+    # Trying to add n1 supersedes n3 should fail
+    assert s.addNode('d', 'n1', [ { 'domain':'d', 'name': 'n3' }]) is False
+    assert s.supersededBySet('d', 'n1') == set([ ('d', 'n2'), ('d', 'n3') ])
+    assert s.supersededBySet('d', 'n2') == set([ ('d', 'n3') ])
+    assert s.supersededBySet('d', 'n3') == set([ ])
+
+    # should be able to supersede an alert that doesn't yet exist
+    assert s.addNode('d', 'n5', [ { 'domain':'d', 'name': 'n4' }, { 'domain': 'd', 'name': 'n3' },
+                                  { 'domain':'d', 'name': 'n2' }]) is True
+    assert s.supersededBySet('d', 'n1') == set([ ('d', 'n2'), ('d', 'n3'), ('d', 'n5') ])
+    assert s.supersededBySet('d', 'n2') == set([ ('d', 'n3'), ('d', 'n5') ])
+    assert s.supersededBySet('d', 'n3') == set([ ('d', 'n5') ])
+    assert s.supersededBySet('d', 'n4') == set([ ('d', 'n5') ])
+    assert s.supersededBySet('d', 'n5') == set([ ])
+
+    # supersedes graph is
+    #
+    # n5 -> (n4, n3, n2)
+    # n3 -> n2 -> n1
+    
+    assert s.addNode('d', 'n4', [ { 'domain':'d', 'name': 'n5' }]) is False
+    # Now try n4 supersedes n2
+    assert s.addNode('d', 'n4', [ { 'domain':'d', 'name': 'n2' }]) is True
+    assert s.supersededBySet('d', 'n1') == set([ ('d', 'n2'), ('d', 'n3'), ('d', 'n5'), ('d', 'n4') ])
+    assert s.supersededBySet('d', 'n2') == set([ ('d', 'n3'), ('d', 'n5'), ('d', 'n4') ])
+    assert s.supersededBySet('d', 'n3') == set([ ('d', 'n5') ])
+    assert s.supersededBySet('d', 'n4') == set([ ('d', 'n5') ])
+    assert s.supersededBySet('d', 'n5') == set([ ])
+
+    s.removeNode('d', 'n2')
+    assert s.supersededBySet('d', 'n1') == set()
+    assert s.supersededBySet('d', 'n2') == set([ ('d', 'n3'), ('d', 'n5'), ('d', 'n4') ])
+    assert s.supersededBySet('d', 'n3') == set([ ('d', 'n5') ])
+    assert s.supersededBySet('d', 'n4') == set([ ('d', 'n5') ])
+    assert s.supersededBySet('d', 'n5') == set([ ])
+
+    # Try cycle separated by a node
+    assert s.addNode('d', 'n6', [ { 'domain':'d', 'name': 'n7' }, { 'domain':'d', 'name': 'n8' }]) is True
+    assert s.addNode('d', 'n7', [ { 'domain':'d', 'name': 'n8' }]) is True
+    assert s.addNode('d', 'n8', [ { 'domain':'d', 'name': 'n6' }]) is False
+    assert s.supersededBySet('d', 'n8') == set([ ('d', 'n7'), ('d', 'n6') ])
+    assert s.supersededBySet('d', 'n7') == set([ ('d', 'n6') ])
+    assert s.supersededBySet('d', 'n6') == set()
+
+    # Try diamond shape
+    assert s.addNode('d', 'n9', [ { 'domain':'d', 'name': 'n10' }, { 'domain':'d', 'name': 'n11' }]) is True
+    assert s.addNode('d', 'n10', [ { 'domain':'d', 'name': 'n12' }]) is True
+    assert s.addNode('d', 'n11', [ { 'domain':'d', 'name': 'n12' }]) is True
+    assert s.supersededBySet('d', 'n9') == set()
+    assert s.supersededBySet('d', 'n10') == set([ ('d', 'n9') ])
+    assert s.supersededBySet('d', 'n11') == set([ ('d', 'n9') ])
+    assert s.supersededBySet('d', 'n12') == set([ ('d', 'n9'), ('d', 'n10'), ('d', 'n11') ])
+
+    
+async def test_supersede_mgr2(hass, service_calls, monkeypatch):
+    await setAndWait(hass, "sensor.t1", 'off')
+    await setAndWait(hass, "sensor.t2", 'off')
+    await setAndWait(hass, "sensor.t3", 'off')
+    cfg = { 'alert2' : { 'defaults': { 'reminder_frequency_mins': 0.01 }, 'alerts' : [
+        { 'domain': 'test', 'name': 't1', 'condition': 'sensor.t1' },
+        { 'domain': 'test', 'name': 't2', 'condition': 'sensor.t2', 'supersedes': [ {'domain':'test','name':'t1'} ] },
+    ] } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.t1", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't1: turned on')
+    await setAndWait(hass, "sensor.t2", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't2: turned on')
+    # Wait for reminders, only t2 should have it
+    await asyncio.sleep(2)
+    service_calls.popNotifyEmpty('persistent_notification', 't2: on for')
+    await setAndWait(hass, "sensor.t1", 'off')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.t1", 'on')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.t2", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't2: turned off')
+    await asyncio.sleep(2)
+    service_calls.popNotifyEmpty('persistent_notification', 't1.*: on for')
+
+    # t2 on, miss t1 reminder, so test to see if future reminders happen
+    await setAndWait(hass, "sensor.t2", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't2: turned on')
+    await asyncio.sleep(2)
+    service_calls.popNotifyEmpty('persistent_notification', 't2: on for')
+    await setAndWait(hass, "sensor.t2", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't2: turned off')
+    await asyncio.sleep(2)
+    service_calls.popNotifyEmpty('persistent_notification', 't1: on for')
+
+    crap, so when loading an alert, before you decide whether to notify, need to load
+    all other alerts to see if someone supersedes you
+    
+    # Try a reload introducing a new alert superseding t1
+    cfg['alert2']['alerts'].append(
+        { 'domain': 'test', 'name': 't3', 'condition': 'sensor.t3', 'supersedes': [ {'domain':'test','name':'t1'} ] }
+    )
+    async def fake_cfg(thass):
+        return cfg
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    _LOGGER.info('reload done??')
+    await asyncio.sleep(0.7) # 0.01 min is 0.6 secs
+    assert service_calls.isEmpty()
+
+    # should still get reminders
+    await asyncio.sleep(0.7) # 0.01 min is 0.6 secs
+    service_calls.popNotifyEmpty('persistent_notification', 't1: on for')
+    # And once t3 turns on, no more reminders or notification when t1 turns off
+    await setAndWait(hass, "sensor.t3", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't3: turned on')
+    await asyncio.sleep(0.7) # 0.01 min is 0.6 secs
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.t1", 'off')
+    assert service_calls.isEmpty()
