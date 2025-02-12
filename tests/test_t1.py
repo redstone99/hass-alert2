@@ -2715,12 +2715,15 @@ async def xxxxx____________test_supersede_mgr(hass, service_calls):
 
     s = alert2.SupersedeMgr()
     assert s.supersededBySet('d', 'n1') == set()
+    #assert s.topoOrdering() == []
     assert s.addNode('d', 'n1', []) is True
     assert s.supersededBySet('d', 'n1') == set()
+    #assert s.topoOrdering() == [ ('d','n1') ]
     assert service_calls.isEmpty()
     # n2 supersedes n1
     assert s.addNode('d', 'n2', [ { 'domain':'d', 'name': 'n1' }]) is True
     assert s.supersededBySet('d', 'n1') == set([('d', 'n2')])
+    #assert s.topoOrdering() == [ ('d','n1'),('d','n2') ]
     assert service_calls.isEmpty()
     # Trying to add dup throws error, but doesn't mess up results
     assert s.addNode('d', 'n2', [ { 'domain':'d', 'name': 'n1' }]) is True
@@ -2728,6 +2731,7 @@ async def xxxxx____________test_supersede_mgr(hass, service_calls):
     service_calls.popNotifyEmpty('persistent_notification', 'should not be adding duplicate')
     assert s.supersededBySet('d', 'n1') == set([ ('d', 'n2') ])
     assert s.supersededBySet('d', 'n2') == set()
+    #assert s.topoOrdering() == [ ('d','n1'),('d','n2') ]
 
     # Trying to add n1 supersedes n2 should fail
     s.removeNode('d', 'n1')
@@ -2737,18 +2741,21 @@ async def xxxxx____________test_supersede_mgr(hass, service_calls):
     #service_calls.popNotifyEmpty('persistent_notification', 'should not be adding duplicate')
     assert s.supersededBySet('d', 'n1') == set([ ('d', 'n2') ])
     assert s.supersededBySet('d', 'n2') == set()
+    #assert s.topoOrdering() == [ ('d','n2') ]
 
     # n3 supersedes n2
     assert s.addNode('d', 'n3', [ { 'domain':'d', 'name': 'n2' }]) is True
     assert s.supersededBySet('d', 'n1') == set([ ('d', 'n2'), ('d', 'n3') ])
     assert s.supersededBySet('d', 'n2') == set([ ('d', 'n3') ])
     assert s.supersededBySet('d', 'n3') == set([ ])
-
+    #assert s.topoOrdering() == [ ('d','n2'),('d','n3') ]
+    
     # Trying to add n1 supersedes n3 should fail
     assert s.addNode('d', 'n1', [ { 'domain':'d', 'name': 'n3' }]) is False
     assert s.supersededBySet('d', 'n1') == set([ ('d', 'n2'), ('d', 'n3') ])
     assert s.supersededBySet('d', 'n2') == set([ ('d', 'n3') ])
     assert s.supersededBySet('d', 'n3') == set([ ])
+    #assert s.topoOrdering() == [ ('d','n2'),('d','n3') ]
 
     # should be able to supersede an alert that doesn't yet exist
     assert s.addNode('d', 'n5', [ { 'domain':'d', 'name': 'n4' }, { 'domain': 'd', 'name': 'n3' },
@@ -2758,6 +2765,7 @@ async def xxxxx____________test_supersede_mgr(hass, service_calls):
     assert s.supersededBySet('d', 'n3') == set([ ('d', 'n5') ])
     assert s.supersededBySet('d', 'n4') == set([ ('d', 'n5') ])
     assert s.supersededBySet('d', 'n5') == set([ ])
+    #assert s.topoOrdering() == [ ('d','n2'),('d','n3'),('d','n5') ]
 
     # supersedes graph is
     #
@@ -2772,6 +2780,8 @@ async def xxxxx____________test_supersede_mgr(hass, service_calls):
     assert s.supersededBySet('d', 'n3') == set([ ('d', 'n5') ])
     assert s.supersededBySet('d', 'n4') == set([ ('d', 'n5') ])
     assert s.supersededBySet('d', 'n5') == set([ ])
+    #assert s.topoOrdering() == [ ('d','n2'),('d','n3'),('d','n4'),('d','n5') ] or \
+    #    s.topoOrdering() == [ ('d','n2'),('d','n4'),('d','n3'),('d','n5') ]
 
     s.removeNode('d', 'n2')
     assert s.supersededBySet('d', 'n1') == set()
@@ -2779,16 +2789,29 @@ async def xxxxx____________test_supersede_mgr(hass, service_calls):
     assert s.supersededBySet('d', 'n3') == set([ ('d', 'n5') ])
     assert s.supersededBySet('d', 'n4') == set([ ('d', 'n5') ])
     assert s.supersededBySet('d', 'n5') == set([ ])
-
+    #assert s.topoOrdering() == [ ('d','n3'),('d','n4'),('d','n5') ] or \
+    #    s.topoOrdering() == [ ('d','n4'),('d','n3'),('d','n5') ]
+    
+    # try two roots
+    s = alert2.SupersedeMgr()
+    assert s.addNode('d', 'n1', [ { 'domain':'d', 'name': 'n3' }]) is True
+    assert s.addNode('d', 'n2', [ { 'domain':'d', 'name': 'n3' }]) is True
+    #assert s.topoOrdering() == [ ('d','n1'),('d','n2') ] or s.topoOrdering() == [ ('d','n2'),('d','n1') ]
+    assert s.addNode('d', 'n3', [ ]) is True
+    #assert s.topoOrdering() == [ ('d','n3'),('d','n2'),('d','n1') ] or s.topoOrdering() == [ ('d','n3'),('d','n1'),('d','n2') ]
+    
     # Try cycle separated by a node
+    s = alert2.SupersedeMgr()
     assert s.addNode('d', 'n6', [ { 'domain':'d', 'name': 'n7' }, { 'domain':'d', 'name': 'n8' }]) is True
     assert s.addNode('d', 'n7', [ { 'domain':'d', 'name': 'n8' }]) is True
     assert s.addNode('d', 'n8', [ { 'domain':'d', 'name': 'n6' }]) is False
     assert s.supersededBySet('d', 'n8') == set([ ('d', 'n7'), ('d', 'n6') ])
     assert s.supersededBySet('d', 'n7') == set([ ('d', 'n6') ])
     assert s.supersededBySet('d', 'n6') == set()
+    #assert s.topoOrdering() == [ ('d','n7'),('d','n6') ]
 
     # Try diamond shape
+    s = alert2.SupersedeMgr()
     assert s.addNode('d', 'n9', [ { 'domain':'d', 'name': 'n10' }, { 'domain':'d', 'name': 'n11' }]) is True
     assert s.addNode('d', 'n10', [ { 'domain':'d', 'name': 'n12' }]) is True
     assert s.addNode('d', 'n11', [ { 'domain':'d', 'name': 'n12' }]) is True
@@ -2796,6 +2819,9 @@ async def xxxxx____________test_supersede_mgr(hass, service_calls):
     assert s.supersededBySet('d', 'n10') == set([ ('d', 'n9') ])
     assert s.supersededBySet('d', 'n11') == set([ ('d', 'n9') ])
     assert s.supersededBySet('d', 'n12') == set([ ('d', 'n9'), ('d', 'n10'), ('d', 'n11') ])
+    #assert s.topoOrdering() == [ ('d','n10'),('d','n11'),('d','n9') ] or s.topoOrdering() == [ ('d','n11'),('d','n10'),('d','n9') ]
+    assert s.addNode('d', 'n12', [ ]) is True
+    #assert s.topoOrdering() == [ ('d','n12'),('d','n10'),('d','n11'),('d','n9') ] or s.topoOrdering() == [ ('d','n12'),('d','n11'),('d','n10'),('d','n9') ]
 
     
 async def test_supersede_mgr2(hass, service_calls, monkeypatch):
@@ -2837,9 +2863,6 @@ async def test_supersede_mgr2(hass, service_calls, monkeypatch):
     await asyncio.sleep(2)
     service_calls.popNotifyEmpty('persistent_notification', 't1: on for')
 
-    crap, so when loading an alert, before you decide whether to notify, need to load
-    all other alerts to see if someone supersedes you
-    
     # Try a reload introducing a new alert superseding t1
     cfg['alert2']['alerts'].append(
         { 'domain': 'test', 'name': 't3', 'condition': 'sensor.t3', 'supersedes': [ {'domain':'test','name':'t1'} ] }
@@ -2850,17 +2873,20 @@ async def test_supersede_mgr2(hass, service_calls, monkeypatch):
         m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
         await hass.services.async_call('alert2','reload', {})
         await hass.async_block_till_done()
-    _LOGGER.info('reload done??')
-    await asyncio.sleep(0.7) # 0.01 min is 0.6 secs
+    _LOGGER.info('reload done')
+    # We will get a reminder because reminder freq is set for 0.6s, but when schedule reminders, we add a second.
+    # So there was a reminder that was due but in that 1-second window.  When we reload, we see the reminder is
+    # due and send it.
+    service_calls.popNotifyEmpty('persistent_notification', 't1: on for')
     assert service_calls.isEmpty()
 
     # should still get reminders
-    await asyncio.sleep(0.7) # 0.01 min is 0.6 secs
+    await asyncio.sleep(2)
     service_calls.popNotifyEmpty('persistent_notification', 't1: on for')
     # And once t3 turns on, no more reminders or notification when t1 turns off
     await setAndWait(hass, "sensor.t3", 'on')
     service_calls.popNotifyEmpty('persistent_notification', 't3: turned on')
-    await asyncio.sleep(0.7) # 0.01 min is 0.6 secs
-    assert service_calls.isEmpty()
+    await asyncio.sleep(2)
+    service_calls.popNotifyEmpty('persistent_notification', 't3: on for')
     await setAndWait(hass, "sensor.t1", 'off')
     assert service_calls.isEmpty()
