@@ -2814,6 +2814,10 @@ async def xxxxx____________test_supersede_mgr(hass, service_calls):
     s = alert2.SupersedeMgr()
     assert s.addNode('d', 'n9', [ { 'domain':'d', 'name': 'n10' }, { 'domain':'d', 'name': 'n11' }]) is True
     assert s.addNode('d', 'n10', [ { 'domain':'d', 'name': 'n12' }]) is True
+    assert s.supersededBySet('d', 'n9') == set()
+    assert s.supersededBySet('d', 'n10') == set([ ('d', 'n9') ])
+    assert s.supersededBySet('d', 'n11') == set([ ('d', 'n9') ])
+    assert s.supersededBySet('d', 'n12') == set([ ('d', 'n9'), ('d', 'n10') ])
     assert s.addNode('d', 'n11', [ { 'domain':'d', 'name': 'n12' }]) is True
     assert s.supersededBySet('d', 'n9') == set()
     assert s.supersededBySet('d', 'n10') == set([ ('d', 'n9') ])
@@ -2823,6 +2827,15 @@ async def xxxxx____________test_supersede_mgr(hass, service_calls):
     assert s.addNode('d', 'n12', [ ]) is True
     #assert s.topoOrdering() == [ ('d','n12'),('d','n10'),('d','n11'),('d','n9') ] or s.topoOrdering() == [ ('d','n12'),('d','n11'),('d','n10'),('d','n9') ]
 
+    # Try removing node that collapses parent
+    s = alert2.SupersedeMgr()
+    assert s.addNode('d', 'n1', [ { 'domain':'d', 'name': 'n2' } ]) is True
+    assert s.supersededBySet('d', 'n1') == set()
+    assert s.supersededBySet('d', 'n2') == set([ ('d', 'n1') ])
+    s.removeNode('d', 'n1')
+    assert s.supersededBySet('d', 'n1') == set()
+    assert s.supersededBySet('d', 'n2') == set()
+    
     
 async def test_supersede_mgr2(hass, service_calls, monkeypatch):
     await setAndWait(hass, "sensor.t1", 'off')
