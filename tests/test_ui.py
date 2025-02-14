@@ -1265,7 +1265,7 @@ async def test_display_cfg(hass, service_calls, hass_client, hass_ws_client, mon
                          })
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    await getResult(wsc, msg_id, result = [{'entityId': 'alert2.d_n1', 'config': {'supersededByList': [ ['d','n2'] ]}}])
+    await getResult(wsc, msg_id, result = [{'entityId': 'alert2.d_n1', 'config': {'supersededByList': [ 'alert2.d_n2' ]}}])
     msg_id += 1
     await wsc.send_json({ "id": msg_id, "type": "alert2_get_display_config",
                           'dn_list': [ { 'domain': 'd', 'name': 'n1' },{ 'domain': 'd', 'name': 'n2' } ]
@@ -1273,7 +1273,7 @@ async def test_display_cfg(hass, service_calls, hass_client, hass_ws_client, mon
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     await getResult(wsc, msg_id, result = [
-        {'entityId': 'alert2.d_n1', 'config': {'supersededByList': [ ['d','n2'] ]}},
+        {'entityId': 'alert2.d_n1', 'config': {'supersededByList': [ 'alert2.d_n2' ]}},
         {'entityId': 'alert2.d_n2', 'config': {'supersededByList': [ ]}},
     ])
     
