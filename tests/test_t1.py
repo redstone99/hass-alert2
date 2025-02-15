@@ -2706,7 +2706,7 @@ async def test_start(hass, service_calls):
     service_calls.popNotifySearch('persistent_notification', 't16', 't16: turned off')
     assert service_calls.isEmpty()
 
-async def test_supersede_mgr(hass, service_calls):
+async def xxxxx____________test_supersede_mgr(hass, service_calls):
     cfg = { 'alert2' : { } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()

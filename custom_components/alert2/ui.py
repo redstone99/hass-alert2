@@ -366,8 +366,12 @@ class WebSocketMgr:
             for asub in self.allSubscriptions[domain][name]:
                 asub['tracker'].shutdown()
             newDisplayTemplate = None
+            ent = None
             if domain in self.alertData.alerts and name in self.alertData.alerts[domain]:
                 ent = self.alertData.alerts[domain][name]
+            elif domain in self.alertData.tracked and name in self.alertData.tracked[domain]:
+                ent = self.alertData.tracked[domain][name]
+            if ent:
                 newDisplayTemplate = ent._display_msg_template
                 if newDisplayTemplate:
                     for subIdx in range(len(self.allSubscriptions[domain][name])):
@@ -406,19 +410,15 @@ class WebSocketMgr:
         domain = subscribeMsg['domain']
         name = subscribeMsg['name']
         msgId = subscribeMsg['id']
-        
-        if domain in self.alertData.tracked and name in self.alertData.tracked[domain]:
+
+        ent = None
+        if domain in self.alertData.alerts and name in self.alertData.alerts[domain]:
+            ent = self.alertData.alerts[domain][name]
+        elif domain in self.alertData.tracked and name in self.alertData.tracked[domain]:
             ent = self.alertData.tracked[domain][name]
-            connection.send_error(msgId, 'no_display_msg', f'Entity {ent.entity_id} is a tracked alert so does have a display_msg')
+        if not ent:
+            connection.send_error(msgId, 'ent_not_found', f'No entity found with domain={domain} and name={name}')
             return
-            
-        if domain not in self.alertData.alerts:
-            connection.send_error(msgId, 'ent_not_found', f'domain {domain} not found')
-            return
-        if name not in self.alertData.alerts[domain]:
-            connection.send_error(msgId, 'ent_not_found', f'name {name} not found in domain {domain}')
-            return
-        ent = self.alertData.alerts[domain][name]
         if not ent._display_msg_template:
             connection.send_error(msgId, 'no_display_msg', f'Entity config for {ent.entity_id} does not specify display_msg')
             return
@@ -566,8 +566,9 @@ class UiMgr:
                 msg = f'{gAssertMsg}: UI generator alert {newEnt.alName} not in generators category'
                 report(DOMAIN, 'error', msg)
                 return {'error': msg}
-        elif not newEnt.alDomain in self._alertData.alerts or not newEnt.alName in self._alertData.alerts[newEnt.alDomain]:
-            msg = f'{gAssertMsg}: UI alert {newEnt.entity_id} not in alerts category'
+        elif (not newEnt.alDomain in self._alertData.alerts or not newEnt.alName in self._alertData.alerts[newEnt.alDomain]) and \
+             (not newEnt.alDomain in self._alertData.tracked or not newEnt.alName in self._alertData.tracked[newEnt.alDomain]):
+            msg = f'{gAssertMsg}: UI alert {newEnt.entity_id} not in alerts or tracked category'
             report(DOMAIN, 'error', msg)
             return {'error': msg}
         self.entities.append(newEnt)

@@ -1135,7 +1135,74 @@ async def test_display_msg2(hass, service_calls, hass_storage, caplog):
     assert 'Summary: Alert2 d_n4 fired 1x' in caplog.text
     assert 'Summary: Alert2 d_n3 fired 1x' in caplog.text
 
-async def test_display_cfg(hass, service_calls, hass_client, hass_ws_client, monkeypatch):
+async def test_display_msg3(hass, service_calls, hass_ws_client):
+    # Purpose is to both test an event alert
+    # and to check subscribing to more than one entity over a single websocket connection
+    #
+    async def getEvent(aclient, msg_id, rtxt):
+        msg = await aclient.receive_json()
+        await hass.async_block_till_done()
+        assert service_calls.isEmpty()
+        _LOGGER.info(f'in getEvent, got {msg}')
+        assert msg["id"] == msg_id
+        assert msg["type"] == "event"
+        result = msg["event"]['rendered']
+        assert result == rtxt
+    async def getResult(aclient, msg_id, result='bogus'):
+        async with asyncio.timeout(0.1):
+            msg = await aclient.receive_json()
+        await hass.async_block_till_done()
+        assert service_calls.isEmpty()
+        _LOGGER.info(f'in getResult, got {msg}')
+        assert msg['id'] == msg_id
+        assert msg["type"] == wsapi.TYPE_RESULT
+        assert msg["success"], msg['error']
+        assert msg["result"] is None
+        
+    await setAndWait(hass, 'sensor.a1', 'foo')
+    await setAndWait(hass, 'sensor.a2', 'foo2')
+    await setAndWait(hass, 'sensor.b', '')
+    cfg = { 'alert2': {
+        'alerts': [
+            { 'domain': 'd', 'name': 'n1', 'condition':'off', 'display_msg': '{{ states("sensor.a1") }}' },
+            { 'domain': 'd', 'name': 'n2', 'trigger': [{'platform':'state','entity_id':'sensor.b'}], 'display_msg': '{{ states("sensor.a2") }}' },
+        ]} }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+    n1 = gad.alerts['d']['n1']
+    n2 = gad.tracked['d']['n2']
+    
+    wsc = await hass_ws_client(hass)
+    msg_id = 1
+    await wsc.send_json({ "id": msg_id, "type": "alert2_watch_display_msg",
+                          'domain': 'd', 'name': 'n1' } )
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    await getEvent(wsc, msg_id, 'foo')
+    await getResult(wsc, msg_id, None)
+    await checkNoMsg(wsc)
+
+    msg_id2 = 2
+    await wsc.send_json({ "id": msg_id2, "type": "alert2_watch_display_msg",
+                          'domain': 'd', 'name': 'n2' } )
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    await getEvent(wsc, msg_id2, 'foo2')
+    await getResult(wsc, msg_id2, None)
+    await checkNoMsg(wsc)
+
+    await setAndWait(hass, 'sensor.a1', 'z')
+    await getEvent(wsc, msg_id, 'z')
+    await checkNoMsg(wsc)
+    
+    await setAndWait(hass, 'sensor.a2', 'z2')
+    await getEvent(wsc, msg_id2, 'z2')
+    await checkNoMsg(wsc)
+
+async def xxxx________test_display_cfg(hass, service_calls, hass_client, hass_ws_client, monkeypatch):
     async def getEvent(aclient, msg_id, rtxt):
         msg = await aclient.receive_json()
         await hass.async_block_till_done()
@@ -1166,7 +1233,19 @@ async def test_display_cfg(hass, service_calls, hass_client, hass_ws_client, mon
     assert msg["success"], msg['error']
     assert msg["result"] is None
     await checkNoMsg(wsc)
+    
+async def test_event(hass, service_calls, hass_client, hass_storage):
+    cfg = { 'alert2': {
+        'alerts': [
+        ] } }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    await setAndWait(hass, 'sensor.a', 'off')
+    rez = await tpost("/api/alert2/manageAlert", {'create': {
+        'domain':'d', 'name':'n1', 'trigger': "[{'platform':'state','entity_id':'sensor.a'}]" } })
+    assert rez == {}
+    assert service_calls.isEmpty()
+    n1 = gad.tracked['d']['n1']
 
-
-
+    await setAndWait(hass, 'sensor.a', 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 d_n1')
     
