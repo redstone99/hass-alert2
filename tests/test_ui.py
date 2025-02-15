@@ -495,6 +495,14 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert rez == { 'rez': False }
     rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': '{{ ggg }}' , 'extraVars': { 'ggg': 'yes' }})
     assert rez == { 'rez': True }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': '{{ ggg }}' , 'extraVars': { 'ggg': 'no' }})
+    assert rez == { 'rez': False }
+    await setAndWait(hass, 'sensor.a', 'on')
+    rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': 'sensor.a' })
+    assert rez == { 'rez': True }
+    await setAndWait(hass, 'sensor.a', 'off')
+    rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': 'sensor.a' })
+    assert rez == { 'rez': False }
 
     # condition_on
     rez = await tpost("/api/alert2/renderValue", {'name': 'condition_on', 'txt': 'on' })
