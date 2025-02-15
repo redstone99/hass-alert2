@@ -938,8 +938,8 @@ async def test_display_msg(hass, service_calls, hass_client, hass_ws_client, mon
     cfg = { 'alert2': {
         'alerts': [
             { 'domain': 'd', 'name': 'n2', 'condition':'off', 'display_msg': '{{ states("sensor.a") }}' },
-            { 'domain': 'd', 'name': 'n3', 'condition':'off', 'display_msg': None }
-        ] } }
+            { 'domain': 'd', 'name': 'n3', 'condition':'off', 'display_msg': None },
+        ]} }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
@@ -1336,7 +1336,7 @@ async def test_display_cfg(hass, service_calls, hass_client, hass_ws_client, mon
     async with asyncio.timeout(0.2):
         await getEvent(wsc2, msg_id2)
     await checkNoMsg(wsc2)
-    
+
 async def test_event(hass, service_calls, hass_client, hass_storage):
     cfg = { 'alert2': {
         'alerts': [

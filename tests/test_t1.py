@@ -26,6 +26,8 @@ from custom_components.alert2.util import (     GENERATOR_DOMAIN,
 import homeassistant.const
 from homeassistant import config as conf_util
 import homeassistant.helpers.restore_state as rs
+#from tests.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 async def test_cfg1(hass):
     assert await async_setup_component(hass, DOMAIN, { 'alert2': {} })
@@ -2903,3 +2905,21 @@ async def test_supersede_mgr2(hass, service_calls, monkeypatch):
     service_calls.popNotifyEmpty('persistent_notification', 't3: on for')
     await setAndWait(hass, "sensor.t1", 'off')
     assert service_calls.isEmpty()
+
+async def test_no_yaml(hass, service_calls):
+    assert False
+    # First, let's say YAML setup happens before config entry
+    #
+    cfg = { } # no alert2 section
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    mock_config_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={},
+        entry_id="01JAZ5DPWAAA2D620DGYNG2R8H",
+    )
+    mock_config_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
