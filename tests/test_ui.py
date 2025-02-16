@@ -385,6 +385,18 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_frequency_mins', 'txt': '-3' })
     assert re.search('must be at least', rez['error'])
 
+    # supersedes
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '' })
+    assert rez == { 'rez': [] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[]' })
+    assert rez == { 'rez': [] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[ { "foo":3 } ]' })
+    assert re.search('extra keys not allowed', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[ { "domain":"d","name":"x" } ]' })
+    assert rez == { 'rez': [ { 'domain':'d', 'name':'x' } ] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[ { "domain":"d","name":"x" },{ "domain":"d","name":"x2" } ]' })
+    assert rez == { 'rez': [ { 'domain':'d', 'name':'x' },{ 'domain':'d', 'name':'x2' } ] }
+    
     # throttle_fires_per_mins
     rez = await tpost("/api/alert2/renderValue", {'name': 'throttle_fires_per_mins', 'txt': '[2,4]' })
     assert rez == { 'rez': [2,4] }

@@ -41,14 +41,16 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - **Native event-based alerting**. No need to approximate it with conditions and time windows.
 - **Expressive condition-based alerts**
    - **Templates**.  No need for extra binary sensors. Also means the logic for an alert is in one place in your config file, which makes it easier to manage.
-   - **Split on/off**.  Separately specify how a condition alert turns on & off. 
-- **Snooze / disable / throttle notifications**. Handy for noisy sensors or while developing your alerts.
-- **Template notifiers**. Dynamically specify who gets notified.
+   - **Split on/off**.  Separately specify how a condition alert turns on & off.
+- **Notification control**
+   - **Snooze / disable / throttle notifications**. Handy for noisy sensors or while developing your alerts.
+   - **Template notifiers**. Dynamically specify who gets notified.
+   - **Supersedes**. You can stage alerts to avoid redundant notifications from related alerts.
+   - **Persistent notification details**. In your HA dashboard, you can view past alert firings as well as the message text sent in notifications.
 - **Generator patterns**. Dynamically define multiple similar alerts, with wildcard support.
 - **UI**
    - Create or edit alerts via the UI. Also reload YAML without restarting HA.
    - Overview card showing recently active alerts and custom, dynamic messages.
-- **Persistent notification details**. In your HA dashboard, you can view past alert firings as well as the message text sent in notifications.
 - **Hysteresis**. Reduce spurious alerts as sensors fluctuate.
 
 Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-alert2/discussions) or file an [Issue](https://github.com/redstone99/hass-alert2/issues).  Or follow the [development thread](https://community.home-assistant.io/t/alert2-a-new-alerting-component).
@@ -132,6 +134,8 @@ Condition alerts can be specified in one of two modes:
 2. **Separate on/off**: Alternatively, the alert can specify separate criteria for turning on and off. A set of config fields: `trigger_on`, `condition_on` and `manual_on` offer options for when the alert will turn on. And a corresponding set of config fields: `trigger_off`, `condition_off` and `manual_off` determine when the alert will turn off.
 
 For either condition alert mode, hysteresis is available via the `delay_on_secs` parameter. If specified, the alert starts firing once the "on" criteria have been satisfied for the time interval specified. This is similar in motivation to the `skip_first` option in the old Alert integration.
+
+The `supersedes` parameter specifies a hierarchical relationship between related condition alerts. If an alert is firing, notificaitons will be skipped for other alerts below it in the hierarchy.  An example might be one alert if the front door is open, and another superseding alert if the door is open and it's cold outside.
 
 ### Event alerts
 
@@ -310,6 +314,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `reminder_frequency_mins` | float | optional | Override the default `reminder_frequency_mins`|
 | `notifier` | template | optional | Override the default `notifier`. See [Notifier Config](#notifier-config) section below for examples. |
 | `summary_notifier` | template | optional | Override the default `summary_notifier`. See [Notifier Config](#notifier-config) section below for examples. |
+| `supersedes` | List | optional | A list of domain+name pairs of alerts that this alert supersedes. Notifications will be skipped for superseded alerts while this alert is firing.  Applies transitively. See [Supersedes](#supersedes) section below for examples. |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts. Not available for [generator patterns](#generator-patterns).  |
 | `generator` | template | optional | If specified, this alert is a [generator pattern](#generator-patterns). |
@@ -391,6 +396,26 @@ Example:
           condition_on: "{{ states('binary_sensor.smoke_detector_basement') }}"
           manual_off: true
           display_msg: Smoke detector is "{{ states('binary_sensor.smoke_detector_basement') }}"
+
+##### `supersedes`
+
+The `supersedes` config parameter let's you set up a hierarchical relationship between related condition alerts. It is transitive. For example if A supersedes B, and B supersedes C, then that implies that A supersedes C.  And if an alert is firing, then notifications are skipped for alerts below it in the hierarchy. So if alert A is firing, then notifications are skipped for alerts B & C.
+
+`supersedes` takes a list of domain+name pairs.  Here are some examples:
+
+          supersedes:
+            - domain: test
+              name: foo
+            - domain: test
+              name: foo2
+              
+          # Using yaml flow syntax
+          # NOTE: space is required after the ':'.
+          supersedes: [ { domain: test, name: foo }, { domain: test, name: foo2 } ]
+                    
+          # Can omit the [] if specifying a single alert
+          supersedes: { domain: test, name: foo }
+
 
 
 #### Common alert features
