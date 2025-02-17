@@ -4,14 +4,19 @@ report:
   description: Report that an event alert fired
   fields:
     domain:
+      name: Domain
+      description: domain field of Alert2 entity to report
       required: true
       selector:
         text:
     name:
+      name: Name
+      description: name field of Alert2 entity to report
       required: true
       selector:
         text:
     message:
+      name: Message
       description: Extra text to include in the alert message
       selector:
         text:
@@ -43,26 +48,32 @@ notification_control:
         text:
 
 ack:
+  name: Ack
+  description: Ack an Alert2 alert
   target:
     entity:
       domain: alert2
 
 unack:
+  name: Unack
+  description: Unack an Alert2 alert
   target:
     entity:
       domain: alert2
 
 manual_on:
+  name: Manual on
   description: Turns on a condition alert that was configured with manual_on enabled
   target:
     entity:
       domain: alert2
 manual_off:
+  name: Manual off
   description: Turns off a condition alert that was configured with manual_off enabled
   target:
     entity:
       domain: alert2
 
 ack_all:
-  name: Ack all
-  description: Ack all alert2 alerts
+  name: Ack All
+  description: Acks all Alert2 entities
