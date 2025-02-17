@@ -10,6 +10,10 @@ cp ha-test.old/configuration.yaml ha-test
 # restart home assistant
 # install HACS as integration
 # test install alert2
+# can copy over fresh files with:
+#    cp .homeassistant/custom_components/alert2/* ha-test/custom_components/alert2/
+#    cp .homeassistant/www/alert2.js ha-test/www/community/hass-alert2-ui/
+#    gzip -c ha-test/www/community/hass-alert2-ui/alert2.js > ha-test/www/community/hass-alert2-ui/alert2.js.gz
 -->
 
 [![GitHub Release](https://img.shields.io/github/v/release/redstone99/hass-alert2)](https://github.com/redstone99/hass-alert2/releases)
