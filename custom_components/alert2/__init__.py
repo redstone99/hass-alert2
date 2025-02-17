@@ -40,7 +40,7 @@ from .config import (
 from .entities import (
     EventAlert, ConditionAlert, AlertGenerator
 )
-from .ui import ( UiMgr )
+from .ui import ( UiMgr, DisplayCfgSocketMgr )
 from .util import (
     report,
     create_task,
@@ -54,6 +54,16 @@ from .util import (
     global_tasks,
     gAssertMsg
 )
+
+# Need to define CONFIG_SCHEMA here to make hacs github validator happy
+# We'll do proper validation below
+CONFIG_SCHEMA = lambda config: config
+#vol.Schema(
+#    {DOMAIN: cv.schema_with_slug_keys(TOP_LEVEL_SCHEMA)}, extra=vol.ALLOW_EXTRA
+#)
+#CONFIG_SCHEMA = vol.Schema({
+#    vol.Optional('alert2'): TOP_LEVEL_SCHEMA
+#}, extra=vol.ALLOW_EXTRA)
 
 # The notify component loads asynchronously, so we don't know when the notify legacy platforms
 # will have finished loading. So wait a few seconds before throwing errors for missing notifiers
@@ -88,15 +98,33 @@ NOTIFICATION_CONTROL_SCHEMA = {
     vol.Optional("snooze_until"): cv.datetime,
 }
 EMPTY_SCHEMA = {}
+
+#
 # Looks like in homeassistant/setup.py:_async_setup_component
 # it first calls component.async_setup,
 # then if there's a config entry it calls entry.async_setup_locked -> config_entries::async_setup -> async_setup_entry
 #
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
+    #_LOGGER.warning(f'async_setup_entry called: {"".join(traceback.format_stack())}')
+    if DOMAIN in hass.data:
+        _LOGGER.info('Skipping async_setup_entry for alert2, already done')
+        return True
+    # Alert2 is configured without any YAML, just via the UI.
+    _LOGGER.info('Setting up Alert2 sans YAML')
+    set_global_hass(hass)
+    yaml_config = {}
+    data = Alert2Data(hass, {})
+    hass.data[DOMAIN] = data
     await hass.config_entries.async_forward_entry_setups(entry, ['binary_sensor'])
+    await data.init2()
     return True
 async def async_setup(hass, config: ConfigType):
-    #_LOGGER.debug(f'async_setup called: {"".join(traceback.format_stack())}')
+    #_LOGGER.warning(f'async_setup called: {"".join(traceback.format_stack())}')
+
+    # async_setup is always called before async_setup_entry
+    if DOMAIN in hass.data:
+        _LOGGER.error('Somehow async_setup invoked after already initialized. Should never happen')
+        assert False # die hard here.
     _LOGGER.info('Setting up Alert2')
 
     set_global_hass(hass)
@@ -117,7 +145,6 @@ async def async_setup(hass, config: ConfigType):
     
     # Note, sensor/binary_sensor init may happen later, so init2() may create templates before sensor entities exist for early_start ones.
     await data.init2()
-    #create_background_task(hass, DOMAIN, data.slowStartup())
     return True
 
 # NOTE - this must be a single-level Schema.  If nest anything, then fix up copy.copy() shallow copy logic down in
@@ -193,12 +220,89 @@ class DelayedNotifierMgr:
             self.delayed_notifiers[anotifier] = []
         self.delayed_notifiers[anotifier].append(args)
         return True
-        
 
+class SupersedeMgr:
+    def __init__(self):
+        # Map from (domain,name) -> set( (domain, name) )
+        self.supersedesMap = {}
+        self.supersededByMap = {}
+    def addNode(self, domain, name, supersedesList):
+        thisPair = (domain, name)
+        if thisPair in self.supersedesMap:
+            report(DOMAIN, 'error', f'{gAssertMsg} should not be adding duplicate supersedes for {thisPair}')
+            return True
+        if supersedesList:
+            # cycle check
+            supersedesSet = set([ (x['domain'], x['name']) for x in supersedesList])
+            supersededBySet = self.supersededBySet(domain, name)
+            if any([ dn in supersededBySet for dn in supersedesSet ]):
+                    return False
+            self.supersedesMap[thisPair] = supersedesSet
+            for apair in supersedesSet:
+                if not apair in self.supersededByMap:
+                    self.supersededByMap[apair] = set()
+                self.supersededByMap[apair].add(thisPair)
+        else:
+            self.supersedesMap[thisPair] = set()
+        return True
+
+    def removeNode(self, domain, name):
+        thisPair = (domain, name)
+        if thisPair not in self.supersedesMap:
+            report(DOMAIN, 'error', f'{gAssertMsg} should not be removing non-existent {thisPair}')
+            return
+        for apair in self.supersedesMap[thisPair]:
+            self.supersededByMap[apair].remove(thisPair)
+            if not self.supersededByMap[apair]:
+                del self.supersededByMap[apair]
+        del self.supersedesMap[thisPair]
+
+    def supersededBySet(self, domain, name):
+        thisPair = (domain, name)
+        rez = set()
+        visitSet = set()
+        if thisPair in self.supersededByMap:
+            visitSet.add( thisPair )
+        while visitSet:
+            tpair = visitSet.pop()
+            if tpair in self.supersededByMap:
+                for apair in self.supersededByMap[tpair]:
+                    # This may visit a node multiple but finite times if the graph is diamond shaped
+                    rez.add(apair)
+                    visitSet.add(apair)
+        return rez
+
+    def unused___________topoOrdering(self):
+        # We'll repeatedly look for nodes that are not superseded by any except visisted nodes
+        result = []
+        remainingNodes = set(self.supersedesMap.keys())
+        #_LOGGER.info(f'will do topo ordering for {remainingNodes}')
+        while remainingNodes:
+            # Look for aNode that is not superseded by any except visisted node
+            didSomething = False
+            for aNode in remainingNodes:
+                isSuperseded = False
+                for tnode in remainingNodes:
+                    if aNode != tnode and aNode in self.supersedesMap[tnode]:
+                        isSuperseded = True
+                        break
+                if not isSuperseded:
+                    result.append(aNode)
+                    remainingNodes.remove(aNode)
+                    didSomething = True
+                    break
+            if not didSomething:
+                report(DOMAIN, 'error', f'{gAssertMsg} topo ordering failed somehow')
+                result.append(aNode)
+                remainingNodes.remove(aNode)
+        result.reverse()
+        return result
+        
+                    
 class Alert2Data:
     def __init__(self, hass, config):
         self._hass = hass
-        self._rawYamlConfig = config[DOMAIN]
+        self._rawYamlConfig = config[DOMAIN] if DOMAIN in config else {}
         self.tracked = {}
         self.alerts = {}
         self.generators = {}
@@ -212,7 +316,8 @@ class Alert2Data:
         self.rawYamlBaseTopConfig = None # stores global settings not including the UI config
         self.rawTopConfig = None
         self.topConfig = None # processed Schema() for defaults and top-level options
-
+        self.supersedeMgr = SupersedeMgr()
+        
     def noteUiUpdate(self):
         tmpUiConfig = copy.deepcopy(self.rawYamlBaseTopConfig)
         cfg = self.uiMgr.getPreppedConfig()
@@ -244,6 +349,7 @@ class Alert2Data:
                 'reminder_frequency_mins': [60], 'notifier': 'persistent_notification',
                 'summary_notifier': False, 'annotate_messages': True,
                 'throttle_fires_per_mins': None,
+                'priority': 'low',
             },
             'skip_internal_errors': False,
             'notifier_startup_grace_secs': kNotifierStartupGraceSecs,
@@ -317,6 +423,7 @@ class Alert2Data:
             self.delayedNotifierMgr = DelayedNotifierMgr(self._hass,
                                                          self.topConfig['notifier_startup_grace_secs'],
                                                          self.topConfig['defer_startup_notifications'])
+            self.displayCfgWsMgr = DisplayCfgSocketMgr(self._hass, self)
             
         # Now that report() is available, continue init that might use it
         
@@ -383,25 +490,33 @@ class Alert2Data:
         await self.processConfig()
 
     async def unload_alerts(self):
-        for aName in self.generators:
-            agen = self.generators[aName]
-            await self.sensorComponent.async_remove_entity(agen.entity_id)
-        self.generators = {}
+        for aName in list(self.generators.keys()):
+            await self.undeclareAlert(self.generators[aName].alDomain, self.generators[aName].alName)
         # then event alerts
-        for domain in self.tracked:
-            for name in self.tracked[domain]:
-                ent = self.tracked[domain][name]
-                await self.component.async_remove_entity(ent.entity_id)
-        self.tracked = {}
+        for domain in list(self.tracked.keys()):
+            names = list(self.tracked[domain].keys())
+            for name in names:
+                await self.undeclareAlert(domain, name)
         # then condition alerts
-        for domain in self.alerts:
-            for name in self.alerts[domain]:
-                ent = self.alerts[domain][name]
-                await self.component.async_remove_entity(ent.entity_id)
-        self.alerts = {}
+        for domain in list(self.alerts.keys()):
+            names = list(self.alerts[domain].keys())
+            for name in names:
+                await self.undeclareAlert(domain, name)
+        # then condition alerts
+        # need to unload them so an alert is not unloaded until any alert it transitively supersedes has
+        # been unloaded. This is to prevent notificaitons getting sent out between the two unloadings.
+        #unloadList = self.supersedeMgr.topoOrdering()
+        #for adn in unloadList:
+        #    await self.undeclareAlert(adn[0], adn[1])
+        #if self.alerts:
+        #    report(DOMAIN, 'error', f'{gAssertMsg} Unloading alerts left some behind')
         
     async def reload_service_handler(self, service_call) -> None:
         """Reload yaml entities."""
+
+        # TODO - the order of unloading and reloading could matter if there are alerts firing and
+        # some supersede others.
+        
         # First unload all entities. Start with generators since they'll remove condition alerts
         await self.unload_alerts()
         _LOGGER.info('Lifecycle reload first removed all Alert2 alerts before reloading')
@@ -424,11 +539,7 @@ class Alert2Data:
         # We already tried processing the defaults section once. Report errors encountered.
         if self.earlyErrors:
             report(DOMAIN, 'error', f'{self.earlyErrors}')
-
             
-        ents = await self.loadAlertBlock(self._rawYamlConfig)
-        _LOGGER.info(f'Lifecycle created {len(ents)} alerts from YAML config')
-        
         # Now check the rest of the config
         # TODO - this is redoing a bunch of work parsing templates.
         try:
@@ -441,9 +552,12 @@ class Alert2Data:
                 _LOGGER.error(msg)
             else:
                 report(DOMAIN, 'error', msg)
-            
+
+        ents = await self.loadAlertBlock(self._rawYamlConfig)
+        _LOGGER.info(f'Lifecycle created {len(ents)} alerts from YAML config')
         await self.uiMgr.declareAlerts()
 
+    # stage 1 is for supersedes.  Stage 2 is to declare the alerts
     async def loadAlertBlock(self, aRawCfg):
         entities = []
         if 'tracked' in aRawCfg and isinstance(aRawCfg['tracked'], list):
@@ -475,31 +589,10 @@ class Alert2Data:
         
     # if doReport then return ent or None
     # if not doReport then return ent or errMsg string
+    #
+    # isBulk True means that either this is called during HA startup, or it's part of a reload and
+    # someone will update last_reload_time
     async def declareAlert(self, obj, genVars=None, doReport=True, checkForUpdate=False):
-        def adjustTemplateField(obj, name):
-            # the alert may not have a condition if either it is a condition alert, or
-            # it is a tracked alert specified without a trigger
-            if not isinstance(obj, dict) or name not in obj:
-                return
-            cond = obj[name]
-            # we haven't done a voluptuous validation yet, so don't know what type cond is
-            if not isinstance(cond, str) or template_helper.is_template_string(cond):
-                return
-            try:
-                x = cv.boolean(cond) if name == 'condition' else float(cond)
-            except (vol.Invalid, ValueError):
-                # it's not a template and not a truthy, so assume it's an entity
-                if '\'' in cond or '"' in cond:
-                    report(DOMAIN, 'error', f'config has {name} template that is neither a template nor an entity: {obj}')
-                    return
-                # TODO - Not sure if strip() is necessary. Can yaml return extra whitespace?
-                obj[name] = '{{ states("' + cond.strip() + '") }}'
-        
-        adjustTemplateField(obj, 'condition')
-        adjustTemplateField(obj, 'condition_on')
-        adjustTemplateField(obj, 'condition_off')
-        if isinstance(obj, dict) and 'threshold' in obj:
-            adjustTemplateField(obj['threshold'], 'value')
         newEnt = None
         try:
             if 'trigger' in obj:
@@ -524,7 +617,7 @@ class Alert2Data:
                 return None
             else:
                 return errMsg
-            
+        #_LOGGER.info(f'declareAlert: {isBulk} {newEnt}')
         if isinstance(newEnt, Entity):
             if isinstance(newEnt, AlertGenerator):
                 await self.sensorComponent.async_add_entities([newEnt])
@@ -537,6 +630,7 @@ class Alert2Data:
             # notify uiMgr so can update display_msg watcher if appropriate
             #_LOGGER.warning(f'will call alertCreated: {"".join(traceback.format_stack())}')
             self.uiMgr.alertCreated(newEnt.alDomain, newEnt.alName)
+            self.displayCfgWsMgr.noteConfigChange()
         elif doReport:
             # Must be error message
             report(DOMAIN, 'error', newEnt)
@@ -544,7 +638,9 @@ class Alert2Data:
         return newEnt
     
     async def undeclareAlert(self, domain, name, doReport=True):
+        #_LOGGER.info(f'undeclareAlert for {domain} {name}')
         if domain in self.alerts and name in self.alerts[domain]:
+            self.supersedeMgr.removeNode(domain, name)
             ent = self.alerts[domain][name]
             del self.alerts[domain][name]
             if not self.alerts[domain]:
@@ -568,7 +664,26 @@ class Alert2Data:
             if doReport:
                 report(DOMAIN, 'error', f'{gAssertMsg} {errMsg}')
             return errMsg
+        self.displayCfgWsMgr.noteConfigChange()
         return None
+
+    def domainNameToId(self, domain, name):
+        if domain in self.alerts and name in self.alerts[domain]:
+            return self.alerts[domain][name].entity_id
+        if domain in self.tracked and name in self.tracked[domain]:
+            return self.tracked[domain][name].entity_id
+        if domain == GENERATOR_DOMAIN and name in self.generators:
+            return self.generators[name].entity_id
+        return None
+        
+    def isSupersededByOn(self, domain, name):
+        aset = self.supersedeMgr.supersededBySet(domain, name)
+        for (tdomain, tname) in aset:
+            if tdomain in self.alerts and tname in self.alerts[tdomain]:
+                tent = self.alerts[tdomain][tname]
+                if tent.state == 'on':
+                    return (tdomain, tname)
+        return False
     
     async def haStartedEv(self, event): # async so we're run in event loop
         # By the time EVENT_HOMEASSISTANT_STARTED has fired, the binary sensor should have initialized
@@ -641,6 +756,11 @@ class Alert2Data:
         name = config['name']
         errMsg = self.checkNewName(domain, name)
         if errMsg:
+            return errMsg
+
+        supersedeList = config['supersedes'] if 'supersedes' in config else []
+        if not self.supersedeMgr.addNode(domain, name, supersedeList):
+            errMsg = f'Not creating alert with domain={domain} and name={name} because supersedes config would introduce cycle'
             return errMsg
         if not domain in self.alerts:
             self.alerts[domain] = {}
