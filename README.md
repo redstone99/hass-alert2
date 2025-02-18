@@ -49,7 +49,7 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - **Notification control**
    - **Snooze / disable / throttle notifications**. Handy for noisy sensors or while developing your alerts.
    - **Template notifiers**. Dynamically specify who gets notified.
-   - **Supersedes**. You can stage alerts to avoid redundant notifications from related alerts.
+   - **Superseding alerts**. Stage alerts to avoid redundant notifications from related alerts.
    - **Persistent notification details**. In your HA dashboard, you can view past alert firings as well as the message text sent in notifications.
 - **Generator patterns**. Dynamically define multiple similar alerts, with wildcard support.
 - **UI**
@@ -106,16 +106,31 @@ Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-ale
 
 ## Setup
 
-Setup is done through editing your `configuration.yaml` file.
+Alert2 can be set up and managed either via the UI, via your `configuration.yaml` file, or both.
 
+<details>
+<summary>Setup via the UI</summary>
 
-1. Add the following line to `configuration.yaml`:
+1. Go to Settings -> "Devices & Services" , then click on the "+ Add Integration" button
+
+1. Search for and then click "Alert2", then "Finish"
+
+1. Add the Alert2 Manager & Alert2 Overview cards from [Alert2 UI](https://github.com/redstone99/hass-alert2-ui).  You can created & edit alerts using the Manager card and view active alerts using the Overview card.
+
+</details>
+
+<details>
+<summary>Setup via YAML</summary>
+
+1. Add the following line to your `configuration.yaml`:
 
         alert2:
 
     The [Configuration](#configuration) section, below, has details on what else to add here.
 
 1. Restart HomeAssistant
+
+</details>
 
 ## Description
 
@@ -139,7 +154,7 @@ Condition alerts can be specified in one of two modes:
 
 For either condition alert mode, hysteresis is available via the `delay_on_secs` parameter. If specified, the alert starts firing once the "on" criteria have been satisfied for the time interval specified. This is similar in motivation to the `skip_first` option in the old Alert integration.
 
-The `supersedes` parameter specifies a hierarchical relationship between related condition alerts. If an alert is firing, notificaitons will be skipped for other alerts below it in the hierarchy.  An example might be one alert if the front door is open, and another superseding alert if the door is open and it's cold outside.
+The `supersedes` parameter specifies a hierarchical relationship between related condition alerts. If an alert is firing, notifications will be skipped for other alerts below it in the hierarchy.  An example might be one alert if the front door is open, and another superseding alert if the door is open and it's cold outside.
 
 ### Event alerts
 
@@ -711,7 +726,7 @@ alert2:
 
 ## Front-end UI
 
-We recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui), which includes one card for viewing recenlty active alerts and another card for creating or editing alerts. Alert2 UI also enhances the information shown in the "more-info" dialog when viewing Alert2 entities.
+We recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui), which includes one card for viewing recently active alerts and another card for creating or editing alerts. Alert2 UI also enhances the information shown in the "more-info" dialog when viewing Alert2 entities.
 
 Defaults set via the UI take priority over defaults set in YAML for both YAML alerts and UI-created alerts.  Alert2 does not allow any two alerts created via the UI or YAML to have the same domain and name.
 
