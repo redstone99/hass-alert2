@@ -54,7 +54,7 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - **Generator patterns**. Dynamically define multiple similar alerts, with wildcard support.
 - **UI**
    - Create or edit alerts via the UI. Also reload YAML without restarting HA.
-   - Overview card showing recently active alerts and custom, dynamic messages.
+   - Overview card showing recently active alerts, prioritized, and custom, dynamic messages.
 - **Hysteresis**. Reduce spurious alerts as sensors fluctuate.
 
 Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-alert2/discussions) or file an [Issue](https://github.com/redstone99/hass-alert2/issues).  Or follow the [development thread](https://community.home-assistant.io/t/alert2-a-new-alerting-component).
@@ -149,6 +149,8 @@ An event alert can also specify a `condition` as a template or entity name. The 
 ### Common alert features
 
 Each alert maintains a bit indicating whether it has been ack'd or not.  That bit is reset each time the alert fires. Ack'ing is done by clicking a button in the UI (described below) or calling the `alert2.ack` service. Ack'ing stops reminder notifications (see below) and is indicated visually in the UI.  The `alert2.unack` service is also available.
+
+Each alert can specify a priority. Priority affects how the alert is displayed in the Alert2 UI Overview card.
 
 ### Notifications
 
@@ -266,6 +268,7 @@ The `defaults:` subsection specifies optional default values for parameters comm
 | `summary_notifier` | bool or template | True to send summaries (see [Notifiers](#notifiers) section for detail) using the same notifier as other notifications.  False to not send summaries.  Or can be a template similar to `notifier` parameter to specify notifier to use for summaries. Default is `false`. |
 | `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notification, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
 | `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on a list of two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, "[10, 60]" means you'll receive no more than 10 notifications of the alert firing every hour.<br><br>Default is no throttling. You can set `summary_notifier` to be notified when throttling ends (by default you won't be). |
+| `priority` | string | Can be "low", "medium", or "high". Affects display of alert in the Alert2 UI Overview card.  Active alerts are sorted by priority and medium and high-priority alerts have a badge colored orange and red, respectively. Default is "low" |
 
 Example:
 
@@ -320,6 +323,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `summary_notifier` | template | optional | Override the default `summary_notifier`. See [Notifier Config](#notifier-config) section below for examples. |
 | `supersedes` | List | optional | A list of domain+name pairs of alerts that this alert supersedes. Notifications will be skipped for superseded alerts while this alert is firing.  Applies transitively. See [Supersedes](#supersedes) section below for examples. |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
+| `priority` | string | optional | Override the default value of `priority` |
 | `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts. Not available for [generator patterns](#generator-patterns).  |
 | `generator` | template | optional | If specified, this alert is a [generator pattern](#generator-patterns). |
 | `generator_name` | string | optional | Each generator creates a sensor entity with the name `sensor.alert2generator_[generator_name]`. See [generator patterns](#generator-patterns). |
@@ -545,7 +549,7 @@ As described above in `early_start`, alerts by default don't start being monitor
           message: "Starting for last {{ (now().timestamp() - state_attr('binary_sensor.alert2_ha_startup_done', 'start_time').timestamp()) }} seconds"
           early_start: true
 
-If you have high-priority alerts, you might consider setting `notifier` to be a high-priority notifier and `summary_notifier` to be a low-priority notifier.
+If you have high-priority alerts, you might consider setting `notifier` to be a high-priority notifier and `summary_notifier` to be a low-priority notifier.  And set `priority` to `high` or `medium` as well to make them stand out in the Alert2 UI Overview card.
 
 Also, alert2 entities are built on `RestoreEntity`, which backs itself up every 15 minutes. This means, alert firing may not be remembered across HA restarts if the alert fired within 15 minutes of HA restarting.
 
@@ -601,7 +605,7 @@ Here's how the first generator, above, is working:
 1. `generator` specifies a template.
 1. The template starts with the set of all sensor entities, filters for those whose entity_id matches the regex, and returns the list of matching entity_ids.
 1. Alert2 creates an alert for each entity_id in the list. That entity_id is made available to all template config fields via the `genEntityId` variable. `domain` and `name` also accept templates for generator alerts.
-1. A sensor will also be created, `sensor.alert2generator_low_bat`, whose state will be the number of alerts created by the generator.  This is useful for verifying that the generator is producing the expected number of alerts.
+1. A sensor will also be created, `sensor.alert2generator_low_bat`, whose state will be the number of alerts created by the generator. The sensor has an attribute, `generated_ids`, which is a the list of the entity_id of each alert created.  This is useful for verifying that the generator is producing the expected number of alerts. 
 
 The second generator example, above uses the `entity_regex` filter. Using that filter makes available to all template config fields the variable `genEntityId` with the entity_id as well as the variable `genGroups` with the regex groups that matched.
 

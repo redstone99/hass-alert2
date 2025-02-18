@@ -1658,6 +1658,7 @@ async def test_generator(hass, service_calls):
     g1 = gad.generators['g1']
     assert g1.state == 1
     assert g1.entity_id == 'sensor.alert2generator_g1'
+    assert g1.extra_state_attributes == { 'generated_ids': [ 'alert2.test_t55a' ] }
     assert hass.states.get(g1.entity_id)
     assert service_calls.isEmpty()
 
@@ -1670,6 +1671,7 @@ async def test_generator(hass, service_calls):
     g2 = gad.generators['g2']
     assert g2.state == 1
     assert g2.entity_id == 'sensor.alert2generator_g2'
+    assert g2.extra_state_attributes == { 'generated_ids': [ 'alert2.test_t55b' ] }
     assert hass.states.get(g2.entity_id)
     assert service_calls.isEmpty()
     # and now have generator produce a mess
@@ -1685,6 +1687,7 @@ async def test_generator(hass, service_calls):
     assert service_calls.isEmpty()
     assert g2.state == 1
     assert gad.alerts['test']['t55b'] == t55b
+    assert g2.extra_state_attributes == { 'generated_ids': [ 'alert2.test_t55b' ] }
     
     # Now suppose template returns nothing, so alert should disappear
     await setAndWait(hass, "sensor.g", "")
@@ -1692,6 +1695,7 @@ async def test_generator(hass, service_calls):
     assert not hass.states.get(t55b.entity_id)
     assert g2.state == 0
     assert not 't55b' in gad.alerts['test']
+    assert g2.extra_state_attributes == { 'generated_ids': [ ] }
     
     # what if name includes a trailing z in template
     assert not 't56' in gad.alerts['test']
@@ -1703,16 +1707,19 @@ async def test_generator(hass, service_calls):
     t56z = gad.alerts['test']['t56z']
     g3 = gad.generators['g3']
     assert g3.state == 1
+    assert g3.extra_state_attributes == { 'generated_ids': [ 'alert2.test_t56z' ] }
     # Now suppose a second alert appears
     await setAndWait(hass, "sensor.g3", "['t56','t57']")
     assert service_calls.isEmpty()
     assert g3.state == 2
+    assert g3.extra_state_attributes == { 'generated_ids': [ 'alert2.test_t56z', 'alert2.test_t57z' ] }
     t57z = gad.alerts['test']['t57z']
     assert hass.states.get(t57z.entity_id)
     # And one disappears
     await setAndWait(hass, "sensor.g3", "['t57']")
     assert service_calls.isEmpty()
     assert g3.state == 1
+    assert g3.extra_state_attributes == { 'generated_ids': [ 'alert2.test_t57z' ] }
     assert not 't56z' in gad.alerts['test']
     assert 't57z' in gad.alerts['test']
     assert not hass.states.get(t56z.entity_id)
@@ -1721,6 +1728,7 @@ async def test_generator(hass, service_calls):
     await setAndWait(hass, "sensor.g3", "[]")
     assert service_calls.isEmpty()
     assert g3.state == 0
+    assert g3.extra_state_attributes == { 'generated_ids': [ ] }
     assert not 't56z' in gad.alerts['test']
     assert not 't57z' in gad.alerts['test']
     assert not hass.states.get(t56z.entity_id)
