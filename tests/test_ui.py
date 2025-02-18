@@ -52,7 +52,8 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
             'notifier' : 'n',
             'summary_notifier' : 'sn',
             'reminder_frequency_mins': [3],
-            'throttle_fires_per_mins': [1,2]
+            'throttle_fires_per_mins': [1,2],
+            'priority': 'medium',
         },
         'alerts': [
             { 'domain': 'test', 'name': 't1', 'condition': 'off' }
@@ -235,6 +236,19 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert hass_storage['alert2.storage']['data']['config']['defaults']['throttle_fires_per_mins'] == '[3,5.2]'
     assert rez['raw']['defaults']['throttle_fires_per_mins'] == [3, 5.2]
 
+    # priority
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'priority': ''} }})
+    #   pick up the default val
+    assert rez['raw']['defaults']['priority'] == 'medium'
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'priority': 'high'} }})
+    assert rez['rawUi']['defaults']['priority'] == 'high'
+    assert hass_storage['alert2.storage']['data']['config']['defaults']['priority'] == 'high'
+    assert rez['raw']['defaults']['priority'] == 'high'
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'priority': 'foo'} }})
+    assert re.search('must be one of', rez['error'])
+
+
+    
     ########################
     # Now try full save
     uiCfg = { 'defaults' : {
@@ -242,6 +256,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
         'summary_notifier' : 'sn2',
         'reminder_frequency_mins': '[4]',
         'throttle_fires_per_mins': '[1,3]',
+        'priority': 'high',
     },
               'skip_internal_errors': 'true',
               'notifier_startup_grace_secs': '5',
@@ -266,6 +281,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
             #'summary_notifier' : 'sn',   underderlying default comes through
             #'reminder_frequency_mins': [3], UI overrides base
             'throttle_fires_per_mins': [1,2]  # UI overrides yaml
+            # 'priority' - underlying default comes through
         },
         'alerts': [
             { 'domain': 'test', 'name': 't1', 'condition': 'off' }
@@ -297,17 +313,18 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     assert t1.reminder_frequency_mins == [4] # uiCfg['defaults']['reminder_frequency_mins']
     assert t1.movingSum.maxCount == 5 # uiCfg['defaults']['throttle_fires_per_mins'][0]
     assert t1.movingSum.intervalSecs == 60*6 # uiCfg['defaults']['throttle_fires_per_mins'][1]*60
-
+    assert t1._priority == 'low'
+    
     # Check how defaults are sent to UI
     rez = await tpost("/api/alert2/loadTopConfig", {})
     assert rez == {'rawYaml': {'defaults': {'reminder_frequency_mins': [60], 'notifier': 'n',
                                             'summary_notifier': False, 'annotate_messages': True,
-                                            'throttle_fires_per_mins': [1, 2]},
+                                            'throttle_fires_per_mins': [1, 2], 'priority': 'low' },
                                'skip_internal_errors': False, 'notifier_startup_grace_secs': 4,
                                'defer_startup_notifications': True},
                    'raw': {'defaults': {'reminder_frequency_mins': [4], 'notifier': 'n',
                                         'summary_notifier': False, 'annotate_messages': True,
-                                        'throttle_fires_per_mins': [5, 6]},
+                                        'throttle_fires_per_mins': [5, 6], 'priority': 'low' },
                            'skip_internal_errors': True, 'notifier_startup_grace_secs': 7,
                            'defer_startup_notifications': True},
                    'rawUi': {'defaults': {'reminder_frequency_mins': '[4]',
@@ -407,6 +424,12 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert rez == { 'rez': None }
     rez = await tpost("/api/alert2/renderValue", {'name': 'throttle_fires_per_mins', 'txt': '[-3,4]' })
     assert re.search('not a valid value', rez['error'])
+
+    # priority
+    rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': 'low' })
+    assert rez == { 'rez': 'low' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': 'foo' })
+    assert re.search('must be one of', rez['error'])
     
     # friendly_name
     rez = await tpost("/api/alert2/renderValue", {'name': 'friendly_name', 'txt': 'joe  ' })
@@ -1248,7 +1271,7 @@ async def test_display_cfg(hass, service_calls, hass_client, hass_ws_client, mon
     cfg = { 'alert2': {
         'alerts': [
             { 'domain': 'd', 'name': 'n1', 'condition':'off' },
-            { 'domain': 'd', 'name': 'n2', 'condition':'off', 'supersedes': [ { 'domain':'d','name':'n1'} ] }
+            { 'domain': 'd', 'name': 'n2', 'condition':'off', 'supersedes': [ { 'domain':'d','name':'n1'} ], 'priority':'medium' }
         ] } }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
 
@@ -1276,7 +1299,7 @@ async def test_display_cfg(hass, service_calls, hass_client, hass_ws_client, mon
                          })
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    await getResult(wsc, msg_id, result = [{'entityId': 'alert2.d_n2', 'config': {'supersededByList': []}}])
+    await getResult(wsc, msg_id, result = [{'entityId': 'alert2.d_n2', 'config': {'supersededByList': [], 'priority':'medium'}}])
 
     # existing entity and supersededBy
     msg_id += 1
@@ -1285,7 +1308,7 @@ async def test_display_cfg(hass, service_calls, hass_client, hass_ws_client, mon
                          })
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    await getResult(wsc, msg_id, result = [{'entityId': 'alert2.d_n1', 'config': {'supersededByList': [ 'alert2.d_n2' ]}}])
+    await getResult(wsc, msg_id, result = [{'entityId': 'alert2.d_n1', 'config': {'supersededByList': [ 'alert2.d_n2' ], 'priority':'low'}}])
     msg_id += 1
     await wsc.send_json({ "id": msg_id, "type": "alert2_get_display_config",
                           'dn_list': [ { 'domain': 'd', 'name': 'n1' },{ 'domain': 'd', 'name': 'n2' } ]
@@ -1293,8 +1316,8 @@ async def test_display_cfg(hass, service_calls, hass_client, hass_ws_client, mon
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     await getResult(wsc, msg_id, result = [
-        {'entityId': 'alert2.d_n1', 'config': {'supersededByList': [ 'alert2.d_n2' ]}},
-        {'entityId': 'alert2.d_n2', 'config': {'supersededByList': [ ]}},
+        {'entityId': 'alert2.d_n1', 'config': {'supersededByList': [ 'alert2.d_n2' ], 'priority':'low'}},
+        {'entityId': 'alert2.d_n2', 'config': {'supersededByList': [ ], 'priority':'medium'}},
     ])
     
     # Now check subscription
