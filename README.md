@@ -33,7 +33,7 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - [Setup](#setup)
 - [Description](#description)
 - [Configuration](#configuration)
-- [Generator patterns (Advanced)](#generator-patterns)
+- [Generator patterns](#generator-patterns)
 - [Front-end UI](#front-end-ui)
 - [Service calls and events](#service-calls-and-events)
 - [Python alerting](#python-alerting)
@@ -398,6 +398,22 @@ An alert can alternatively specify a threshold with hysteresis.  So the previous
 This alert would start firing if the temperature drops below 50 and won't stop firing until the temperature rises to at least 55.  A corresponding logic applies when a `maximum` is specified. Both `minimum` and `maximum` may be specified together.
 
 A `condition` may be specified along with a `threshold`. In this case, the alert fires when the condition is true AND the threshold value is out of bounds.  `delay_on_secs` is another form of hysteresis that may be specified to reduce false alarms. It requires an alert condition be true or threshold be exceed for at least the specified number of seconds before firing. Note on a corner case: the count of seconds for delay_on_secs does not reset if the value switches instantaneously from exceeding the minimum to exceeding the maximum.
+
+If a `condition` specifies an entity name, that's just syntactic shorthand for a `states()` expression. So `condition` may specify a template or an entity name, but not both at the same time. For example:
+
+          # ok
+          condition: binary_sensor.room_basement
+
+          # equivalent
+          condition: {{ states('binary_sensor.room_basement') }}
+
+          # not ok.
+          # produces a string "binary_sensor.room_..." that is interpreted as a bool and errors.
+          condition: binary_sensor.room_{{ genElem }}
+
+          # ok version
+          # dynamically selects which binary_sensor to watch based on genElem variable (from generators)
+          condition: {{ states('binary_sensor.room_' + genElem ) }}
 
 ##### Split on/off condition alerts
 

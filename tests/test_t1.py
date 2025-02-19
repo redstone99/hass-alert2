@@ -1158,8 +1158,12 @@ async def test_condition(hass, service_calls):
         { 'domain': 'test', 'name': 't38c', 'threshold': { 'value': '{{ ick2 }}', 'hysteresis': 10, 'minimum':11 } },
         { 'domain': 'test', 'name': 't38a', 'condition': 'on' },
         { 'domain': 'test', 'name': 't38b', 'condition': '{{ "on" }}' },
+        { 'domain': 'test', 'name': 't38d', 'condition': '{{ states("sensor." + states("sensor.w")) }}' },
     ], } }
     hass.states.async_set("sensor.ick", "3")
+    hass.states.async_set("sensor.w", "a")
+    hass.states.async_set("sensor.a", "off")
+    hass.states.async_set("sensor.b", "off")
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -1192,6 +1196,20 @@ async def test_condition(hass, service_calls):
     assert gad.alerts['test']['t37b']._threshold_value_template.template == '{{ states("foo.bar2") }}'
     assert gad.alerts['test']['t38c']._threshold_value_template.template ==  '{{ ick2 }}'
 
+    # Test that states() expression can dynamically change which sensor they track in a template
+    await setAndWait(hass, 'sensor.b', 'on')
+    await setAndWait(hass, 'sensor.b', 'off')
+    assert service_calls.isEmpty()
+    assert gad.alerts['test']['t38d'].state == 'off'
+    # Now track sensor.b
+    await setAndWait(hass, 'sensor.w', 'b')
+    assert service_calls.isEmpty()
+    assert gad.alerts['test']['t38d'].state == 'off'
+    await setAndWait(hass, 'sensor.b', 'on')
+    assert gad.alerts['test']['t38d'].state == 'on'
+    service_calls.popNotifyEmpty('persistent_notification', 't38d.*turned on')
+    
+    
 async def test_err_args(hass, service_calls):
     # test pssing entity name instead of template for condition or threshold value
     cfg = { 'alert2' : { 'tracked': [
