@@ -481,6 +481,9 @@ class AlertGenerator(AlertCommon, SensorEntity):
     @property
     def state(self) -> str:
         return len(self.nameEntityMap)
+    @property
+    def extra_state_attributes(self):
+        return { 'generated_ids': [ ent.entity_id for ent in self.nameEntityMap.values() ] }
     
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -659,6 +662,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         # config stuff
         self._notifier_list_template = getField('notifier', config, defaults)
         self._summary_notifier = getField('summary_notifier', config, defaults)
+        self._priority = getField('priority', config, defaults)
         self._condition_template = config['condition'] if 'condition' in config else None
         self._message_template = config['message'] if 'message' in config else None
         self._done_message_template = config['done_message'] if 'done_message' in config else None
@@ -703,7 +707,9 @@ class AlertBase(AlertCommon, RestoreEntity):
         self.notified_max_on = False
 
         # State restored on restart
+        #
         self.last_notified_time = None
+        self.last_tried_notify_time = None
         self.last_fired_time = None
         self.last_fired_message = None
         self.last_ack_time = None
@@ -739,6 +745,10 @@ class AlertBase(AlertCommon, RestoreEntity):
                 tdate = dt.parse_datetime(last_state.attributes['last_notified_time'])
                 if not self.last_notified_time or tdate > self.last_notified_time:
                     self.last_notified_time = tdate
+            if 'last_tried_notify_time' in last_state.attributes and last_state.attributes['last_tried_notify_time']:
+                tdate = dt.parse_datetime(last_state.attributes['last_tried_notify_time'])
+                if not self.last_tried_notify_time or tdate > self.last_tried_notify_time:
+                    self.last_tried_notify_time = tdate
             if 'last_fired_time' in last_state.attributes and last_state.attributes['last_fired_time']:
                 tdate = dt.parse_datetime(last_state.attributes['last_fired_time'])
                 if not self.last_fired_time or tdate > self.last_fired_time:
@@ -876,7 +886,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         #_LOGGER.debug(f'{self.entity_id} reminder_check: need_reminder={need_reminder} {self.fires_since_last_notify} {self.notified_max_on} {self.sub_need_reminder()}')
         if need_reminder:
             remaining_secs, rem_reason = self.can_notify_now(now, reason)
-            #_LOGGER.debug(f'    remaining_secs={remaining_secs} rem_reason={rem_reason}')
+            #_LOGGER.info(f'{self.entity_id} need_reminder remaining_secs={remaining_secs} rem_reason={rem_reason}')
             if rem_reason == NOTIFICATIONS_DISABLED:
                 return
             if remaining_secs == 0:
@@ -891,6 +901,9 @@ class AlertBase(AlertCommon, RestoreEntity):
                     report(DOMAIN, 'error', f'{gAssertMsg} reminder_check, remaining_secs={remaining_secs} of type={type(remaining_secs)} for {self.name}')
                     return
                 self.schedule_reminder(remaining_secs)
+        else:
+            pass#_LOGGER.info(f'{self.entity_id} does not need_reminder')
+    
 
     def sub_calc_next_reminder_frequency_mins(self, now):
         assert False, "Not Implemented"
@@ -971,8 +984,10 @@ class AlertBase(AlertCommon, RestoreEntity):
         normal_remaining_secs = 0
         if reason == NotificationReason.ReminderOn:
             reminder_frequency_mins = self.sub_calc_next_reminder_frequency_mins(now)
-            if self.last_notified_time and reminder_frequency_mins > 0:
-                secs_since_last = (now - self.last_notified_time).total_seconds()
+            # We use last_tried_notify_time rather than last_notified_time here becuase we may not have
+            # actually been notifying due to being superseded by another alert.
+            if self.last_tried_notify_time and reminder_frequency_mins > 0:
+                secs_since_last = (now - self.last_tried_notify_time).total_seconds()
                 next_secs = reminder_frequency_mins * 60.0
                 normal_remaining_secs = max(0, next_secs - secs_since_last)
 
@@ -1050,6 +1065,9 @@ class AlertBase(AlertCommon, RestoreEntity):
         skipSummary = (reason in [ NotificationReason.Summary ]) and self._summary_notifier is False
         if skip_notify or skipSummary:
             doNotify = False
+        isSuperseded = self.alertData.isSupersededByOn(self.alDomain, self.alName)
+        if isSuperseded:
+            doNotify = False
             
         msg = ''
             
@@ -1109,6 +1127,7 @@ class AlertBase(AlertCommon, RestoreEntity):
 
         #_LOGGER.warning(f'_notify msg={msg}')
             
+        self.last_tried_notify_time = now
         if doNotify:
             self.last_notified_time = now
             
@@ -1171,19 +1190,22 @@ class AlertBase(AlertCommon, RestoreEntity):
                 tillmsg = f' (already acked)'
             elif skipSummary:
                 tillmsg = f' (skipping summaries)'
+            elif isSuperseded:
+                tillmsg = f' (superseded by alert d={isSuperseded[0]} n={isSuperseded[1]})'
             else:
                 report(DOMAIN, 'error', f'{self.name} not notifying with 0 remaining_secs and no skip_notify set')
                 tillmsg = f' bad-logic-err'
             smsg = f'  {self.entity_id} skipping notify {tillmsg}: {msg}'
             _LOGGER.warning(smsg)
-            if remaining_reason != NOTIFICATIONS_DISABLED:
-                if remaining_secs > 0:
-                    self.schedule_reminder(remaining_secs)
-                # else:  must be that skip_notify is true because alert has already been acked
+            #if remaining_reason != NOTIFICATIONS_DISABLED:
+            #    if remaining_secs > 0:
+            #        self.schedule_reminder(remaining_secs)
+            #    # else:  must be that skip_notify is true because alert has already been acked
                 
         if reason == NotificationReason.Fire:
             self.last_fired_message = message
             self.last_fired_time = now
+            
         return doNotify
 
 
@@ -1245,8 +1267,7 @@ class EventAlert(AlertBase):
         now = dt.now()
         msg = message
         didNotify = self._notify(now, NotificationReason.Fire, message)
-        if didNotify:
-            self.reminder_check(now) # To schedule reminder - the only reminder I think that could be needed is if throttled, a notificaiton that throttling has turned off
+        self.reminder_check(now) # To schedule reminder - the only reminder I think that could be needed is if throttled, a notificaiton that throttling has turned off
         self.async_write_ha_state()
         self.hass.bus.async_fire(EVENT_ALERT2_FIRE, { 'entity_id': self.entity_id,
                                                       'domain': self.alDomain,
@@ -1262,9 +1283,7 @@ class EventAlert(AlertBase):
             msg = 'Did not fire during throttled interval'
             #report(DOMAIN, 'error', f'{gAssertMsg} notify_timer_cb, fires_since_last_notify is not positive, is {self.fires_since_last_notify} for {self.name}')
         didNotify = self._notify(now, NotificationReason.Summary, msg)
-        # Might not notify cuz is summary
-        #if not didNotify:
-        #    report(DOMAIN, 'error', f'{gAssertMsg} notify_timer_cb, didNotify was false for {self.name}')
+        self.reminder_check(now)
         self.async_write_ha_state()
     
     def sub_ack_int(self):
@@ -1517,11 +1536,8 @@ class ConditionAlert(AlertBase):
                         report(DOMAIN, 'error', f'{self.name} Condition template: {err}')
                         return
                 self.reminders_since_fire = 0
-                if self._notify(now, NotificationReason.Fire, msg):
-                    self.reminder_check(now) # To schedule reminder
-                else:
-                    # did not notify, reminder already scheduled
-                    pass
+                didNotify = self._notify(now, NotificationReason.Fire, msg)
+                self.reminder_check(now)
             else:
                 _LOGGER.warning(f'Activity {self.entity_id} turned off')
                 is_acked = self.last_ack_time and self.last_on_time and self.last_ack_time > self.last_on_time
@@ -1535,10 +1551,8 @@ class ConditionAlert(AlertBase):
                         report(DOMAIN, 'error', f'{self.name} done_message template: {err}')
                         msg = f'turned off after {agoStr(secs_on)}. [done_message template error]'
                 didNotify = self._notify(now, NotificationReason.StopFiring, msg,
-                                         #override_timing=self.notified_on,
-                                         skip_notify=is_acked) # presumably, this means alert ended shortly after we tried notifying, so schedule one more notify for last interval of alert
-                #if didNotify:
-                #    self.notified_on = False
+                                         skip_notify=is_acked)
+                self.reminder_check(now)
             self.async_write_ha_state()
             if state:
                 self.hass.bus.async_fire(EVENT_ALERT2_ON, { 'entity_id': self.entity_id,
@@ -1549,7 +1563,7 @@ class ConditionAlert(AlertBase):
                                                              'domain': self.alDomain,
                                                              'name': self.alName })
 
-        
+    # want invariant to be that it is ok to invoke notify_timer_cb a tiny bit early.
     def notify_timer_cb(self, now):
         msg = ''
         is_on = self.state == 'on'
@@ -1566,16 +1580,12 @@ class ConditionAlert(AlertBase):
             msg += f'turned off {agoStr(secs_off)} ago after being on for {agoStr(secs_on)}'
             reason = NotificationReason.Summary
         didNotify = self._notify(now, reason, msg)
-        if not didNotify and reason == NotificationReason.ReminderOn:
-            report(DOMAIN, 'error', f'{gAssertMsg} notify_timer_cb, didNotify for ReminderOn was false for {self.name}. {reason}')
+        # Whether or not we actually notified, for the purposes of counting reminder delays we say we did.
+        # TODO - I think we could remove reminders_since_fire and instead calculate it based on time since
+        # fire.
         self.reminders_since_fire += 1
-        #if didNotify:
-        #    if is_on:
-        #        self.notified_on = True
-        #    else:
-        #        self.notified_on = False
-        self.async_write_ha_state()
         self.reminder_check(now)  # to set up next reminder (eg if alert is still on)
+        self.async_write_ha_state()
     
     def sub_ack_int(self):
         # So we update last_ack_time if state is on

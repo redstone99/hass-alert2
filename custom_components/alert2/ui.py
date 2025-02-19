@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from aiohttp import web
 from typing import Any
@@ -16,6 +17,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util.yaml import parse_yaml
 from .util import (
     create_task,
+    create_background_task,
     cancel_task,
     report,
     DOMAIN,
@@ -159,8 +161,11 @@ class RenderValueView(HomeAssistantView):
                 ttype = 'notifier_list'
                 if isinstance(tval, bool):
                     simple = True
-            elif name in ['annotate_messages', 'reminder_frequency_mins', 'throttle_fires_per_mins']:
+            elif name in ['annotate_messages', 'reminder_frequency_mins', 'throttle_fires_per_mins', 'priority']:
                 tval = DEFAULTS_SCHEMA({ name: ttxt })[name]
+                simple = True
+            elif name in ['supersedes']:
+                tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME({ name: ttxt})[name]
                 simple = True
             elif name in ['friendly_name', 'title', 'target']:
                 tval = SINGLE_TRACKED_SCHEMA_PRE_NAME({ name: ttxt })[name]
@@ -342,8 +347,101 @@ def prepForValidation(acfg):
         raise vol.Invalid(str(ex)) from ex
     return preppedConfig
 
+
+def debounce(hass, waitSecs, function):
+    def debounced(*args, **kwargs):
+        async def call_function():
+            await asyncio.sleep(waitSecs)
+            debounced._timerTask = None
+            return function(*args, **kwargs)
+        if debounced._timerTask is not None:
+            cancel_task(DOMAIN, debounced._timerTask)
+        debounced._timerTask = create_background_task(hass, DOMAIN, call_function())
+    debounced._timerTask = None
+    return debounced
+
+# js can look at binary_sensor.alert2_ha_startup_done to be "on" for when ha has started
+# js can look at binary_sensor.alert2_ha_startup_done attribute last_reload_time for reloads
+class DisplayCfgSocketMgr:
+    def __init__(self, hass, alertData):
+        self.hass = hass
+        self.alertData = alertData
+        self.allSubscriptions = []
+        async_register_command(hass, self.async_handle_watch)
+        async_register_command(hass, self.async_handle_get)
+        self.noteConfigChange = debounce(hass, 0.1, self.noteConfigChangeInt)
+        
+        #if self.alertData.haStarted:
+        #    pass
+        #else:
+        #    async def doStart(ev): # async so that we're called in event loop thread
+        #        for asub in self.allSubscriptions:
+        #            asub['connection'].send_message({ "id": msgId, "type": "event",
+        #                                              "event": {'ha-started': True }, } )
+        #    self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, doStart)
+        
+    def displayCfgFromEnt(self, ent):
+        tt = self.alertData.supersedeMgr.supersededBySet(ent.alDomain, ent.alName)
+        supersededByIds = [ self.alertData.domainNameToId(x[0], x[1]) for x in tt ]
+        return {
+            'supersededByList': supersededByIds,
+            'priority': ent._priority,
+        }
+
+    # Called for any adding/deleting of alerts
+    def noteConfigChangeInt(self):
+        _LOGGER.info(f'note config change')
+        self.hass.verify_event_loop_thread(f'chk loop thread in DisplayCfgSocketMgr::notifyConfigChange')
+        for asub in self.allSubscriptions:
+            asub['connection'].send_message({ "id": asub['subscribeMsg']['id'], "type": "event",
+                                              #"event": { 'configChange': { 'entityId': ent.entity_id } } } )
+                                              "event": { 'configChange': True } } )
+    #def noteReload(self):
+    #    for asub in self.allSubscriptions:
+    #        asub['connection'].send_message({ "id": msgId, "type": "event",
+    #                                          "event": {'reload': True }, } )
+        
+    @callback
+    @decorators.websocket_command({
+            vol.Required("type"): 'alert2_watch_display_config',
+    })
+    def async_handle_watch(self, hass, connection, subscribeMsg):
+        msgId = subscribeMsg['id']
+        subscriptionEntry = {'connection': connection, 'subscribeMsg': subscribeMsg }
+        self.allSubscriptions.append(subscriptionEntry)
+        def unsubscribe():
+            idx = next((i for i, item in enumerate(self.allSubscriptions) if item['connection'] is connection), -1)
+            if idx == -1:
+                _LOGGER.warning(f'display_config unsubscribe called, msgId={msgId} but no subscription found')
+            else:
+                del self.allSubscriptions[idx]
+        connection.subscriptions[msgId] = unsubscribe
+        connection.send_result(msgId)
+        
+    @callback
+    @decorators.websocket_command( {
+            vol.Required("type"): 'alert2_get_display_config',
+            vol.Required('dn_list'): vol.All(cv.ensure_list, [
+                vol.Schema({
+                    vol.Required('domain'): cv.string,
+                    vol.Required('name'): cv.string,
+                    }) ]) })
+    def async_handle_get(self, hass, connection, requestMsg):
+        rez = []
+        for dn in requestMsg['dn_list']:
+            domain = dn['domain']
+            name = dn['name']
+            if domain in self.alertData.alerts and name in self.alertData.alerts[domain]:
+                ent = self.alertData.alerts[domain][name]
+                rez.append({ 'entityId': ent.entity_id, 'config': self.displayCfgFromEnt(ent) })
+        connection.send_message({ "id": requestMsg['id'], "type": "result",
+                                  'success': True,
+                                  "result": rez
+                                 } )
+        
+
 # Purpose is to support the UI watching for updates to the display_msg template.
-class WebSocketMgr:
+class DisplayMsgSocketMgr:
     def __init__(self, hass, alertData):
         self.hass = hass
         self.alertData = alertData
@@ -351,7 +449,7 @@ class WebSocketMgr:
         async_register_command(hass, self.async_handle_msg)
         
     def shutdown(self):
-        #_LOGGER.warning(f'WebSocketMgr shutting down all subscriptions')
+        #_LOGGER.warning(f'DisplayMsgSocketMgr shutting down all subscriptions')
         for ad in self.allSubscriptions:
             for an in self.allSubscriptions[ad]:
                 for asub in self.allSubscriptions[ad][an]:
@@ -360,7 +458,7 @@ class WebSocketMgr:
 
     def reloadSingleIfExists(self, domain, name):
         #_LOGGER.warning(f'reloadSingleIfExists {domain} {name}')
-        self.hass.verify_event_loop_thread(f'checking loop thread in WebSocketMgr::reloadSingleIfExists')
+        self.hass.verify_event_loop_thread(f'checking loop thread in DisplayMsgSocketMgr::reloadSingleIfExists')
         if domain in self.allSubscriptions and name in self.allSubscriptions[domain]:
             #_LOGGER.warning(f'reloadSingleIfExists found allSubscriptions for {domain} {name} ')
             for asub in self.allSubscriptions[domain][name]:
@@ -403,10 +501,10 @@ class WebSocketMgr:
     #@decorators.async_response
     #async def async_handle_msg(self, hass, connection, msg):
     def async_handle_msg(self, hass, connection, subscribeMsg):
-        self.hass.verify_event_loop_thread(f'checking loop thread in WebSocketMgr::async_handle_msg')
+        self.hass.verify_event_loop_thread(f'checking loop thread in DisplayMsgSocketMgr::async_handle_msg')
         #_LOGGER.warning(f'got watch message {subscribeMsg}')
         if hass != self.hass:
-            report(DOMAIN, 'error', f'{gAssertMsg} in WebSocketMgr, two "hass" variables are not identical')
+            report(DOMAIN, 'error', f'{gAssertMsg} in DisplayMsgSocketMgr, two "hass" variables are not identical')
         domain = subscribeMsg['domain']
         name = subscribeMsg['name']
         msgId = subscribeMsg['id']
@@ -449,7 +547,7 @@ class WebSocketMgr:
             tracker.startWatching()
         else:
             async def doStart(ev): # async so that we're called in event loop thread
-                #self.hass.verify_event_loop_thread(f'checking loop thread in WebSocketMgr::doStart')
+                #self.hass.verify_event_loop_thread(f'checking loop thread in DisplayMsgSocketMgr::doStart')
                 tracker.startWatching()
             self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, doStart)
         subscriptionEntry = {'tracker':tracker, 'connection': connection, 'subscribeMsg': subscribeMsg }
@@ -463,7 +561,7 @@ class WebSocketMgr:
             self.allSubscriptions[domain][name][updateIdx] = subscriptionEntry
         
         def unsubscribe():
-            self.hass.verify_event_loop_thread(f'checking loop thread in WebSocketMgr::unsubscribe')
+            self.hass.verify_event_loop_thread(f'checking loop thread in DisplayMsgSocketMgr::unsubscribe')
             if domain in self.allSubscriptions and name in self.allSubscriptions[domain]:
                 subs = self.allSubscriptions[domain][name]
                 idx = next((i for i, item in enumerate(subs) if item['tracker'] is tracker), -1)
@@ -491,7 +589,7 @@ class UiMgr:
         self._store = MigratableStore(hass, STORAGE_VERSION, STORAGE_KEY)
         self.data = None
         self.entities = []
-        self.wsMgr = WebSocketMgr(hass, alertData)
+        self.displayMsgWsMgr = DisplayMsgSocketMgr(hass, alertData)
         
     async def startup(self):
         # Store handles the case where there may be a write pending
@@ -502,7 +600,7 @@ class UiMgr:
             
     def shutdown(self):
         #create_task(self._hass, DOMAIN, self.async_shutdown())
-        self.wsMgr.shutdown()
+        self.displayMsgWsMgr.shutdown()
     #async def async_shutdown(self):
         #for aview in self.views:
         #    await aview.shutdown()
@@ -642,7 +740,7 @@ class UiMgr:
         return {}
 
     def alertCreated(self, domain, name):
-        self.wsMgr.reloadSingleIfExists(domain, name)
+        self.displayMsgWsMgr.reloadSingleIfExists(domain, name)
     
     async def deleteAlert(self, domain, name):
         entIndex = next((i for i, item in enumerate(self.entities) if item.alDomain == domain and item.alName == name), -1)

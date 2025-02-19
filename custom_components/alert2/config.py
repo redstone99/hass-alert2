@@ -58,7 +58,33 @@ class JTemplate(template_helper.Template):
         env = super()._env
         env.filters['entity_regex'] = entity_id_regex_extract
         return env
-            
+
+
+def boolTemplate(cond):
+    # we haven't done a voluptuous validation yet, so don't know what type cond is
+    if isinstance(cond, str) and not template_helper.is_template_string(cond):
+        try:
+            x = cv.boolean(cond)
+        except (vol.Invalid) as ex:
+            # it's not a template and not a truthy, so assume it's an entity
+            if '\'' in cond or '"' in cond:
+                raise vol.Invalid(f'boolean template is neither a jinja template nor an entity: {cond}') from ex
+            # TODO - Not sure if strip() is necessary. Can yaml return extra whitespace?
+            cond = '{{ states("' + cond.strip() + '") }}'
+    return cv.template(cond)
+def floatTemplate(afloat):
+    # we haven't done a voluptuous validation yet, so don't know what type afloat is
+    if isinstance(afloat, str) and not template_helper.is_template_string(afloat):
+        try:
+            x = float(afloat)
+        except (ValueError) as ex:
+            # it's not a template and not a truthy, so assume it's an entity
+            if '\'' in afloat or '"' in afloat:
+                raise vol.Invalid(f'float template is neither a jinja template nor an entity: {afloat}') from ex
+            # TODO - Not sure if strip() is necessary. Can yaml return extra whitespace?
+            afloat = '{{ states("' + afloat.strip() + '") }}'
+    return cv.template(afloat)
+    
 #def jtemplate(value: Any | None) -> JTemplate:
 def jtemplate(value) -> JTemplate:
     """Similar to helpers/config_validation.py:template()."""
@@ -175,6 +201,7 @@ DEFAULTS_SCHEMA = vol.Schema({
     vol.Optional('throttle_fires_per_mins'): vol.Any(
         None, vol.All(vol.ExactSequence([int, vol.Coerce(float)]),
                       vol.ExactSequence([vol.Range(min=1.),vol.Range(min=0.01)]))),
+    vol.Optional('priority'): vol.Any('low', 'medium', 'high', msg='must be one of "low", "medium" or "high"'),
 })
 
 SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({
@@ -189,13 +216,15 @@ SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({
                                                                  vol.ExactSequence([vol.Range(min=1.),vol.Range(min=0.01)]))),
     vol.Optional('annotate_messages'): cv.boolean,
     vol.Optional('display_msg'): vol.Any(cv.template, None),
+    vol.Optional('priority'): vol.Any('low', 'medium', 'high'),
 })
 
-# So if 'generator' is present, then 'name' is a template. Otherwise it's a string.
-SINGLE_TRACKED_SCHEMA = SINGLE_TRACKED_SCHEMA_PRE_NAME.extend({
+DOMAIN_NAME_DICT = {
     vol.Required('domain'): jDomain,
     vol.Required('name'): jstringName,
-})
+}
+# So if 'generator' is present, then 'name' is a template. Otherwise it's a string.
+SINGLE_TRACKED_SCHEMA = SINGLE_TRACKED_SCHEMA_PRE_NAME.extend(DOMAIN_NAME_DICT)
 
 SINGLE_ALERT_SCHEMA_PRE_NAME = SINGLE_TRACKED_SCHEMA_PRE_NAME.extend({
     vol.Optional('message'): cv.template
@@ -205,30 +234,31 @@ SINGLE_ALERT_SCHEMA_EVENT = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Required('domain'): jDomain,
     vol.Required('name'): jstringName,
     vol.Required('trigger'): jProtectedTrigger,
-    vol.Optional('condition'): cv.template,
+    vol.Optional('condition'): boolTemplate,
     vol.Optional('early_start'): cv.boolean,
 })
 
 THRESHOLD_SCHEMA = vol.Schema({
-    vol.Required('value'): cv.template,
+    vol.Required('value'): floatTemplate,
     vol.Required('hysteresis'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
     vol.Optional('minimum'): vol.Coerce(float),
     vol.Optional('maximum'): vol.Coerce(float),
 })
 
 SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
-    vol.Optional('condition'): cv.template,
+    vol.Optional('condition'): boolTemplate,
     vol.Optional('threshold'): has_atleast_oneof(['minimum', 'maximum'], THRESHOLD_SCHEMA),
-    vol.Optional('condition_off'): cv.template,
+    vol.Optional('condition_off'): boolTemplate,
     vol.Optional('trigger_off'): jProtectedTrigger,
     vol.Optional('manual_off'): cv.boolean,
-    vol.Optional('condition_on'): cv.template,
+    vol.Optional('condition_on'): boolTemplate,
     vol.Optional('trigger_on'): jProtectedTrigger,
     vol.Optional('manual_on'): cv.boolean,
     vol.Optional('done_message'): cv.template,
     vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
     vol.Optional('delay_on_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
     vol.Optional('early_start'): cv.boolean,
+    vol.Optional('supersedes'): vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT ])
 })
 GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): cv.template,

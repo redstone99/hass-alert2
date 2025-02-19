@@ -14,7 +14,7 @@ class Alert2ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Only a single instance of the integration
         if self._async_current_entries():
-            return self.async_abort(reason="single_instance_allowed")
+            return self.async_abort(reason="Only single entry allowed")
 
         id = secrets.token_hex(6)
 
