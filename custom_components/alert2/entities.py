@@ -72,7 +72,7 @@ class MovingSum:
         self.singleBucketSecs = self.intervalSecs / self.numBuckets
         self.lastAdvanceTime = None
         #self.cacheKnowUnderLimit = True
-        
+
     def reportFire(self, now):
         self._updateBuckets(now)
         self.buckets[0] += 1
@@ -199,12 +199,12 @@ class TriggerCond:
         self.triggerConf = triggerConf
         self.condTempl = condTempl
         self.detach_trigger = None
-        
+
     def shutdown(self):
         if self.detach_trigger:
             self.detach_trigger()
             self.detach_trigger = None
-            
+
     async def startWatching(self):
         def log_cb(level: int, msg: str, **kwargs: Any) -> None:
             _LOGGER.log(level, "%s %s", self.fullName, msg, **kwargs)
@@ -278,7 +278,7 @@ class TriggerCond:
             await self.cb(variables)
         else:
             pass
-    
+
 # cfgList = [ { fieldName, type, template }, .. ]
 class Tracker:
     class Type(Enum):
@@ -306,7 +306,7 @@ class Tracker:
             self.trackerInfo = None
     def refresh(self):
         self.trackerInfo.async_refresh()
-            
+
     def startWatching(self):
         trackers = []
         for x in self.cfgList:
@@ -332,9 +332,9 @@ class Tracker:
         self.trackerInfo = info
         #self.async_on_remove(info.async_remove)  # stop template listeners if ConditionAlert is removed from hass. from helpers/entity.py
         info.async_refresh() # components/template/temlate_entity.py does this, so I guess we will, though this may not be necessary per docs of async_track_template_result
-        
+
     @callback
-    def _result_cb(self, 
+    def _result_cb(self,
                    event: Event[EventStateChangedData] | None,
                    updates: list[TrackTemplateResult]) -> None:
         if event:
@@ -387,7 +387,7 @@ class Tracker:
                 return
         resultStrs = [x for x in tresults]  # async_render always strips as does I think async_track_template_result
         #resultStrs = [x.strip() for x in tresults]
-        
+
         # Now type convert the results
         results = [ None for x in resultStrs ]
         for idx, val in enumerate(resultStrs):
@@ -418,7 +418,7 @@ class Tracker:
                 results[idx] = renderResultToList(resultStrs[idx])
 
         self.cb(results)
-        
+
 
 def generatorElemToVars(hass, elem):
     svars = {'genRaw': elem }
@@ -466,32 +466,33 @@ class AlertGenerator(AlertCommon, SensorEntity):
         self.config = config
         self.rawConfig = rawConfig
         self._attr_name = entNameFromDN(GENERATOR_DOMAIN, self.config["generator_name"])
+        self._attr_unique_id = self._attr_name
         self.alDomain = GENERATOR_DOMAIN
         self.alName = self.config["generator_name"]
         self._generator_template = self.config['generator']
         self.tracker = Tracker(self, 'generator', hass, alertData,
                                [ { 'fieldName': 'generator', 'type': Tracker.Type.List,
                                    'template': self._generator_template } ], self.update_rez, extraVariables=None)
-                               
+
         # "name" here is overloaded. There's the 'name' from the domain+name specified in an alert config
         # then there's the 'name' that is the HA entity's name property.
         # Here we're using the entity name
         self.nameEntityMap = {} # Map from name -> ent
-        
+
     @property
     def state(self) -> str:
         return len(self.nameEntityMap)
     @property
     def extra_state_attributes(self):
         return { 'generated_ids': [ ent.entity_id for ent in self.nameEntityMap.values() ] }
-    
+
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         await self.addedToHassDone()
     async def startWatching(self):
         #await super().startWatching()  - parent class has no startWatching
         self.tracker.startWatching()
-        
+
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
         self.tracker.shutdown()
@@ -502,12 +503,12 @@ class AlertGenerator(AlertCommon, SensorEntity):
     async def async_update(self):
         await super().async_update()
         self.tracker.async_refresh()
-        
+
     def update_rez(self, results):
         create_task(self.hass, DOMAIN, self.async_update_rez(results))
     async def async_update_rez(self, results):
         alist = results[0]
-        
+
         # Now see if entities are added or deleted
         needWrite = False
         currNames = set() # entity names (ie the part after alert2.)
@@ -518,7 +519,7 @@ class AlertGenerator(AlertCommon, SensorEntity):
                 sawError = True
                 break
             svars = generatorElemToVars(self.hass, elem)
-            
+
             try:
                 nameStr = self.config['name'].async_render(variables=svars, parse_result=False).strip()
             except TemplateError as err:
@@ -552,7 +553,7 @@ class AlertGenerator(AlertCommon, SensorEntity):
                     break
                 # very shallow copy, don't copy object values
                 # Also, use rawConfig so we don't double interpret the config dict.
-                acfg = dict(self.rawConfig) 
+                acfg = dict(self.rawConfig)
                 acfg['domain'] = domainStr
                 acfg['name'] = nameStr
                 del acfg['generator']
@@ -658,6 +659,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         self.alDomain = config['domain']
         self.alName = config['name']
         self._attr_name = entNameFromDN(self.alDomain, self.alName)
+        self._attr_unique_id = self._attr_name
 
         # config stuff
         self._notifier_list_template = getField('notifier', config, defaults)
@@ -723,7 +725,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         #await super().startWatching()  not in parent class
         if self.friendlyNameTracker:
             self.friendlyNameTracker.startWatching()
-            
+
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
         if self.friendlyNameTracker:
@@ -774,7 +776,7 @@ class AlertBase(AlertCommon, RestoreEntity):
                     else:
                         self.notification_control = dt.parse_datetime(val)
         # child class calls addedToHassDone
-                        
+
     async def async_update(self) -> None:
         await super().async_update()
         if self.friendlyNameTracker:
@@ -784,7 +786,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         if newname != self._friendly_name:
             self._friendly_name = newname
             self.async_write_ha_state()
-                        
+
     @property
     def extra_state_attributes(self):
         baseDict = {
@@ -805,7 +807,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         }
         baseDict.update(self.more_state_attributes())
         return baseDict
-    
+
     def notify_timer_cb(self, now):
         assert False, "not implemented"
     def sub_need_reminder(self):
@@ -833,11 +835,11 @@ class AlertBase(AlertCommon, RestoreEntity):
         self.ack_int(now)
         self.async_write_ha_state()
         self.reminder_check(now)
-    
+
     async def async_ack(self):
         now = dt.now()
         self.ack_int(now)
-        
+
     async def async_unack(self):
         _LOGGER.info(f'Activity {self.entity_id} got unack')
         now = dt.now()
@@ -863,7 +865,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         if needWrite:
             self.last_ack_time = now
             self.async_write_ha_state()
-    
+
     # idempotent, can call many times
     def reminder_check(self, now = None):
         if not now:
@@ -903,7 +905,7 @@ class AlertBase(AlertCommon, RestoreEntity):
                 self.schedule_reminder(remaining_secs)
         else:
             pass#_LOGGER.info(f'{self.entity_id} does not need_reminder')
-    
+
 
     def sub_calc_next_reminder_frequency_mins(self, now):
         assert False, "Not Implemented"
@@ -926,7 +928,7 @@ class AlertBase(AlertCommon, RestoreEntity):
 
         (notifiers, errors, debugInfo) = notifierTemplateToList(self.hass, self.extraVariables, notifier_template,
                                                                 sourceTemplate)
-                    
+
         notifier_list = []
         defer_notifier_list = []
         alertData = self.hass.data[DOMAIN]
@@ -958,7 +960,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             else:
                 report(DOMAIN, 'error', f'For {self.name}: {errStr} while notifying with message={args["message"]} ')
         return (notifier_list, defer_notifier_list)
-        
+
     # Return False if disabled
     #        float seconds remaining till can notify otherwise. 0 if can do immediately
     # returns tuple:
@@ -994,7 +996,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         if self.notified_max_on and max_limit_remaining_secs == 0:
             # If throttling turned off, it overrides the notification frequency setting
             normal_remaining_secs = 0
-            
+
         # Now combine the logic
         remaining_secs = 0
         freas = 'good-to-go-should-never-see'
@@ -1013,8 +1015,8 @@ class AlertBase(AlertCommon, RestoreEntity):
             #_LOGGER.debug(f'    reminder_frequency_mins = {reminder_frequency_mins}')
         #_LOGGER.debug(f'can_notify_now {self.name}, snooze_remaining_secs={snooze_remaining_secs} max_limit_remaining_secs={max_limit_remaining_secs} normal_remaining_secs={normal_remaining_secs} remaining_secs={remaining_secs} freas={freas}')
         return (remaining_secs, freas)
-            
-            
+
+
     def schedule_reminder(self, remaining_secs):
         async def foo():
             try:
@@ -1036,7 +1038,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             return
         atask = create_background_task(self.hass, DOMAIN, foo())
         self.future_notification_info = { 'task': atask }
-        
+
     # Assuming we want to notify
     # Does not write out state updates
     # Returns True if notified.  False if didn't notify
@@ -1056,7 +1058,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         # still notify that max threshold has been crossed
         remaining_secs, remaining_reason = self.can_notify_now(now, reason)
         #_LOGGER.debug(f'in _notify, remaining_secs={remaining_secs} {remaining_reason}, ms={self.movingSum}')
-        
+
         if self.future_notification_info is not None:
             cancel_task(DOMAIN, self.future_notification_info['task'])
         self.future_notification_info = None  # TODO - could avoid recreates if we keep it around.
@@ -1068,9 +1070,9 @@ class AlertBase(AlertCommon, RestoreEntity):
         isSuperseded = self.alertData.isSupersededByOn(self.alDomain, self.alName)
         if isSuperseded:
             doNotify = False
-            
+
         msg = ''
-            
+
         triggeredMaxLimit = False
         if reason == NotificationReason.Fire:
             if doNotify and self.movingSum is not None:
@@ -1082,7 +1084,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         #what to do if stopped throttling right before call to _notify, and then fire() started throttling again?
         #then doNotify is true, and max_limit_remaining_secs > 0 and self.notified_max_on is true, so
         #will get xxx firex 6x message but no throttling update
-                
+
         max_limit_remaining_secs = self.movingSum.remainingSecs(now) if self.movingSum is not None else 0
         if max_limit_remaining_secs > 0 and not self.notified_max_on:
             # throttling started hopefully due to a Fire that just happened.
@@ -1106,7 +1108,7 @@ class AlertBase(AlertCommon, RestoreEntity):
 
         if reason == NotificationReason.Summary:
             msg += 'Summary: '
-                
+
         addedName = False
         if self.annotate_messages or reason in [ NotificationReason.ReminderOn, NotificationReason.Summary ]:
             addedName = True
@@ -1114,23 +1116,23 @@ class AlertBase(AlertCommon, RestoreEntity):
                 msg += f'Alert2 {self.name}'
             else:
                 msg += self._friendly_name
-            
+
         if (doNotify or skipSummary)  and self.fires_since_last_notify > 0:
             secs_since_last = (now - self.last_fired_time).total_seconds()
             msg += f' fired {self.fires_since_last_notify}x (most recently {agoStr(secs_since_last)} ago)'
             self.fires_since_last_notify = 0
-            
+
         if len(message) > 0:
             if addedName:
                 msg += ': '
             msg += f'{message}'
 
         #_LOGGER.warning(f'_notify msg={msg}')
-            
+
         self.last_tried_notify_time = now
         if doNotify:
             self.last_notified_time = now
-            
+
             tmsg = msg
             if len(tmsg) > 600:
                 tmsg = tmsg[:600] + '...'
@@ -1177,7 +1179,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             if len(notifier_list) == 0 and len(defer_notifier_list) == 0:
                 # Notifier is set to null, no notifiation.  at least log
                 _LOGGER.warning(f'{self.entity_id} (null notifier): {args["message"]}')
-                
+
         else:
             if reason == NotificationReason.Fire:
                 self.fires_since_last_notify += 1
@@ -1201,11 +1203,11 @@ class AlertBase(AlertCommon, RestoreEntity):
             #    if remaining_secs > 0:
             #        self.schedule_reminder(remaining_secs)
             #    # else:  must be that skip_notify is true because alert has already been acked
-                
+
         if reason == NotificationReason.Fire:
             self.last_fired_message = message
             self.last_fired_time = now
-            
+
         return doNotify
 
 
@@ -1227,7 +1229,7 @@ class EventAlert(AlertBase):
                                            config['trigger'], self._condition_template)
         else:
             pass # This is just a tracked alert, like alert2.error
-        
+
     @property
     def state(self) -> str:
         if not self.last_fired_time:
@@ -1241,18 +1243,18 @@ class EventAlert(AlertBase):
         """Restore extra state attributes on start-up."""
         await super().async_added_to_hass()
         await self.addedToHassDone()
-        
+
     async def startWatching(self):
         await super().startWatching()
         if self.triggerCond:
             await self.triggerCond.startWatching()
         self.reminder_check()
-        
+
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
         if self.triggerCond:
             self.triggerCond.shutdown()
-            
+
     async def triggered(self, variables):
         msg = ''
         if self._message_template is not None:
@@ -1262,7 +1264,7 @@ class EventAlert(AlertBase):
                 report(DOMAIN, 'error', f'{self.name} Message template: {err}')
                 return
         await self.record_event(msg)
-        
+
     async def record_event(self, message: str):
         now = dt.now()
         msg = message
@@ -1272,7 +1274,7 @@ class EventAlert(AlertBase):
         self.hass.bus.async_fire(EVENT_ALERT2_FIRE, { 'entity_id': self.entity_id,
                                                       'domain': self.alDomain,
                                                       'name': self.alName })
-    
+
     def notify_timer_cb(self, now):
         if self.fires_since_last_notify > 0:
             msg = ''
@@ -1285,7 +1287,7 @@ class EventAlert(AlertBase):
         didNotify = self._notify(now, NotificationReason.Summary, msg)
         self.reminder_check(now)
         self.async_write_ha_state()
-    
+
     def sub_ack_int(self):
         return self.last_fired_time and (not self.last_ack_time or self.last_ack_time <= self.last_fired_time)
     #def sub_unack_int(self):
@@ -1359,7 +1361,7 @@ class ConditionAlert(AlertBase):
 
         self.manualOnEnabled = config['manual_on'] if 'manual_on' in config else False
         self.manualOffEnabled = config['manual_off'] if 'manual_off' in config else False
-            
+
     async def trigger_on(self, variables):
         self.update_state_internal(True)
     def cond_on_update(self, results):
@@ -1382,7 +1384,7 @@ class ConditionAlert(AlertBase):
             return
         if results[0]:
             self.update_state_internal(False)
-        
+
     async def async_manual_on(self):
         if not self.manualOnEnabled:
             raise HomeAssistantError(f'manual_on called but alert {self.entity_id} does not have manual_on enabled')
@@ -1391,7 +1393,7 @@ class ConditionAlert(AlertBase):
         if not self.manualOffEnabled:
             raise HomeAssistantError(f'manual_off called but alert {self.entity_id} does not have manual_off enabled')
         self.update_state_internal(False)
-        
+
     @property
     def state(self) -> str:
         oldIsOn = self.last_on_time and ( (not self.last_off_time) or self.last_on_time > self.last_off_time)
@@ -1399,7 +1401,7 @@ class ConditionAlert(AlertBase):
             return "on"
         else:
             return "off"
-                
+
     def more_state_attributes(self):
         return {
             'last_on_time': self.last_on_time,
@@ -1420,7 +1422,7 @@ class ConditionAlert(AlertBase):
             self.onTracker.shutdown()
         if self.offTracker:
             self.offTracker.shutdown()
-        
+
     async def async_added_to_hass(self) -> None:
         """Restore state and register callbacks."""
         await super().async_added_to_hass()
@@ -1468,7 +1470,7 @@ class ConditionAlert(AlertBase):
     async def async_update(self) -> None:
         await super().async_update()
         self.condValTracker.refresh()
-        
+
     # Call when alert would otherwise be on
     # return True if will wait for delayed on
     def delayed_on_check(self, toState):
@@ -1477,7 +1479,7 @@ class ConditionAlert(AlertBase):
             self.update_state_internal2(True)
             self.cond_true_time = None
             self.cond_true_task = None
-            
+
         if toState:
             if self.state == "off":
                 if self.cond_true_time == None:
@@ -1498,7 +1500,7 @@ class ConditionAlert(AlertBase):
                 cancel_task(DOMAIN, self.cond_true_task)
                 self.cond_true_task = None
         return False
-        
+
     def update_state_internal(self, state:bool):
         if not isinstance(state, bool):
             report(DOMAIN, 'error', f'{gAssertMsg} update_state_internal ignoring call with non-bool {state} type={type(state)} for {self.name}')
@@ -1519,7 +1521,7 @@ class ConditionAlert(AlertBase):
             self.last_on_time = now
         else:
             self.last_off_time = now
-        
+
         # If we haven't called async_added_to_hass, then we don't know if this state
         # is actually a state change or not, so we don't know whether to fire or not.
         # So let the reminder_check() call in async_added_to_hass() decide.
@@ -1586,16 +1588,16 @@ class ConditionAlert(AlertBase):
         self.reminders_since_fire += 1
         self.reminder_check(now)  # to set up next reminder (eg if alert is still on)
         self.async_write_ha_state()
-    
+
     def sub_ack_int(self):
         # So we update last_ack_time if state is on
         if self.state == 'on':
             return True
         return self.last_off_time and (not self.last_ack_time or self.last_ack_time <= self.last_off_time)
-    
+
     def sub_need_reminder(self):
         return self.state == 'on' and (not self.last_ack_time or self.last_ack_time < self.last_on_time)
-    
+
     def sub_calc_next_reminder_frequency_mins(self, now):
         # alert may be off and this may be called as part of can_notify_now() after throttling ended.
         # or alert may be off and this is called due to delayed_init
@@ -1629,7 +1631,7 @@ class ConditionAlert(AlertBase):
                 report(DOMAIN, 'error', f'{gAssertMsg} {self.name}.  both condition and thresh val template is none')
                 return
             thresh_val = results[0]
-        
+
         # Now we have a condition_bool|None and a thresh_val|None
         # Figure out new state
         #
@@ -1671,7 +1673,7 @@ class ConditionAlert(AlertBase):
                 # Actually, state could be off because the condition is false.  In this case also,
                 # we don't track hysteresis
                 self.threshold_exceeded = ThresholdExeeded.Init
-                    
+
             # Now update newState
             if condition_bool is False:
                 newState = False
