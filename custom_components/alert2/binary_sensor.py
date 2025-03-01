@@ -13,6 +13,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     aSensor = BinarySensorEntity()
     aSensor._attr_is_on = False
     aSensor._attr_name = 'alert2 ha_startup_done'
+    aSensor._attr_unique_id = aSensor._attr_name
     aSensor._attr_should_poll = False
     aSensor._attr_device_class = None
 
