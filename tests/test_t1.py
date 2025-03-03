@@ -26,6 +26,7 @@ from custom_components.alert2.util import (     GENERATOR_DOMAIN,
 import homeassistant.const
 from homeassistant import config as conf_util
 import homeassistant.helpers.restore_state as rs
+from homeassistant.util.yaml import parse_yaml
 #from tests.common import MockConfigEntry
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -3002,3 +3003,14 @@ async def test_no_yaml(hass, service_calls):
     mock_config_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()
+
+async def test_display_msg(hass, service_calls):
+    cfg = { } # no alert2 section
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    # Make sure doc is correct saying "null" works
+    assert parse_yaml("x: null") == { 'x': None }
+    
