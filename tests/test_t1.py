@@ -2116,6 +2116,45 @@ async def test_generator7(hass, service_calls):
     assert gad.alerts['test']['t69'].state == 'on'
     service_calls.popNotifyEmpty('persistent_notification', 't68.* turned on')
 
+
+async def test_generator8(hass, service_calls):
+    # Test genIdx and genPrevDomainName
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': '{{ genElem }}', 'friendly_name': 'idx={{genIdx}}',
+          'supersedes': "{{ genPrevDomainName }}", 'generator_name': 'g1',
+          'generator': 't1','condition': '{{ False }}' },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'friendly_name': 'idx={{genIdx}}',
+          'supersedes': "{{ genPrevDomainName }}", 'generator_name': 'g2', 'generator': '{{ [ "t2", "t3" ] }}',
+          'condition': '{{ False }}' },
+        # For now we don't support [None] as a supersedes argument
+        #{ 'domain': 'test', 'name': '{{ genElem }}', 'friendly_name': 'idx={{genIdx}}',
+        #  'supersedes': "{{ [genPrevDomainName] }}", 'generator_name': 'g3', 'generator': '{{ [ "t4", "t5" ] }}',
+        #  'condition': '{{ False }}' },
+    ] } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+
+    assert len(gad.alerts['test']) == 3
+    assert not 'tracked' in gad.alerts
+    assert gad.alerts['test']['t1'].extra_state_attributes['friendly_name2'] == 'idx=0'
+    assert gad.alerts['test']['t2'].extra_state_attributes['friendly_name2'] == 'idx=0'
+    assert gad.alerts['test']['t3'].extra_state_attributes['friendly_name2'] == 'idx=1'
+    #assert gad.alerts['test']['t4'].extra_state_attributes['friendly_name2'] == 'idx=0'
+    #assert gad.alerts['test']['t5'].extra_state_attributes['friendly_name2'] == 'idx=1'
+
+    assert gad.supersedeMgr.supersedesMap == {
+        ('test','t1'): set(),
+        ('test','t2'): set(),
+        ('test','t3'): set( [ ('test','t2') ] ),
+        #('test','t4'): set(),
+        #('test','t5'): set( [ ('test','t4') ] ),
+    }
+
+    
+    
 async def test_late_state(hass, service_calls):
     cfg = { 'alert2' : { 'alerts' : [
         # Check that template condition still becomes states("sensor.ick") even if sensor.ick doesn't yet exist
@@ -2872,12 +2911,26 @@ async def test_supersede_mgr2(hass, service_calls, monkeypatch):
     cfg = { 'alert2' : { 'defaults': { 'reminder_frequency_mins': 0.01 }, 'alerts' : [
         { 'domain': 'test', 'name': 't1', 'condition': 'sensor.t1' },
         { 'domain': 'test', 'name': 't2', 'condition': 'sensor.t2', 'supersedes': [ {'domain':'test','name':'t1'} ] },
+        # t3 added later
+        # Test that supersedes is flexible with expressions of empty set
+        #{ 'domain': 'test', 'name': 't4', 'condition': 'off', 'supersedes': '' },
+        #{ 'domain': 'test', 'name': 't6', 'condition': 'off', 'supersedes': [None] },
+        { 'domain': 'test', 'name': 't6', 'condition': 'off', 'supersedes': [] },
+        { 'domain': 'test', 'name': 't7', 'condition': 'off', 'supersedes': None },
     ] } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
 
+    gad = hass.data[DOMAIN]
+    assert gad.supersedeMgr.supersedesMap == {
+        ('test','t1'): set(),
+        ('test','t2'): set( [ ('test','t1') ] ),
+        ('test','t6'): set(),
+        ('test','t7'): set(),
+    }
+    
     await setAndWait(hass, "sensor.t1", 'on')
     service_calls.popNotifyEmpty('persistent_notification', 't1: turned on')
     await setAndWait(hass, "sensor.t2", 'on')

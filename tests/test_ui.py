@@ -407,6 +407,10 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert rez == { 'rez': [] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[]' })
     assert rez == { 'rez': [] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ {"domain":"x","name":"y"} }}' })
+    assert rez == { 'rez': [ { 'domain': 'x', 'name': 'y'} ] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ [ {"domain":"x","name":"y"} ] }}' })
+    assert rez == { 'rez': [ { 'domain': 'x', 'name': 'y'} ] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[ { "foo":3 } ]' })
     assert re.search('extra keys not allowed', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[ { "domain":"d","name":"x" } ]' })
@@ -482,6 +486,8 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     # message
     rez = await tpost("/api/alert2/renderValue", {'name': 'message', 'txt': 'foo' })
     assert rez == { 'rez': 'foo' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'message', 'txt': '{ "ick' })
+    assert rez == { 'rez': '{ "ick' }
     rez = await tpost("/api/alert2/renderValue", {'name': 'message', 'txt': '"bar"' })
     assert rez == { 'rez': 'bar' }
     rez = await tpost("/api/alert2/renderValue", {'name': 'message', 'txt': '{{ "joe"+"ggg" }}' })
