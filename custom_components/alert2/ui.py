@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import logging
 from aiohttp import web
@@ -12,7 +13,7 @@ from   homeassistant.const import (
 from homeassistant.core import callback
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.components.http.data_validator import RequestDataValidator
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, TemplateError
 from homeassistant.helpers.storage import Store
 from homeassistant.util.yaml import parse_yaml
 from .util import (
@@ -62,7 +63,7 @@ class ManageAlertView(HomeAssistantView):
             rez = await self.uiMgr.createAlert(data['create'])
             return self.json(rez)
         if 'delete' in data:
-            rez = await self.uiMgr.deleteAlert(data['delete']['domain'], data['delete']['name'])
+            rez = await self.uiMgr.deleteAlert(data['delete'])
             return self.json(rez)
         if 'update' in data:
             rez = await self.uiMgr.updateAlert(data['update'])
@@ -98,16 +99,33 @@ class SaveDefaultsView(HomeAssistantView):
 # Throws HomeAssistantError
 # converts raw input txt string to val as if it were coming from YAML, so ready for validation
 def prepStrConfigField(fname, tval):
-    parseYaml = True
-    if fname in [ 'trigger', 'trigger_on', 'trigger_off' ]:
-        pass # Always yaml eval, even if has template chars
-    elif template_helper.is_template_string(tval):
+    if fname in [ 'notifier', 'summary_notifier', 'reminder_frequency_mins', 'throttle_fires_per_mins',
+                  'data', 'generator', 'supersedes', 'defer_startup_notifications']:
+        if template_helper.is_template_string(tval):
+            return tval
+        return parse_yaml(tval)
+    elif fname in [ 'trigger', 'trigger_on', 'trigger_off' ]:
+        return parse_yaml(tval)
+    elif fname in [ 'annotate_messages', 'manual_off', 'manual_on', 'priority', 'friendly_name',
+                    'title', 'target', 'domain', 'name', 'message', 'done_message',
+                    'condition', 'condition_on', 'condition_off', 'early_start',
+                    # We have entries for both "threshold." prefixed values
+                    # as well as the values without prefix.
+                    # Prefix version is used by renderValue
+                    # non-prefixed version is used by prepStrConfig
+                    'threshold.hysteresis', 'threshold.maximum', 'threshold.minimum', 'threshold.value',
+                    'hysteresis', 'maximum', 'minimum', 'value',
+                    'delay_on_secs',
+                    'generator_name', 'skip_internal_errors', 'notifier_startup_grace_secs' ]:
+        # Should not need yaml parsing
         return tval
-    #    parseYaml = True
-    val = tval
-    if parseYaml:
-        val = parse_yaml(tval)
-    return val
+    elif fname in [ 'display_msg' ]:
+        if tval == 'null':
+            return parse_yaml(tval)
+        return tval
+    else:
+        report(DOMAIN, 'error', f'{gAssertMsg} prepStrConfigField got unrecognized field: "{fname}"')
+        return tval
     
 dummyTriggerDict = { 'trigger': 'homeassistant', 'event': 'start' }
     
@@ -128,21 +146,6 @@ class RenderValueView(HomeAssistantView):
         extraVars = data['extraVars'] if 'extraVars' in data and data['extraVars'] else {}
         simple = False
 
-        if False:
-            # Do we need to first parse some yaml
-            #
-            parseYaml = False
-            if name in [ 'generator' ]:
-                # It can be either a list, or template, but not both.
-                parseYaml = not template_helper.is_template_string(ttxt)
-            elif name in ['data', 'trigger', 'trigger_on', 'trigger_off', 'throttle_fires_per_mins', 'defer_startup_notifications']:
-                # may need to first parse yaml
-                parseYaml = True
-            if parseYaml:
-                try:
-                    ttxt = parse_yaml(ttxt)
-                except HomeAssistantError as ex:
-                    return self.json({ 'error': f'YAML parse error: {ex}'})
         try:
             ttxt = prepStrConfigField(name, ttxt)
         except HomeAssistantError as ex:
@@ -152,7 +155,7 @@ class RenderValueView(HomeAssistantView):
             kMaxToReturn = 5
             if len(aList) == 0:
                 return {'list': [], 'len':0, 'firstElemVars': None }
-            fvars = generatorElemToVars(self.uiMgr._hass, aList[0])
+            fvars = generatorElemToVars(self.uiMgr._hass, aList[0], 0, None)
             return {'list': aList[:kMaxToReturn], 'len':len(aList), 'firstElemVars': fvars }
             
         try:
@@ -165,8 +168,13 @@ class RenderValueView(HomeAssistantView):
                 tval = DEFAULTS_SCHEMA({ name: ttxt })[name]
                 simple = True
             elif name in ['supersedes']:
-                tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME({ name: ttxt})[name]
-                simple = True
+                obj = { 'domain': 'foo', 'name': 'bar', 'generator':'f2', 'generator_name': 'f3' }
+                obj[name] = ttxt
+                tval = GENERATOR_SCHEMA(obj)[name]
+                if isinstance(tval, template_helper.Template):
+                    ttype = 'supersedes'
+                else:
+                    simple = True
             elif name in ['friendly_name', 'title', 'target']:
                 tval = SINGLE_TRACKED_SCHEMA_PRE_NAME({ name: ttxt })[name]
                 ttype = 'string'
@@ -267,9 +275,9 @@ class RenderValueView(HomeAssistantView):
                 errStr = ','.join(errors)
                 return self.json({ 'error': f'Notifier list error: {errStr}', 'rez': notifiers })
             result = notifiers
-        elif ttype in [ 'string', 'bool', 'float', 'generator' ]:
+        elif ttype in [ 'string', 'bool', 'float', 'generator', 'supersedes' ]:
             if not isinstance(tval, template_helper.Template):
-                msg = f'{gAssertMsg} somehow tval for {name} is not a template: {tval} {type(tval)}'
+                msg = f'{gAssertMsg} somehow tval for {name} is not a template: tval={tval} type={type(tval)}'
                 report(DOMAIN, 'error', msg)
                 return self.json({ 'error': f'Server error: {msg}' })
             try:
@@ -293,6 +301,12 @@ class RenderValueView(HomeAssistantView):
             elif ttype in ['generator']:
                 aList = renderResultToList(aresult)
                 result = generatorListToResult(aList)
+            elif ttype in ['supersedes']:
+                try:
+                    result = ast.literal_eval(aresult)
+                except Exception as ex:  # literal_eval can throw various kinds of exceptions
+                    return self.json({ 'error': f'eval of template failed: "{aresult}" produced {ex}'})
+                    
         else:
             msg = f'{gAssertMsg} validate unknown ttype={ttype} for name={name}'
             report(DOMAIN, 'error', msg)
@@ -742,7 +756,13 @@ class UiMgr:
     def alertCreated(self, domain, name):
         self.displayMsgWsMgr.reloadSingleIfExists(domain, name)
     
-    async def deleteAlert(self, domain, name):
+    async def deleteAlert(self, acfg):
+        domain = acfg['domain']
+        name = acfg['name']
+        if 'generator_name' in acfg:
+            domain = GENERATOR_DOMAIN
+            name = acfg['generator_name']
+            
         entIndex = next((i for i, item in enumerate(self.entities) if item.alDomain == domain and item.alName == name), -1)
         if entIndex == -1:
             return { 'error': f'can not find existing UI-created alert in self.entities with domain={domain} and name={name}' }

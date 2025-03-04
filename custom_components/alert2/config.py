@@ -3,7 +3,6 @@ import voluptuous as vol
 from   homeassistant.exceptions import TemplateError
 import homeassistant.helpers.config_validation as cv
 
-########################## Experimental
 _LOGGER = logging.getLogger(__name__)
 import re
 from functools import lru_cache
@@ -91,9 +90,11 @@ def jtemplate(value) -> JTemplate:
     if value is None:
         raise vol.Invalid("Generator template is None")
     if isinstance(value, list):
-        return jstringList(value)
-    if isinstance(value, (dict, JTemplate, template_helper.Template)):
+        return value #jstringList(value)
+    if isinstance(value, (JTemplate, template_helper.Template)):
         raise vol.Invalid("Generator template should be a string")
+    if not isinstance(value, str):
+        return value
     if not (hass := cv._async_get_hass_or_none()):
         # pylint: disable-next=import-outside-toplevel
         from .frame import report
@@ -115,7 +116,12 @@ def jtemplate(value) -> JTemplate:
         raise vol.Invalid(f"invalid template ({ex})") from ex
     return template_value
 
-##########################
+
+def supersedesTemplate(elem):
+    if not isinstance(elem, str) or not template_helper.is_template_string(elem):
+        raise vol.Invalid('Not a template string')
+    return cv.template(elem)
+
 
 def literalIllegalChar(elem):
     return any(e in elem for e in '[]{}\'",')
@@ -258,17 +264,18 @@ SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
     vol.Optional('delay_on_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
     vol.Optional('early_start'): cv.boolean,
-    vol.Optional('supersedes'): vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT ])
 })
 GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): cv.template,
     vol.Required('name'): cv.template,
     vol.Required('generator'): jtemplate,
     vol.Required('generator_name'): jstringName,
+    vol.Optional('supersedes'): vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT ]), supersedesTemplate)
 })
 NO_GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): jDomain,
     vol.Required('name'): jstringName,
+    vol.Optional('supersedes'): vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT ]))
 })
 
 # If alert is a generator, then 'name' is a template, otherwise 'name' is a string

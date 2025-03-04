@@ -336,7 +336,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `reminder_frequency_mins` | float | optional | Override the default `reminder_frequency_mins`|
 | `notifier` | template | optional | Override the default `notifier`. See [Notifier Config](#notifier-config) section below for examples. |
 | `summary_notifier` | template | optional | Override the default `summary_notifier`. See [Notifier Config](#notifier-config) section below for examples. |
-| `supersedes` | List | optional | A list of domain+name pairs of alerts that this alert supersedes. Notifications will be skipped for superseded alerts while this alert is firing.  Applies transitively. See [Supersedes](#supersedes) section below for examples. |
+| `supersedes` | List | optional | A list of domain+name pairs of alerts that this alert supersedes. Notifications will be skipped for superseded alerts while this alert is firing.  Applies transitively. May be a template when used with generators. See [Supersedes](#supersedes) section below for examples. |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `priority` | string | optional | Override the default value of `priority` |
 | `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts. Not available for [generator patterns](#generator-patterns).  |
@@ -454,6 +454,18 @@ The `supersedes` config parameter let's you set up a hierarchical relationship b
                     
           # Can omit the [] if specifying a single alert
           supersedes: { domain: test, name: foo }
+
+When used with a generator, `supersedes` also can take a template, in which case the variable `genPrevDomainName` is available and equals the domain+name of the previous generated element or null if it is the first element.  So the following example creates two alerts, test_low_disk_20 and test_low_disk_10.  test_low_disk_10 will have `supersedes` set to `{ domain: "test", name: "low_disk_20" }`, and test_low_disk_20 will have `supersedes` set to `null`.
+
+    alert2:
+      alerts:
+        - domain: test
+          name: "low_disk_{{ genElem }}"
+          condition: "{{ states('sensor.disk_free_mb')|float < genElem }}"
+          supersedes: "{{ genPrevDomainName }}"
+          generator: [ 20, 10 ]
+          generator_name: g1
+
 
 
 

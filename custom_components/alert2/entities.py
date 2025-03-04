@@ -420,11 +420,11 @@ class Tracker:
         self.cb(results)
         
 
-def generatorElemToVars(hass, elem):
-    svars = {'genRaw': elem }
+def generatorElemToVars(hass, elem, idx, prevDomainName):
+    svars = {'genRaw': elem, 'genIdx': idx, 'genPrevDomainName': prevDomainName }
     if isinstance(elem, dict):
         svars.update(elem)
-    elif hass.states.get(elem):
+    elif isinstance(elem, str) and hass.states.get(elem):
         svars['genEntityId'] = elem
     else:
         svars['genElem'] = elem
@@ -512,12 +512,13 @@ class AlertGenerator(AlertCommon, SensorEntity):
         needWrite = False
         currNames = set() # entity names (ie the part after alert2.)
         sawError = False
-        for elem in alist:
-            if not (isinstance(elem, str) or isinstance(elem, dict)):
-                report(DOMAIN, 'error', f'{self.name} generator produced non-string or dict element "{elem}" of type {type(elem)}')
-                sawError = True
-                break
-            svars = generatorElemToVars(self.hass, elem)
+        prevDomainName = None
+        for idx, elem in enumerate(alist):
+            #if not (isinstance(elem, str) or isinstance(elem, dict)):
+            #    report(DOMAIN, 'error', f'{self.name} generator produced non-string or dict element "{elem}" of type {type(elem)}')
+            #    sawError = True
+            #    break
+            svars = generatorElemToVars(self.hass, elem, idx, prevDomainName)
             
             try:
                 nameStr = self.config['name'].async_render(variables=svars, parse_result=False).strip()
@@ -533,6 +534,7 @@ class AlertGenerator(AlertCommon, SensorEntity):
                 break
             entName = entNameFromDN(domainStr, nameStr)
             currNames.add(entName)
+            prevDomainName = { 'domain': domainStr, 'name': nameStr }
             if entName in self.nameEntityMap:
                 # entity continues to exist
                 pass
@@ -551,12 +553,30 @@ class AlertGenerator(AlertCommon, SensorEntity):
                     sawError = True
                     break
                 # very shallow copy, don't copy object values
-                # Also, use rawConfig so we don't double interpret the config dict.
+                # Also, use rawConfig so we don't double interpret the config dict (declareAlert interprets it)
                 acfg = dict(self.rawConfig) 
                 acfg['domain'] = domainStr
                 acfg['name'] = nameStr
                 del acfg['generator']
                 del acfg['generator_name']
+
+                if 'supersedes' in self.config:
+                    #if template_helper.is_template_string(frn.template):
+                    if isinstance(self.config['supersedes'], template_helper.Template):
+                        try:
+                            sStr = self.config['supersedes'].async_render(variables=svars, parse_result=False)
+                        except TemplateError as err:
+                            report(DOMAIN, 'error', f'{self.name} Supersedes template returned err {err}')
+                            sawError = True
+                            break
+                        try:
+                            sArr = ast.literal_eval(sStr)
+                        except Exception as ex:  # literal_eval can throw various kinds of exceptions
+                            report(DOMAIN, 'error', f'{self.name} Supersedes template trying to parse {sStr} returned err {err}')
+                            sawError = True
+                            break
+                        acfg['supersedes'] = sArr
+
                 #if 'friendly_name' in self.config:
                 #    try:
                 #        friendlyNameStr = self.config['friendly_name'].async_render(

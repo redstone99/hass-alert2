@@ -1855,6 +1855,10 @@ async def test_generator3(hass, service_calls):
           'condition': '{{ False }}' },
         { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g4', 'generator': '{{ [ "t66", "t67" ] }}',
           'condition': '{{ False }}' },
+        { 'domain': 'test', 'name': 'happy_{{ genElem }}', 'generator_name': 'g5', 'generator': '{{ [ 10, 11 ] }}',
+          'condition': 'off' },
+        { 'domain': 'test', 'name': 'happy2_{{ genElem }}', 'generator_name': 'g6', 'generator': [ 7, 9 ],
+          'condition': 'off' },
     ] } }
     hass.states.async_set("sensor.a", '[ "t64", "t65" ]')
     hass.states.async_set("sensor.b", 'off')
@@ -1865,18 +1869,19 @@ async def test_generator3(hass, service_calls):
     assert service_calls.isEmpty()
     gad = hass.data[DOMAIN]
 
-    assert len(gad.alerts['test']) == 8
+    assert len(gad.alerts['test']) == 12
     assert not 'tracked' in gad.alerts
-    for id in [ 't61', 't61a', 't62', 't63', 't64', 't65', 't66', 't67' ]:
+    for id in [ 't61', 't61a', 't62', 't63', 't64', 't65', 't66', 't67',
+                'happy_10', 'happy_11', 'happy2_7', 'happy2_9' ]:
         assert gad.alerts['test'][id]
-    assert len(gad.generators) ==  5
+    assert len(gad.generators) ==  7
     for id in [ 'g1', 'g1a', 'g2', 'g3', 'g4' ]:
         assert gad.generators[id]
 
     # Pick one and try adding another alert
     g3 = gad.generators['g3']
     await setAndWait(hass, "sensor.a", '[ "t64", "t65", "t65a" ]')
-    assert len(gad.alerts['test']) == 9
+    assert len(gad.alerts['test']) == 13
     assert gad.alerts['test']['t65a']
     assert service_calls.isEmpty()
 
@@ -2336,6 +2341,7 @@ async def test_bad2(hass, service_calls):
         { 'domain': 't09', 'name': 'x', 'condition': 'off', 'annotate_messages': '' },
         { 'domain': 't10', 'name': 'x', 'condition': 'off', 'annotate_messages': [2] },
         { 'domain': 't11', 'name': 'x', 'condition': 'off', 'annotate_messages': { 'x':2} },
+        { 'domain': 't11a', 'name': 'x', 'condition': 'off', 'annotate_messages': False },
         { 'domain': 't12', 'name': 'x', 'condition': 'off', 'generator_name':'g1',
           'generator': None },
         { 'domain': 't13', 'name': 'x', 'condition': 'off', 'generator_name':'g2',
@@ -2344,8 +2350,8 @@ async def test_bad2(hass, service_calls):
           'generator': False },
         { 'domain': 't15', 'name': 'x', 'condition': 'off', 'generator_name':'g4',
           'generator': [None] },
-        { 'domain': 't16', 'name': 'x', 'condition': 'off', 'generator_name':'g5',
-          'generator': { 'x':3 } },
+        { 'domain': 't16', 'name': 'y{{xx}}', 'condition': 'off', 'generator_name':'g5',
+          'generator': { 'xx':3 } },
         { 'domain': 't16a', 'name': 'x', 'condition': 'off', 'generator_name':'g6',
           'generator': [ [4] ] },
 
@@ -2393,10 +2399,10 @@ async def test_bad2(hass, service_calls):
     service_calls.popNotifySearch('persistent_notification', 't10', 'invalid boolean value')
     service_calls.popNotifySearch('persistent_notification', 't11', 'invalid boolean value')
     service_calls.popNotifySearch('persistent_notification', 't12', 'template is None')
-    service_calls.popNotifySearch('persistent_notification', 'g3', 'generator produced non-string or dict')
-    service_calls.popNotifySearch('persistent_notification', 't15', 'None.*rather than string')
-    service_calls.popNotifySearch('persistent_notification', 't16', 'should be a string')
-    service_calls.popNotifySearch('persistent_notification', 't16a', 'Notifier.*rather than string')
+    #service_calls.popNotifySearch('persistent_notification', 'g3', 'generator produced non-string or dict')
+    #service_calls.popNotifySearch('persistent_notification', 't15', 'None.*rather than string')
+    #service_calls.popNotifySearch('persistent_notification', 't16', 'should be a string')
+    #service_calls.popNotifySearch('persistent_notification', 't16a', 'Notifier.*rather than string')
     # service_calls.popNotifySearch('persistent_notification', 't17', 'no notifier specified')
     service_calls.popNotifySearch('persistent_notification', 't18', 'not a string')
     service_calls.popNotifySearch('persistent_notification', 't19', 'should be a string')
@@ -2417,11 +2423,25 @@ async def test_bad2(hass, service_calls):
     service_calls.popNotifySearch('persistent_notification', 't35', 'expected a dictionary')
     service_calls.popNotifySearch('persistent_notification', 't36', 'is not iterable')
     service_calls.popNotifySearch('persistent_notification', 't37', 'required key not provided')
-    _LOGGER.warning(service_calls.allCalls)
+    #_LOGGER.warning(service_calls.allCalls)
     gad = hass.data[DOMAIN]
-    _LOGGER.info(gad.alerts['t17']['x']._notifier_list_template)
-    _LOGGER.info(gad.alerts['t18']['x']._notifier_list_template)
     assert service_calls.isEmpty()
+
+    assert 't11a' in gad.alerts
+    assert not 't12' in gad.alerts
+    assert not 't13' in gad.alerts
+    assert 't14' in gad.alerts
+    assert 't15' in gad.alerts
+    assert 't16' in gad.alerts
+    assert gad.alerts['t16']['y3']
+    assert 't16a' in gad.alerts
+    _LOGGER.warning(gad.generators)
+    assert not 'g1' in gad.generators
+    assert gad.generators['g2'].state == 0
+    assert gad.generators['g3'].state == 1
+    assert gad.generators['g4'].state == 1
+    assert gad.generators['g5'].state == 1
+    assert gad.generators['g6'].state == 1
 
 async def test_ha_event(hass, service_calls):
     cfg = { 'alert2' : {  'alerts' : [

@@ -26,6 +26,8 @@ import voluptuous as vol
 from aiohttp import web
 from typing import Any
 
+done = asyncio.Condition()
+
 class TestView(HomeAssistantView):
     def __init__(self, hass, hass_storage, monkeypatch):
         self.hass = hass
@@ -59,6 +61,9 @@ class TestView(HomeAssistantView):
             elif data['stage'] == 'setEnt':
                 _LOGGER.info(f'test server setting ent {data["entity_id"]} to {data["state"]}')
                 self.hass.states.async_set(data['entity_id'], data['state'])
+            elif data['stage'] == 'exit':
+                async with done:
+                    await done.notify()
             else:
                 assert False
         else:
@@ -99,4 +104,5 @@ async def test_server(hass, hass_storage, monkeypatch, hass_access_token):
     hass.http.app.middlewares.append(auth_middleware)
     hass.http.register_view(TestView(hass, hass_storage, monkeypatch))
     await hass.async_start()
-    await asyncio.sleep(55555555)
+    async with done:
+        await done.wait()
