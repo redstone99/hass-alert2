@@ -3006,6 +3006,34 @@ async def test_supersede_mgr2(hass, service_calls, monkeypatch):
     await setAndWait(hass, "sensor.t1", 'off')
     assert service_calls.isEmpty()
 
+async def test_supersede3(hass, service_calls, monkeypatch):
+    # Check when supersedes template has a literal eval error
+    cfg = { 'alert2' : { 'defaults': { 'reminder_frequency_mins': 0.01 }, 'alerts' : [
+        { 'domain': 'test', 'name': 't8', 'condition': 'off', 'supersedes': '[ 3', 'generator': 'gg','generator_name':'g1' },
+        { 'domain': 'test', 'name': 't9', 'condition': 'off', 'supersedes': '{{ "[ 3" }}', 'generator': 'gg','generator_name':'g2' },
+        { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off',
+          'supersedes': '{ "domain": "test", "name": "{{genElem}}_is_low" }', 'generator': 'tg1','generator_name':'g3' },
+        { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off',
+          'supersedes': '{{ { "domain": "test", "name": genElem+"_is_low" } }}', 'generator': 'tg2','generator_name':'g4' },
+        # We don't yet support YAML dict mixed with template for supersedes
+        { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off',
+          'supersedes': { "domain": "test", "name": "{{ genElem }}_is_low" }, 'generator': 'tg3','generator_name':'g5' },
+    ] } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifySearch('persistent_notification', 't8', 'expected a dictionary')
+    service_calls.popNotifySearch('persistent_notification', 'g2', 'trying to parse.*was never closed')
+    service_calls.popNotifyEmpty('persistent_notification', 'Illegal characters.*g5')
+    gad = hass.data[DOMAIN]
+    assert list(gad.alerts['test'].keys()) == [ 'tg1', 'tg2' ]
+    _LOGGER.warning(gad.supersedeMgr.supersedesMap)
+    assert gad.supersedeMgr.supersedesMap == {
+        ('test','tg1'): set( [ ('test','tg1_is_low') ] ),
+        ('test','tg2'): set( [ ('test','tg2_is_low') ] ),
+    }
+
+    
 async def test_no_yaml(hass, service_calls):
     # First, let's say YAML setup happens before config entry
     #

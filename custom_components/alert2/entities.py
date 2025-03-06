@@ -571,8 +571,8 @@ class AlertGenerator(AlertCommon, SensorEntity):
                             break
                         try:
                             sArr = ast.literal_eval(sStr)
-                        except Exception as ex:  # literal_eval can throw various kinds of exceptions
-                            report(DOMAIN, 'error', f'{self.name} Supersedes template trying to parse {sStr} returned err {err}')
+                        except Exception as err:  # literal_eval can throw various kinds of exceptions
+                            report(DOMAIN, 'error', f'{self.name} Supersedes template trying to parse "{sStr}" returned err {err}')
                             sawError = True
                             break
                         acfg['supersedes'] = sArr

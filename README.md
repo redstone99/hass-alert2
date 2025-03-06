@@ -455,7 +455,17 @@ The `supersedes` config parameter let's you set up a hierarchical relationship b
           # Can omit the [] if specifying a single alert
           supersedes: { domain: test, name: foo }
 
-When used with a generator, `supersedes` also can take a template, in which case the variable `genPrevDomainName` is available and equals the domain+name of the previous generated element or null if it is the first element.  So the following example creates two alerts, test_low_disk_20 and test_low_disk_10.  test_low_disk_10 will have `supersedes` set to `{ domain: "test", name: "low_disk_20" }`, and test_low_disk_20 will have `supersedes` set to `null`.
+When used with a generator, `supersedes` also can take a template, in which case the variable `genPrevDomainName` is available and equals the domain+name of the previous generated element or null if it is the first element. When using a template, the value of the `supersedes` field must be a string that, after template evaluation, cotnains a dictionary (or list of dictionaries) literal.
+
+          # OK          
+          supersedes: "{ 'domain': 'test', 'name': '{{genElem}}_is_low' }"
+          # Also OK
+          supersedes: "{{ { 'domain':'test', 'name': genElem + '_is_low' } }}"
+
+          # Not yet supported - YAML dictionary mixed with template (file a feature request?)
+          supersedes: {  domain : test, name:  '{{ genElem }}_is_low' }
+
+The following example creates two alerts, test_low_disk_20 and test_low_disk_10.  test_low_disk_10 will have `supersedes` set to `{ domain: "test", name: "low_disk_20" }`, and test_low_disk_20 will have `supersedes` set to `null`.
 
     alert2:
       alerts:
