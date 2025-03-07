@@ -3015,22 +3015,46 @@ async def test_supersede3(hass, service_calls, monkeypatch):
           'supersedes': '{ "domain": "test", "name": "{{genElem}}_is_low" }', 'generator': 'tg1','generator_name':'g3' },
         { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off',
           'supersedes': '{{ { "domain": "test", "name": genElem+"_is_low" } }}', 'generator': 'tg2','generator_name':'g4' },
-        # We don't yet support YAML dict mixed with template for supersedes
         { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off',
-          'supersedes': { "domain": "test", "name": "{{ genElem }}_is_low" }, 'generator': 'tg3','generator_name':'g5' },
+          'supersedes': { "domain": "dd{{ genElem }}", "name": "nn{{ genElem }}" }, 'generator': 'tg3','generator_name':'g5' },
+        { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off',
+          'supersedes': { "domain": "dd", "name": "nn{{ genElem }}" }, 'generator': 'tg4','generator_name':'g6' },
+        # Bad template
+        { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off',
+          'supersedes': { "domain": "dd", "name": "nn{{ genElem" }, 'generator': 'tg5','generator_name':'g7' },
+        # Template ok but renders to bad name
+        { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off',
+          'supersedes': { "domain": "dd", "name": "{{ 'x[' }}" }, 'generator': 'tg6','generator_name':'g8' },
+        { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off',
+          'supersedes': [ { "domain": "dd{{genElem}}", "name": "nn{{ genElem }}" },
+                          { "domain": "dd{{genElem}}", "name": "nn2{{ genElem }}" } ],
+          'generator': 'tg7','generator_name':'g9' },
+        # Second element in supersedes renders to bad value
+        { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off',
+          'supersedes': [ { "domain": "dd{{genElem}}", "name": "nn{{ genElem }}" },
+                          { "domain": "dd{{genElem}}", "name": "nn2{{ '[' }}" } ],
+          'generator': 'tg8','generator_name':'g10' },
+        # Template not allowed if not a generator
+        { 'domain': 'test', 'name': 't10', 'condition': 'off', 'supersedes': { 'domain': 'test', 'name': '{{ "foo" }}' } },
     ] } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
     service_calls.popNotifySearch('persistent_notification', 't8', 'expected a dictionary')
     service_calls.popNotifySearch('persistent_notification', 'g2', 'trying to parse.*was never closed')
-    service_calls.popNotifyEmpty('persistent_notification', 'Illegal characters.*g5')
+    service_calls.popNotifySearch('persistent_notification', 'tg6', 'Illegal characters')
+    service_calls.popNotifySearch('persistent_notification', 'tg8', 'Illegal characters')
+    service_calls.popNotifySearch('persistent_notification', 't10', 'Illegal characters')
+    service_calls.popNotifyEmpty('persistent_notification', 'unexpected end of template.*g7')
     gad = hass.data[DOMAIN]
-    assert list(gad.alerts['test'].keys()) == [ 'tg1', 'tg2' ]
+    assert list(gad.alerts['test'].keys()) == [ 'tg1', 'tg2', 'tg3', 'tg4', 'tg7' ]
     _LOGGER.warning(gad.supersedeMgr.supersedesMap)
     assert gad.supersedeMgr.supersedesMap == {
         ('test','tg1'): set( [ ('test','tg1_is_low') ] ),
         ('test','tg2'): set( [ ('test','tg2_is_low') ] ),
+        ('test','tg3'): set( [ ('ddtg3','nntg3') ] ),
+        ('test','tg4'): set( [ ('dd','nntg4') ] ),
+        ('test','tg7'): set( [ ('ddtg7','nntg7'),('ddtg7','nn2tg7') ] ),
     }
 
     
@@ -3061,4 +3085,31 @@ async def test_display_msg(hass, service_calls):
 
     # Make sure doc is correct saying "null" works
     assert parse_yaml("x: null") == { 'x': None }
+    
+async def test_priority(hass, service_calls):
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        { 'domain': 'test', 'name': 't1', 'condition': 'off' },
+        { 'domain': 'test', 'name': 't2', 'condition': 'off', 'priority': 'medium' },
+        # bad name
+        { 'domain': 'test', 'name': 't3', 'condition': 'off', 'priority': 'foo' },
+        # Template only allowed in generator
+        { 'domain': 'test', 'name': 't4', 'condition': 'off', 'priority': '{{ "low" }}' },
+        { 'domain': 'test', 'name': 't5', 'condition': 'off', 'priority': '{{ "high" }}', 'generator': 'gg1', 'generator_name': 'g1' },
+        { 'domain': 'test', 'name': 't6', 'condition': 'off', 'priority': 'medium', 'generator': 'gg2', 'generator_name': 'g2' },
+        { 'domain': 'test', 'name': 't7', 'condition': 'off', 'priority': '{{ ["high"][genIdx] }}', 'generator': 'gg3', 'generator_name': 'g3' },
+    ], } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifySearch('persistent_notification', 't3', 'required key not provided')
+    service_calls.popNotifySearch('persistent_notification', 't4', 'required key not provided')
+    assert service_calls.isEmpty()
+
+    gad = hass.data[DOMAIN]
+    assert list(gad.alerts['test'].keys()) == [ 't1', 't2', 't5', 't6', 't7' ]
+    assert gad.alerts['test']['t1']._priority == 'low'
+    assert gad.alerts['test']['t2']._priority == 'medium'
+    assert gad.alerts['test']['t5']._priority == 'high'
+    assert gad.alerts['test']['t6']._priority == 'medium'
+    assert gad.alerts['test']['t7']._priority == 'high'
     

@@ -407,6 +407,10 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     # priority
     rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': 'low' })
     assert rez == { 'rez': 'low' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': '{{ foo }}' })
+    assert re.search('must be one of', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': '{{ foo }}', 'extraVars': { 'foo': 'medium' } })
+    assert rez == { 'rez': 'medium' }
     rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': 'foo' })
     assert re.search('must be one of', rez['error'])
     
@@ -689,10 +693,16 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[]' })
     assert rez == { 'rez': [] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ 3 > xx }}' })
+    assert re.search('expected a dictionary', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ 3 > xx }}', 'extraVars': {'z':3} })
     assert re.search('is undefined', rez['error'])
-    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ {"domain":"x","name":"y"} }}' })
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ {"domain":"x","name":"y"} }}', 'extraVars': {'z': 'yay'} })
     assert rez == { 'rez': { 'domain': 'x', 'name': 'y'} }
-    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ [ {"domain":"x","name":"y"} ] }}' })
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ {"domain":"x","name":"{{z}}"} }}', 'extraVars': {'z': 'yay'} })
+    assert rez == { 'rez': { 'domain': 'x', 'name': 'yay'} }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{"domain":"x","name":"{{ \'y2\' }}"}', 'extraVars': { 'x': 22 } })
+    assert rez == { 'rez': { 'domain': 'x', 'name': 'y2'} }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ [ {"domain":"x","name":"y"} ] }}', 'extraVars': { 'x': 22 } })
     assert rez == { 'rez': [ { 'domain': 'x', 'name': 'y'} ] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[ { "foo":3 } ]' })
     assert re.search('extra keys not allowed', rez['error'])
