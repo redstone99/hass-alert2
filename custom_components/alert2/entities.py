@@ -252,6 +252,7 @@ class TriggerCond:
                 alias = f' trigger \'{run_variables["trigger"]["alias"]}\''
                 _LOGGER.debug(f'Activity {self.fullName} triggered{reason}{alias}')
 
+        self.parentEnt.async_set_context(context)
         this = self.parentEnt.state
         variables: dict[str, Any] = {"this": this, **(run_variables or {})}
         if self.extraVariables:
@@ -456,6 +457,36 @@ class AlertCommon(Entity):
                                                          'domain': self.alDomain,
                                                          'name': self.alName })
 
+# cfgElem is YAML element of 'supersedes'
+# returns pair of ( errStr_or_none, result )
+# errStr does not include generator name
+def processSupersedes(cfgElem, svars):
+    #if template_helper.is_template_string(frn.template):
+    if isinstance(cfgElem, template_helper.Template):
+        try:
+            sStr = cfgElem.async_render(variables=svars, parse_result=False)
+        except TemplateError as err:
+            return (f'Supersedes template returned err {err}', None)
+        try:
+            sArr = ast.literal_eval(sStr)
+        except Exception as err:  # literal_eval can throw various kinds of exceptions
+            return (f'Supersedes template trying to parse "{sStr}" returned err {err}', None)
+        return (None, sArr)
+    elif isinstance(cfgElem, list):
+        newSupersedes = []
+        for adn in cfgElem:
+            newdn = { 'domain': None, 'name': None }
+            try:
+                newdn['domain'] = adn['domain'].async_render(variables=svars, parse_result=False)
+            except TemplateError as err:
+                return (f'Supersedes domain template returned err {err}', None)
+            try:
+                newdn['name'] = adn['name'].async_render(variables=svars, parse_result=False)
+            except TemplateError as err:
+                return (f'Supersedes name template returned err {err}', None)
+            newSupersedes.append(newdn)
+        return (None, newSupersedes)
+        
 class AlertGenerator(AlertCommon, SensorEntity):
     _attr_device_class = SensorDeviceClass.DATA_SIZE #'problem'
     #_attr_available = True  defaults to True
@@ -561,22 +592,19 @@ class AlertGenerator(AlertCommon, SensorEntity):
                 del acfg['generator_name']
 
                 if 'supersedes' in self.config:
-                    #if template_helper.is_template_string(frn.template):
-                    if isinstance(self.config['supersedes'], template_helper.Template):
-                        try:
-                            sStr = self.config['supersedes'].async_render(variables=svars, parse_result=False)
-                        except TemplateError as err:
-                            report(DOMAIN, 'error', f'{self.name} Supersedes template returned err {err}')
-                            sawError = True
-                            break
-                        try:
-                            sArr = ast.literal_eval(sStr)
-                        except Exception as err:  # literal_eval can throw various kinds of exceptions
-                            report(DOMAIN, 'error', f'{self.name} Supersedes template trying to parse "{sStr}" returned err {err}')
-                            sawError = True
-                            break
-                        acfg['supersedes'] = sArr
-
+                    (err, rez) = processSupersedes(self.config['supersedes'], svars)
+                    if err:
+                        report(DOMAIN, 'error', f'{self.name} {err}')
+                        sawError = True
+                        break
+                    acfg['supersedes'] = rez
+                if 'priority' in self.config:
+                    try:
+                        acfg['priority'] = self.config['priority'].async_render(variables=svars, parse_result=False)
+                    except TemplateError as err:
+                        report(DOMAIN, 'error', f'{self.name} priority template returned err {err}')
+                        sawError = True
+                        break
                 #if 'friendly_name' in self.config:
                 #    try:
                 #        friendlyNameStr = self.config['friendly_name'].async_render(

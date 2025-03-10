@@ -283,7 +283,7 @@ The `defaults:` subsection specifies optional default values for parameters comm
 | `summary_notifier` | bool or template | True to send summaries (see [Notifiers](#notifiers) section for detail) using the same notifier as other notifications.  False to not send summaries.  Or can be a template similar to `notifier` parameter to specify notifier to use for summaries. Default is `false`. |
 | `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notification, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
 | `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on a list of two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, "[10, 60]" means you'll receive no more than 10 notifications of the alert firing every hour.<br><br>Default is no throttling. You can set `summary_notifier` to be notified when throttling ends (by default you won't be). |
-| `priority` | string | Can be "low", "medium", or "high". Affects display of alert in the Alert2 UI Overview card.  Active alerts are sorted by priority and medium and high-priority alerts have a badge colored orange and red, respectively. Default is "low" |
+| `priority` | string | Can be "low", "medium", or "high". Affects display of alert in the Alert2 UI Overview card.  Active alerts are sorted by priority and medium and high-priority alerts have a badge colored orange and red, respectively. May be template when used with generators. Default is "low" |
 
 Example:
 
@@ -336,7 +336,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `reminder_frequency_mins` | float | optional | Override the default `reminder_frequency_mins`|
 | `notifier` | template | optional | Override the default `notifier`. See [Notifier Config](#notifier-config) section below for examples. |
 | `summary_notifier` | template | optional | Override the default `summary_notifier`. See [Notifier Config](#notifier-config) section below for examples. |
-| `supersedes` | List | optional | A list of domain+name pairs of alerts that this alert supersedes. Notifications will be skipped for superseded alerts while this alert is firing.  Applies transitively. May be a template when used with generators. See [Supersedes](#supersedes) section below for examples. |
+| `supersedes` | List | optional | A list of domain+name pairs of alerts that this alert supersedes. Notifications will be skipped for superseded alerts while this alert is firing.  Applies transitively. May use templates when used with generators. See [Supersedes](#supersedes) section below for examples. |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `priority` | string | optional | Override the default value of `priority` |
 | `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts. Not available for [generator patterns](#generator-patterns).  |
@@ -455,14 +455,14 @@ The `supersedes` config parameter let's you set up a hierarchical relationship b
           # Can omit the [] if specifying a single alert
           supersedes: { domain: test, name: foo }
 
-When used with a generator, `supersedes` also can take a template, in which case the variable `genPrevDomainName` is available and equals the domain+name of the previous generated element or null if it is the first element. When using a template, the value of the `supersedes` field must be a string that, after template evaluation, cotnains a dictionary (or list of dictionaries) literal.
+When used with a generator, `supersedes` also can take templates, in which case the variable `genPrevDomainName` is available and equals the domain+name of the previous generated element or null if it is the first element. Templates can be used to either produce the full dictionary or list of dictionaries, or may be used with individual domain / name items:
 
-          # OK          
+          # String containing the domain/name dict        
           supersedes: "{ 'domain': 'test', 'name': '{{genElem}}_is_low' }"
-          # Also OK
+          # Same
           supersedes: "{{ { 'domain':'test', 'name': genElem + '_is_low' } }}"
 
-          # Not yet supported - YAML dictionary mixed with template (file a feature request?)
+          # YAML dict with template producing just the "name" field.
           supersedes: {  domain : test, name:  '{{ genElem }}_is_low' }
 
 The following example creates two alerts, test_low_disk_20 and test_low_disk_10.  test_low_disk_10 will have `supersedes` set to `{ domain: "test", name: "low_disk_20" }`, and test_low_disk_20 will have `supersedes` set to `null`.
@@ -707,6 +707,26 @@ Really last implementation detail: any templates specified for `domain` or `name
     # genRaw is defined as the raw dictionary object.
     generator: "{{ {'a':'foo'}, {'a':'bar'} }}"
 ````
+
+In addition to the variables `genElem`, `genEntityId`, and `genRaw` described above, generators also make the following variables available to templates:
+* `genIdx` - the index, starting from 0, of the current generator element.
+* `genPrevDomainName` - the {domain,name} of the previous generator element, or None if this is the first element.
+
+With these, you can create a staged alert such as follows:
+
+````yaml
+alert2:
+     alerts:
+       - domain: test
+         name: "low_disk_{{ genElem }}"
+         condition: "{{ states('sensor.disk_free_gb')|float < genElem }}"
+         supersedes: "{{ genPrevDomainName }}"
+         generator: [ 20, 10, 1 ]
+         priority: "{{ ['low','medium','high'][genIdx] }}"
+         generator_name: g1
+````
+
+The above creates three alerts, alerting on progressively lower free disk space.  Each alert has a higher priority than the previous alert and each alert supersedes the alert before it.
 
 #### `entity_regex` 
 

@@ -698,7 +698,7 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert re.search('is undefined', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ {"domain":"x","name":"y"} }}', 'extraVars': {'z': 'yay'} })
     assert rez == { 'rez': { 'domain': 'x', 'name': 'y'} }
-    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ {"domain":"x","name":"{{z}}"} }}', 'extraVars': {'z': 'yay'} })
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{"domain":"x","name":"{{z}}"}', 'extraVars': {'z': 'yay'} })
     assert rez == { 'rez': { 'domain': 'x', 'name': 'yay'} }
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{"domain":"x","name":"{{ \'y2\' }}"}', 'extraVars': { 'x': 22 } })
     assert rez == { 'rez': { 'domain': 'x', 'name': 'y2'} }
@@ -1470,3 +1470,26 @@ async def test_event(hass, service_calls, hass_client, hass_storage):
 
     await setAndWait(hass, 'sensor.a', 'on')
     service_calls.popNotifyEmpty('persistent_notification', 'Alert2 d_n1')
+
+async def test_uicfg(hass, service_calls, hass_storage):
+    # Check null values for display_msg and notifier and summary_notifier
+    cfg = { 'alert2': { } }
+    uiCfg = { 'defaults' : { },
+              'alerts': [
+                  { 'domain': 'd', 'name': 'n1', 'condition':'off', 'priority': '{{ ["high"][genIdx]}}', 'generator': 'hh', 'generator_name': 'g1' },
+                  { 'domain': 'd', 'name': 'n2', 'condition':'off', 'supersedes': '{ "domain": "d", "name":"{{genElem}}" }', 'generator': 'hh', 'generator_name': 'g2' },
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+    assert gad.alerts['d']['n1']._priority == 'high'
+
+    assert gad.supersedeMgr.supersedesMap == {
+        ('d','n1'): set( ),
+        ('d','n2'): set( [ ('d','hh') ] ),
+    }

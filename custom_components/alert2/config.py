@@ -265,12 +265,18 @@ SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Optional('delay_on_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
     vol.Optional('early_start'): cv.boolean,
 })
+DOMAIN_NAME_DICT_GEN = {
+    vol.Required('domain'): cv.template,
+    vol.Required('name'): cv.template,
+}
 GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): cv.template,
     vol.Required('name'): cv.template,
     vol.Required('generator'): jtemplate,
     vol.Required('generator_name'): jstringName,
-    vol.Optional('supersedes'): vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT ]), supersedesTemplate)
+    vol.Optional('supersedes'): vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT_GEN ]), supersedesTemplate),
+    # Overrides 'priority'
+    vol.Optional('priority'): cv.template,
 })
 NO_GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): jDomain,

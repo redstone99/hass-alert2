@@ -27,9 +27,10 @@ from .util import (
 from .config import ( TOP_LEVEL_SCHEMA, DEFAULTS_SCHEMA, SINGLE_TRACKED_SCHEMA_PRE_NAME,
                       SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME, SINGLE_TRACKED_SCHEMA,
                       SINGLE_ALERT_SCHEMA_EVENT, SINGLE_ALERT_SCHEMA_CONDITION, THRESHOLD_SCHEMA,
-                      GENERATOR_SCHEMA )
+                      GENERATOR_SCHEMA, NO_GENERATOR_SCHEMA )
 from .util import (     GENERATOR_DOMAIN )
-from .entities import (notifierTemplateToList, renderResultToList, generatorElemToVars, AlertGenerator, Tracker)
+from .entities import (notifierTemplateToList, renderResultToList, generatorElemToVars, AlertGenerator, Tracker,
+                       processSupersedes)
 from homeassistant.components.websocket_api import (decorators, async_register_command)
 _LOGGER = logging.getLogger(__name__)
 
@@ -164,16 +165,23 @@ class RenderValueView(HomeAssistantView):
                 ttype = 'notifier_list'
                 if isinstance(tval, bool):
                     simple = True
-            elif name in ['annotate_messages', 'reminder_frequency_mins', 'throttle_fires_per_mins', 'priority']:
+            elif name in ['annotate_messages', 'reminder_frequency_mins', 'throttle_fires_per_mins']:
                 tval = DEFAULTS_SCHEMA({ name: ttxt })[name]
                 simple = True
             elif name in ['supersedes']:
-                obj = { 'domain': 'foo', 'name': 'bar', 'generator':'f2', 'generator_name': 'f3' }
-                obj[name] = ttxt
-                tval = GENERATOR_SCHEMA(obj)[name]
-                if isinstance(tval, template_helper.Template):
-                    ttype = 'supersedes'
+                if extraVars:
+                    obj = { 'domain': 'foo', 'name': 'bar', 'generator':'f2', 'generator_name': 'f3' }
+                    obj[name] = ttxt
+                    tval = GENERATOR_SCHEMA(obj)[name]
+                    (err, rez) = processSupersedes(tval, extraVars)
+                    if err:
+                        raise vol.Invalid(err)
+                    tval = rez
+                    simple = True
                 else:
+                    obj = { 'domain': 'foo', 'name': 'bar' }
+                    obj[name] = ttxt
+                    tval = NO_GENERATOR_SCHEMA(obj)[name]
                     simple = True
             elif name in ['friendly_name', 'title', 'target']:
                 tval = SINGLE_TRACKED_SCHEMA_PRE_NAME({ name: ttxt })[name]
@@ -190,6 +198,15 @@ class RenderValueView(HomeAssistantView):
             elif name in ['data']:
                 tval = SINGLE_TRACKED_SCHEMA_PRE_NAME({ name: ttxt})[name]
                 simple = True
+            elif name in ['priority']:
+                if extraVars:
+                    obj = { 'domain': 'foo', 'name': 'bar', 'generator':'f2', 'generator_name': 'f3' }
+                    obj[name] = ttxt
+                    tval = GENERATOR_SCHEMA(obj)[name]
+                    ttype = 'string'
+                else:
+                    tval = DEFAULTS_SCHEMA({ name: ttxt })[name]
+                    simple = True
             elif name in ['domain', 'name']:
                 obj = { 'domain': 'foo', 'name': 'bar', 'generator':'f2', 'generator_name': 'f3' }
                 obj[name] = ttxt

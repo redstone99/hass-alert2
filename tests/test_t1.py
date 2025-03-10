@@ -2567,6 +2567,7 @@ async def test_onoff_cond(hass, service_calls, caplog):
         { 'domain': 'test', 'name': 't7', 'trigger_on': [{'platform':'state','entity_id':'sensor.7ton'}], 'trigger_off': [{'platform':'state','entity_id':'sensor.7toff'}] },
         { 'domain': 'test', 'name': 't8', 'trigger_on': [{'platform':'state','entity_id':'sensor.8ton'}], 'manual_on': True, 'trigger_off': [{'platform':'state','entity_id':'sensor.8toff'}] },
         { 'domain': 'test', 'name': 't9', 'trigger_on': [{'platform':'state','entity_id':'sensor.9ton'}], 'manual_off': True },
+        { 'domain': 'test', 'name': 't10', 'trigger_on': [{'trigger':'state','entity_id':'sensor.10ton','to':'on'}], 'condition_off': 'sensor.10toff' },
         # test delay_on_secs
     ]}}
     hass.states.async_set("sensor.3on", 'off')
@@ -2575,6 +2576,8 @@ async def test_onoff_cond(hass, service_calls, caplog):
     hass.states.async_set("sensor.4off", 'off')
     hass.states.async_set("sensor.6on", 'off')
     hass.states.async_set("sensor.6off", 'off')
+    hass.states.async_set("sensor.10ton", 'on')
+    hass.states.async_set("sensor.10toff", 'off')
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -2721,6 +2724,16 @@ async def test_onoff_cond(hass, service_calls, caplog):
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'test_t9: turned off')
     assert hass.states.get('alert2.test_t9').state == 'off'
+
+    # t10 tests
+    await setAndWait(hass, "sensor.10ton", 'off')
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t10').state == 'off'
+    await setAndWait(hass, "sensor.10toff", 'on')
+    await setAndWait(hass, "sensor.10toff", 'off')
+    await asyncio.sleep(0.05)
+    assert hass.states.get('alert2.test_t10').state == 'off'
+    assert service_calls.isEmpty()
     
 async def test_empty(hass, service_calls):
     cfg = { 'alert2' : {  'alerts' : [
