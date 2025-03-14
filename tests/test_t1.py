@@ -2145,11 +2145,9 @@ async def test_generator8(hass, service_calls):
 
     assert len(gad.alerts['test']) == 3
     assert not 'tracked' in gad.alerts
-    assert gad.alerts['test']['t1'].extra_state_attributes['friendly_name2'] == 'idx=0'
-    assert gad.alerts['test']['t2'].extra_state_attributes['friendly_name2'] == 'idx=0'
-    assert gad.alerts['test']['t3'].extra_state_attributes['friendly_name2'] == 'idx=1'
-    #assert gad.alerts['test']['t4'].extra_state_attributes['friendly_name2'] == 'idx=0'
-    #assert gad.alerts['test']['t5'].extra_state_attributes['friendly_name2'] == 'idx=1'
+    assert hass.states.get('alert2.test_t1').attributes['friendly_name'] == 'idx=0'
+    assert hass.states.get('alert2.test_t2').attributes['friendly_name'] == 'idx=0'
+    assert hass.states.get('alert2.test_t3').attributes['friendly_name'] == 'idx=1'
 
     assert gad.supersedeMgr.supersedesMap == {
         ('test','t1'): set(),
@@ -2187,9 +2185,9 @@ async def test_friendlyname(hass, service_calls):
     gad = hass.data[DOMAIN]
 
     t71 = gad.alerts['test']['t71']
-    assert t71.extra_state_attributes['friendly_name2'] == 't71yy'
+    assert hass.states.get('alert2.test_t71').attributes['friendly_name'] == 't71yy'
     await setAndWait(hass, "sensor.ick", 'foo71')
-    assert t71.extra_state_attributes['friendly_name2'] == 'foo71'
+    assert hass.states.get('alert2.test_t71').attributes['friendly_name'] == 'foo71'
     
 async def test_reload(hass, service_calls, monkeypatch):
     cfg = { 'alert2' : { 'notifier_startup_grace_secs': 1.0,
@@ -2524,7 +2522,7 @@ async def test_restore_on(hass, service_calls, hass_storage):
                                         "last_notified_time":hrsAgoStr(7),
                                         "last_fired_time":hrsAgoStr(5),
                                         "last_fired_message":"",
-                                        "last_ack_time":None,"friendly_name2":None,
+                                        "last_ack_time":None,
                                         "fires_since_last_notify":7, ######
                                         "notified_max_on":0,
                                         "notification_control":"enabled",
@@ -2778,8 +2776,10 @@ async def test_start(hass, service_calls):
 
     t10 = gad.alerts['test']['t10']
     t11 = gad.alerts['test']['t11']
-    assert t10.extra_state_attributes['friendly_name2'] == None
-    assert t11.extra_state_attributes['friendly_name2'] == '3'
+    assert hass.states.get('alert2.test_t10').attributes['friendly_name'] == 'test_t10'
+    assert hass.states.get('alert2.test_t11').attributes['friendly_name'] == '3'
+    #assert t10.extra_state_attributes['friendly_name2'] == None
+    #assert t11.extra_state_attributes['friendly_name2'] == '3'
     assert not 't12x' in gad.alerts['test']
     assert 't13x' in gad.alerts['test']
     service_calls.popNotifyEmpty('persistent_notification', 't15: turned on')
@@ -2799,8 +2799,8 @@ async def test_start(hass, service_calls):
     await hass.async_start()
     await hass.async_block_till_done()
 
-    assert t10.extra_state_attributes['friendly_name2'] == '3'
-    assert t11.extra_state_attributes['friendly_name2'] == '3'
+    assert hass.states.get('alert2.test_t10').attributes['friendly_name'] == '3'
+    assert hass.states.get('alert2.test_t11').attributes['friendly_name'] == '3'
     assert 't12x' in gad.alerts['test']
     assert 't13x' in gad.alerts['test']
     service_calls.popNotifySearch('persistent_notification', 't14', 't14: turned on')
@@ -3126,3 +3126,15 @@ async def test_priority(hass, service_calls):
     assert gad.alerts['test']['t6']._priority == 'medium'
     assert gad.alerts['test']['t7']._priority == 'high'
     
+async def test_native_friendly(hass, service_calls):
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        { 'domain': 'test', 'name': 't1', 'condition': 'off' },
+        { 'domain': 'test', 'name': 't2', 'condition': 'off', 'friendly_name': 'happy' },
+    ], } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    assert hass.states.get('alert2.test_t1').attributes['friendly_name'] == 'test_t1'
+    assert hass.states.get('alert2.test_t2').attributes['friendly_name'] == 'happy'

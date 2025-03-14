@@ -713,7 +713,6 @@ class AlertBase(AlertCommon, RestoreEntity):
         self._priority = getField('priority', config, defaults)
         self._condition_template = config['condition'] if 'condition' in config else None
         self._message_template = config['message'] if 'message' in config else None
-        self._done_message_template = config['done_message'] if 'done_message' in config else None
         self._title_template = config['title'] if 'title' in config else None
         self._target_template = config['target'] if 'target' in config else None
         self._data = config['data'] if 'data' in config else None
@@ -737,8 +736,6 @@ class AlertBase(AlertCommon, RestoreEntity):
         # else _friendly_name is None
         if self._message_template is not None:
             self._message_template.hass = hass
-        if self._done_message_template is not None:
-            self._done_message_template.hass = hass
         if self._title_template is not None:
             self._title_template.hass = hass
         if self._target_template is not None:
@@ -766,6 +763,9 @@ class AlertBase(AlertCommon, RestoreEntity):
         self.notification_control = NOTIFICATIONS_ENABLED
 
         self.future_notification_info = None
+    # This overrides helpers/entity.py:Entity version of this
+    def _friendly_name_internal(self) -> str | None:
+        return self._friendly_name or self.name
 
     async def startWatching(self):
         #await super().startWatching()  not in parent class
@@ -843,7 +843,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             'last_fired_time': self.last_fired_time,
             'last_fired_message': self.last_fired_message,
             'last_ack_time': self.last_ack_time,
-            'friendly_name2': self._friendly_name, # Entity class defines "friendly_name" so we have to use something different.
+            #'friendly_name2': self._friendly_name, # Entity class defines "friendly_name" so we have to use something different.
             'fires_since_last_notify': self.fires_since_last_notify,
             'notified_max_on': self.notified_max_on,
             'notification_control': self.notification_control,
@@ -1366,6 +1366,10 @@ class ConditionAlert(AlertBase):
         #self.notified_on = False
         self.added_to_hass_called = False
         self.reminder_frequency_mins = getField('reminder_frequency_mins', config, defaults)
+        self._done_message_template = config['done_message'] if 'done_message' in config else None
+        if self._done_message_template is not None:
+            self._done_message_template.hass = hass
+            
         # For hysteresis turning on
         self.delay_on_secs = config['delay_on_secs'] if 'delay_on_secs' in config else 0
         # If delay_on_secs is set, we distinguish between when a condition turned true
