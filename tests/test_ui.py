@@ -25,6 +25,7 @@ from homeassistant import config as conf_util
 import homeassistant.components.websocket_api as wsapi
 
 a2Ui.SAVE_DELAY = 0
+alert2.gGcDelaySecs = 0.1
 
 async def setAndWait(hass, eid, state): 
     hass.states.async_set(eid, state)
@@ -822,6 +823,8 @@ async def test_create(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n2', 'condition':'sensor.a' } })
     assert rez == {}
     assert service_calls.isEmpty()
+    assert hass.states.get('alert2.d_n1').state == 'off'
+    assert hass.states.get('alert2.d_n2').state == 'off'
 
     # Search
     rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'' } })
@@ -893,12 +896,15 @@ async def test_create2(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n2', 'condition':'sensor.a',
                                                               'throttle_fires_per_mins': '[3,4]'} })
     assert rez == {}
+    assert hass.states.get('alert2.d_n2').state == 'off'
     # Update should do data prep
     rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'n2', 'condition':'sensor.a',
                                                               'throttle_fires_per_mins': '[3,5]'} })
     assert rez == {}
+    assert hass.states.get('alert2.d_n2').state == 'off'
     rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'n2' } })
     assert rez == {}
+    assert hass.states.get('alert2.d_n2') is None
 
     #######
     # try lifecycle ops with generators
@@ -927,6 +933,7 @@ async def test_create2(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/manageAlert", {'update':
             { 'domain':'d', 'name':'{{genElem}}z', 'condition':'sensor.a', 'generator_name':'g1', 'generator': 'n5' } })
     assert rez == {}
+    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
     assert set(gad.alerts['d'].keys()) == set([ 'n5z' ])
     assert hass.states.get('alert2.d_n5') == None
     assert hass.states.get('alert2.d_n5z').state == 'off'
@@ -990,6 +997,7 @@ async def test_reload(hass, service_calls, hass_client, hass_storage, monkeypatc
         m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
         await hass.services.async_call('alert2','reload', {})
         await hass.async_block_till_done()
+    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
     assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])
 
 async def test_conflict1(hass, service_calls, hass_client, hass_storage):

@@ -275,7 +275,6 @@ Example:
 
 The `defaults:` subsection specifies optional default values for parameters common to every alert. Each of these parameters may be specified either in this subsection or over-ridden on a per-alert basis.
 
-
 | Key | Type | Description |
 |---|---|---|
 | `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. Minimum is 0.01 min. |
@@ -696,10 +695,12 @@ Really last implementation detail: any templates specified for `domain` or `name
        - foo2
 
     # A template evaluating to a list of strings.
-    # genEntityId is defined to be each element in the list if the element is an entity_id
-    # genElem is defined otherwise.
-    # genRaw is defined to be each element regardless.
     generator: "{{ [ 'sensor.foo1', 'sensor.foo2' ] }}"
+
+    # A template evaluating to a string containing a list inside.
+    generator: "{{ '[ \'a\', \'b\' ]' }}"
+    # OR, if sensor.mylist is [ 'a', 'b' ], then equivalently
+    generator: "{{ states('sensor.mylist') }}"
 
     # A template evaluating to list of dictionaries
     # The keys of the dictionary are available as variables in all Alert2
@@ -707,6 +708,15 @@ Really last implementation detail: any templates specified for `domain` or `name
     # genRaw is defined as the raw dictionary object.
     generator: "{{ {'a':'foo'}, {'a':'bar'} }}"
 ````
+
+
+If disable alert that exists, it is deleted from hass.
+if disable alert that is not provided, it is not deleted from hass.
+stays the same upon restart.
+
+
+
+
 
 In addition to the variables `genElem`, `genEntityId`, and `genRaw` described above, generators also make the following variables available to templates:
 * `genIdx` - the index, starting from 0, of the current generator element.

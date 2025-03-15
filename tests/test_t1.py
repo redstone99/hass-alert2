@@ -30,6 +30,8 @@ from homeassistant.util.yaml import parse_yaml
 #from tests.common import MockConfigEntry
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+alert2.gGcDelaySecs = 0.1
+
 async def test_cfg1(hass):
     assert await async_setup_component(hass, DOMAIN, { 'alert2': {} })
     await hass.async_block_till_done()
@@ -1693,6 +1695,7 @@ async def test_generator(hass, service_calls):
     assert g2.extra_state_attributes == { 'generated_ids': [ 'alert2.test_t55b' ] }
     assert hass.states.get(g2.entity_id)
     assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t55b').state == 'off'
     # and now have generator produce a mess
     await setAndWait(hass, "sensor.g", "[ 'a")
     await hass.async_block_till_done()
@@ -1700,6 +1703,7 @@ async def test_generator(hass, service_calls):
     assert gad.alerts['test']['t55b'] == t55b
     assert hass.states.get(t55b.entity_id)
     assert g2.state == 1
+    assert hass.states.get('alert2.test_t55b').state == 'off'
 
     # template producing same string should not recreate alert
     await setAndWait(hass, "sensor.g", "['t55b']")
@@ -1708,13 +1712,19 @@ async def test_generator(hass, service_calls):
     assert gad.alerts['test']['t55b'] == t55b
     assert g2.extra_state_attributes == { 'generated_ids': [ 'alert2.test_t55b' ] }
     
-    # Now suppose template returns nothing, so alert should disappear
+    # Now suppose template returns nothing, so alert should disappear, including from hass states
     await setAndWait(hass, "sensor.g", "")
     assert service_calls.isEmpty()
     assert not hass.states.get(t55b.entity_id)
+    assert hass.states.get('alert2.test_t55b') is None
     assert g2.state == 0
     assert not 't55b' in gad.alerts['test']
     assert g2.extra_state_attributes == { 'generated_ids': [ ] }
+    # And if alert reappears, should be fine, no entity registry issues
+    await setAndWait(hass, "sensor.g", "['t55b']")
+    assert service_calls.isEmpty()
+    assert g2.state == 1
+    assert hass.states.get('alert2.test_t55b').state == 'off'
     
     # what if name includes a trailing z in template
     assert not 't56' in gad.alerts['test']
@@ -2232,13 +2242,18 @@ async def test_reload(hass, service_calls, monkeypatch):
         m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
         await hass.services.async_call('alert2','reload', {})
         await hass.async_block_till_done()
+    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
     
     entids = hass.states.async_entity_ids()
     assert len(entids) == 8 # 1 is alert2.error, 1 is binary_sensor.alert2_ha_startup_done
-    for id in ['alert2.alert2_error', 'binary_sensor.alert2_ha_startup_done', 'alert2.test_t77',
-               'alert2.test_t82', 'alert2.test_t72',
-               'alert2.test_t80', 'sensor.alert2generator_g18', 'alert2.test_t81']:
-        assert id in entids
+    for anid in entids:
+        if anid in ['alert2.alert2_error', 'binary_sensor.alert2_ha_startup_done', 'alert2.test_t77',
+                  'alert2.test_t82', 'alert2.test_t72',
+                  'alert2.test_t80', 'sensor.alert2generator_g18', 'alert2.test_t81']:
+            assert hass.states.get(anid).state != 'unavailable'
+        else:
+            assert False
+            #assert hass.states.get(anid).state == 'unavailable'
     # The snooze task should have been canceled
     assert t74.future_notification_info is None
     
@@ -2247,11 +2262,30 @@ async def test_reload(hass, service_calls, monkeypatch):
         m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
         await hass.services.async_call('alert2','reload', {})
         await hass.async_block_till_done()
+    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
     entids = hass.states.async_entity_ids()
     assert len(entids) == 2 # 1 is alert2.error
-    for id in ['alert2.alert2_error', 'binary_sensor.alert2_ha_startup_done']:
-        assert id in entids
+    for anid in entids:
+        if anid in ['alert2.alert2_error', 'binary_sensor.alert2_ha_startup_done']:
+            assert hass.states.get(anid).state != 'unavailable'
+        else:
+            assert False
+            #assert hass.states.get(anid).state == 'unavailable'
 
+    # Reload and ent reappears
+    cfg = { 'alert2' : { 'alerts': [
+        { 'domain': 'test', 'name': 't72', 'condition': 'off' },
+        ]}}
+    assert hass.states.get('alert2.test_t72') == None
+    #assert hass.states.get('alert2.test_t72').state == 'unavailable'
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
+    assert hass.states.get('alert2.test_t72').state == 'off'
+
+            
 async def test_shutdown(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True, 'reminder_frequency_mins': 0.01}, 'alerts' : [
         { 'domain': 'test', 'name': 't83', 'condition': 'off' },
@@ -2316,6 +2350,7 @@ async def test_declare_event(hass, service_calls, monkeypatch):
         m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
         await hass.services.async_call('alert2','reload', {})
         await hass.async_block_till_done()
+    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
     assert gad.tracked['test']['t88']
     alert2.report('test', 't88', 'foo')
     await hass.async_block_till_done()
@@ -3001,6 +3036,7 @@ async def test_supersede_mgr2(hass, service_calls, monkeypatch):
         m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
         await hass.services.async_call('alert2','reload', {})
         await hass.async_block_till_done()
+    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
     _LOGGER.info('reload done')
     # We will get a reminder because reminder freq is set for 0.6s, but when schedule reminders, we add a second.
     # So there was a reminder that was due but in that 1-second window.  When we reload, we see the reminder is
