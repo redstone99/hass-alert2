@@ -136,12 +136,14 @@ class RenderValueView(HomeAssistantView):
     url = "/api/alert2/renderValue"
     name = "api:alert2:renderValue"
     @RequestDataValidator(vol.Schema({
-            vol.Required('name'): cv.string,
-            vol.Required('txt'): cv.string,
-            vol.Optional('extraVars'): dict,
-        }, extra=vol.ALLOW_EXTRA)) # For some HA auth stuff i think
+        vol.Required('name'): cv.string,
+        vol.Required('txt'): cv.string,
+        # extraVars can be None if generator is empty (eg [] )
+        vol.Optional('extraVars'): vol.Any(None, dict),
+    }, extra=vol.ALLOW_EXTRA)) # For some HA auth stuff i think
 
     async def post(self, request: web.Request, data: dict[str, Any]) -> web.Response:
+        #_LOGGER.warning(f'Rendervalue: {data["extraVars"]}, {type(data["extraVars"])}')
         ttxt  = data['txt']
         name = data['name']
         extraVars = data['extraVars'] if 'extraVars' in data and data['extraVars'] else {}
@@ -317,6 +319,7 @@ class RenderValueView(HomeAssistantView):
                 result = afloat
             elif ttype in ['generator']:
                 aList = renderResultToList(aresult)
+                #_LOGGER.warning(f'generator {aresult} -> {aList}, {type(aList)}')
                 result = generatorListToResult(aList)
             elif ttype in ['supersedes']:
                 try:
@@ -760,6 +763,11 @@ class UiMgr:
             report(DOMAIN, 'error', f'{gAssertMsg} updateAlert: domain={domain} name={name} found in UI, but undeclareAlert failed')
             return {'error': 'Can\'t update alert that does not exist' }
         newEnt = await self._alertData.declareAlert(preppedConfig, doReport=False)
+
+        # When updating a generator, we may be changing the set of alerts generated.
+        # This could leave orphan entity registry entries.
+        self._alertData.delayGcRegistry()
+
         if not isinstance(newEnt, Entity):
             return {'error': newEnt}
 
@@ -787,7 +795,7 @@ class UiMgr:
         if dataIndex == -1:
             return { 'error': f'can not find existing UI-created alert with domain={domain} and name={name}' }
 
-        rez = await self._alertData.undeclareAlert(domain, name, doReport=False)
+        rez = await self._alertData.undeclareAlert(domain, name, doReport=False, removeFromRegistry=True)
         if rez is not None:
             report(DOMAIN, 'error', f'{gAssertMsg} deleteAlert: domain={domain} name={name} found in UI, but undeclareAlert failed')
             return {'error': rez}

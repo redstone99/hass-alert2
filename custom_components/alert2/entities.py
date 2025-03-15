@@ -417,6 +417,7 @@ class Tracker:
                 results[idx] = afloat
             elif ttype == Tracker.Type.List:
                 results[idx] = renderResultToList(resultStrs[idx])
+                #_LOGGER.warning(f'idx={idx}, resultStrs={resultStrs[idx]} -> {results[idx]}')
 
         self.cb(results)
         
@@ -499,6 +500,7 @@ class AlertGenerator(AlertCommon, SensorEntity):
         self._attr_name = entNameFromDN(GENERATOR_DOMAIN, self.config["generator_name"])
         self.alDomain = GENERATOR_DOMAIN
         self.alName = self.config["generator_name"]
+        self._attr_unique_id = f'generator-n={self.alName}'
         self._generator_template = self.config['generator']
         self.tracker = Tracker(self, 'generator', hass, alertData,
                                [ { 'fieldName': 'generator', 'type': Tracker.Type.List,
@@ -508,6 +510,10 @@ class AlertGenerator(AlertCommon, SensorEntity):
         # then there's the 'name' that is the HA entity's name property.
         # Here we're using the entity name
         self.nameEntityMap = {} # Map from name -> ent
+        self._purgeRegistry = False
+        
+    def setRegistryPurge(self):
+        self._purgeRegistry = True
         
     @property
     def state(self) -> str:
@@ -527,7 +533,7 @@ class AlertGenerator(AlertCommon, SensorEntity):
         await super().async_will_remove_from_hass()
         self.tracker.shutdown()
         for ent in self.nameEntityMap.values():
-            await self.alertData.undeclareAlert(ent.alDomain, ent.alName) # destroys ent
+            await self.alertData.undeclareAlert(ent.alDomain, ent.alName, removeFromRegistry=self._purgeRegistry) # destroys ent
         self.nameEntityMap = {}
 
     async def async_update(self):
@@ -566,10 +572,26 @@ class AlertGenerator(AlertCommon, SensorEntity):
             entName = entNameFromDN(domainStr, nameStr)
             currNames.add(entName)
             prevDomainName = { 'domain': domainStr, 'name': nameStr }
+            hassState = self.hass.states.get(f'alert2.{entName}')
             if entName in self.nameEntityMap:
                 # entity continues to exist
-                pass
+                ent = self.nameEntityMap[entName]
+                if hassState is None:
+                    # If the entity is disabled, it will be removed from hass states, even though
+                    # we may still have record of it.
+                    pass
+                elif ent.enabled:
+                    pass # normal case. we generated ent and it isn't disabled
+                else:
+                    pass # we generated ent, but user disabled it. nothing to do.
             else:
+                if hassState is None:
+                    pass # Normal case, we want to create a new entity
+                elif hassState.state == 'unavailable':
+                    pass # Ent exists cuz it has unique_id, but hopefully we haven't created it yet.
+                else:
+                    pass # Ent exists cuz it has unique_id, but hopefully we haven't created it yet.
+
                 # new entity added
                 if len(entName) == 0:
                     report(DOMAIN, 'error', f'{self.name} Domain+Name template rendered to empty string')
@@ -630,9 +652,19 @@ class AlertGenerator(AlertCommon, SensorEntity):
                 if not aname in currNames:
                     # entity no longer in list
                     ent = self.nameEntityMap[aname]
+                    hassState = self.hass.states.get(ent.entity_id)
+                    if hassState is None:
+                        # If entity has been disabled it won't be in hass states even though we have record of it.
+                        pass
+                    elif ent.enabled:
+                        pass # normal case. we generated ent and it isn't disabled, now we want to delete it.
+                    else:
+                        # we generated ent, but user disabled it. we still want to undeclareAlert
+                        # to update our internal accounting of alerts.
+                        pass 
                     _LOGGER.info(f'Lifecycle generator {self.name} removing alert {ent.entity_id}')
                     #await ent.async_remove() # I think this is the complement of async_add_entities
-                    await self.alertData.undeclareAlert(ent.alDomain, ent.alName) # destroys ent
+                    await self.alertData.undeclareAlert(ent.alDomain, ent.alName, removeFromRegistry=True) # destroys ent
                     del self.nameEntityMap[aname]
                     needWrite = True
         if needWrite:
@@ -707,6 +739,8 @@ class AlertBase(AlertCommon, RestoreEntity):
         self.alName = config['name']
         self._attr_name = entNameFromDN(self.alDomain, self.alName)
 
+        self._attr_unique_id = f'd={self.alDomain}-n={self.alName}'
+        
         # config stuff
         self._notifier_list_template = getField('notifier', config, defaults)
         self._summary_notifier = getField('summary_notifier', config, defaults)

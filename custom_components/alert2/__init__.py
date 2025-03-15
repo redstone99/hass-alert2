@@ -29,6 +29,7 @@ from   homeassistant.helpers.entity import Entity
 from   homeassistant.helpers import template as template_helper
 from   homeassistant.helpers import trigger as trigger_helper
 import homeassistant.util.dt as dt
+import homeassistant.helpers.entity_registry as entity_registry
 
 from .config import (
     DEFAULTS_SCHEMA,
@@ -70,7 +71,7 @@ CONFIG_SCHEMA = lambda config: config
 moduleLoadTime = dt.now()
 kNotifierStartupGraceSecs = 30  # Default value for notifier_startup_grace_secs
 kStartupWaitPollFactor = 10
-
+gGcDelaySecs = 10
 
 ##########################################################
 #
@@ -317,6 +318,7 @@ class Alert2Data:
         self.rawTopConfig = None
         self.topConfig = None # processed Schema() for defaults and top-level options
         self.supersedeMgr = SupersedeMgr()
+        self.gcTask = None
         
     def noteUiUpdate(self):
         tmpUiConfig = copy.deepcopy(self.rawYamlBaseTopConfig)
@@ -455,6 +457,10 @@ class Alert2Data:
             self._hass.bus.async_listen(EVENT_TYPE, self.handle_event_report)
             self._hass.services.async_register(DOMAIN, 'report', self.handle_service_report)
             self._hass.services.async_register(DOMAIN, 'ack_all', self.ackAll)
+            # gc_entity_registry:
+            #    name: Clean entity registry
+            #    description: Remove any entity regsitry entries corresponding to Alert2 entities that no longer exist
+            #self._hass.services.async_register(DOMAIN, 'gc_entity_registry', self.gcEntityRegistry)
             self.component.async_register_entity_service(
                 'notification_control',
                 cv.make_entity_service_schema(NOTIFICATION_CONTROL_SCHEMA),
@@ -557,6 +563,13 @@ class Alert2Data:
         _LOGGER.info(f'Lifecycle created {len(ents)} alerts from YAML config')
         await self.uiMgr.declareAlerts()
 
+        # If user has removed an alert from their YAML and reloaded/restarted,
+        # we want to remove the entity registry entry so the alert entity doesn't show up in hass states as 'unavailable'
+        # However, generators may take some time during startup or reload to regenerate entities
+        # (eg if they depend on a sensor that takes time to initialize for some reason)
+        # So delay the GC on startup or reload a bit
+        self.delayGcRegistry()
+
     # stage 1 is for supersedes.  Stage 2 is to declare the alerts
     async def loadAlertBlock(self, aRawCfg):
         entities = []
@@ -637,8 +650,9 @@ class Alert2Data:
             return None
         return newEnt
     
-    async def undeclareAlert(self, domain, name, doReport=True):
+    async def undeclareAlert(self, domain, name, doReport=True, removeFromRegistry=False):
         #_LOGGER.info(f'undeclareAlert for {domain} {name}')
+        ent = None
         if domain in self.alerts and name in self.alerts[domain]:
             self.supersedeMgr.removeNode(domain, name)
             ent = self.alerts[domain][name]
@@ -655,18 +669,72 @@ class Alert2Data:
             _LOGGER.debug(f'Lifecycle undeclareAlert {ent.entity_id}')
             await self.component.async_remove_entity(ent.entity_id)
         elif domain == GENERATOR_DOMAIN and name in self.generators:
-            agen = self.generators[name]
+            ent = self.generators[name]
+            if removeFromRegistry:
+                ent.setRegistryPurge()
             del self.generators[name]
-            _LOGGER.debug(f'Lifecycle undeclareAlert {agen.entity_id}')
-            await self.sensorComponent.async_remove_entity(agen.entity_id)
+            _LOGGER.debug(f'Lifecycle undeclareAlert {ent.entity_id}')
+            await self.sensorComponent.async_remove_entity(ent.entity_id)
         else:
             errMsg = f'Trying to remove unknown alert domain={domain} name={name}'
             if doReport:
                 report(DOMAIN, 'error', f'{gAssertMsg} {errMsg}')
             return errMsg
+
+        if removeFromRegistry:
+            entRegistry = entity_registry.async_get(self._hass)
+            entId = ent.entity_id
+            if entRegistry.async_is_registered(entId):
+                _LOGGER.info(f'Removing undeclared registry entry for {entId}')
+                entRegistry.async_remove(entId)
+        
         self.displayCfgWsMgr.noteConfigChange()
         return None
 
+    def delayGcRegistry(self):
+        if self.haStarted:
+            self.delayGcRegistryInt()
+        else:
+            pass # Wait for haStartedEv to start gc
+        
+    def delayGcRegistryInt(self):
+        if self.gcTask != None:
+            self.gcTask.cancel()
+        async def adelay():
+            await asyncio.sleep(gGcDelaySecs)
+            self.gcTask = None
+            self.gcEntityRegistry()
+        self.gcTask = create_background_task(self._hass, DOMAIN, adelay())
+
+    def gcEntityRegistry(self):
+        #_LOGGER.info('gcEntityRegistry: Purging unused Alert2 registry entries')
+        entRegistry = entity_registry.async_get(self._hass)
+
+        # First purge old alert2.* entities
+        knownIds = set()
+        for domain in self.alerts:
+            for name in self.alerts[domain]:
+                knownIds.add(self.alerts[domain][name].entity_id)
+        for domain in self.tracked:
+            for name in self.tracked[domain]:
+                knownIds.add(self.tracked[domain][name].entity_id)
+        hassIds = self._hass.states.async_entity_ids(DOMAIN)
+        for anId in hassIds:
+            if not anId in knownIds and entRegistry.async_is_registered(anId):
+                _LOGGER.info(f'gcEntityRegistry: Removing unused registry entry for {anId}')
+                entRegistry.async_remove(anId)
+
+        # Then purge old generators
+        knownIds = set()
+        for name in self.generators:
+            knownIds.add(self.generators[name].entity_id)
+        hassIds = self._hass.states.async_entity_ids('sensor')
+        for anId in hassIds:
+            if anId.startswith('sensor.alert2generator_') and not anId in knownIds and \
+               entRegistry.async_is_registered(anId):
+                _LOGGER.info(f'gcEntityRegistry: Removing unused registry entry for {anId}')
+                entRegistry.async_remove(anId)
+        
     def domainNameToId(self, domain, name):
         if domain in self.alerts and name in self.alerts[domain]:
             return self.alerts[domain][name].entity_id
@@ -692,6 +760,7 @@ class Alert2Data:
         if self.binarySensorDict is not None:
             self.binarySensorDict['hastarted']._attr_is_on = True
             self.binarySensorDict['hastarted'].async_write_ha_state()
+        self.delayGcRegistry()
         
     #def startShutdown(self, event):
     #    self._hass.loop.call_soon_threadsafe(self.shutdown)

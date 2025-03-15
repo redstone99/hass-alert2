@@ -807,6 +807,14 @@ If you ever need to know, Alert2 stores the UI state, including entities defined
 
 Without [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) you can still view and do some management of Alert2 alerts, but the process is a bit more involved.
 
+### Editing Alert2 entity settings
+
+Alert2 sets a `unique_id` on each alert and generator entity. This means you can adjust HA entity settings for the alert via the HA more-info pop-up dialog. A few notes:
+
+We recommend setting `friendly_name` in your Alert2 config rather than editing the `name` field in the entity settings, just to avoid confusion. The entity setting for `name` will override any `friendly_name` set.
+
+You may see old alert entities persist briefly with a state of "unavailable", particularly in the 10 seconds after HA startup if one of your generators changes the set of alerts it generates.  What going on is that the set of Alert2 entities in existence can fluctuate, as you adjust your Alert2 config or as generators update. If Alert2 stops creating an alert (eg on restart), then since the `unique_id` is set, the dead alert will persist with a state of "unavailable".  Alert2 strives to avoid this by updating the entity registry during Alert2 lifecycle changes.  And 10 seconds after HA starts up or Alert2 reloads, Alert2 it will go through and purge the entity registry of those dead alerts.
+
 
 ## Service calls and events
 
