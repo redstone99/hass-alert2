@@ -710,14 +710,6 @@ Really last implementation detail: any templates specified for `domain` or `name
 ````
 
 
-If disable alert that exists, it is deleted from hass.
-if disable alert that is not provided, it is not deleted from hass.
-stays the same upon restart.
-
-
-
-
-
 In addition to the variables `genElem`, `genEntityId`, and `genRaw` described above, generators also make the following variables available to templates:
 * `genIdx` - the index, starting from 0, of the current generator element.
 * `genPrevDomainName` - the {domain,name} of the previous generator element, or None if this is the first element.
