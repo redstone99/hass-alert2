@@ -709,7 +709,6 @@ Really last implementation detail: any templates specified for `domain` or `name
     generator: "{{ {'a':'foo'}, {'a':'bar'} }}"
 ````
 
-
 In addition to the variables `genElem`, `genEntityId`, and `genRaw` described above, generators also make the following variables available to templates:
 * `genIdx` - the index, starting from 0, of the current generator element.
 * `genPrevDomainName` - the {domain,name} of the previous generator element, or None if this is the first element.
