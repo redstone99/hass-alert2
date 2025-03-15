@@ -71,6 +71,7 @@ CONFIG_SCHEMA = lambda config: config
 moduleLoadTime = dt.now()
 kNotifierStartupGraceSecs = 30  # Default value for notifier_startup_grace_secs
 kStartupWaitPollFactor = 10
+# Secs after startup to wait before purging the entity registry of alerts that no longer exist
 gGcDelaySecs = 10
 
 ##########################################################
