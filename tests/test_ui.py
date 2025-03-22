@@ -1501,3 +1501,65 @@ async def test_uicfg(hass, service_calls, hass_storage):
         ('d','n1'): set( ),
         ('d','n2'): set( [ ('d','hh') ] ),
     }
+
+async def test_one_time(hass, service_calls, monkeypatch):
+    # Test one-time warning message
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a', 'done_message': 'clear_notification' },
+    ], } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't1: turned on')
+
+    await setAndWait(hass, "sensor.a", 'off')
+    service_calls.popNotifySearch('persistent_notification', 'annotate', '^Alert2 alert2_warning: Set annotate_m')
+    service_calls.popNotifyEmpty('persistent_notification', 't1: clear_notification')
+    
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't1: turned on')
+    await setAndWait(hass, "sensor.a", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't1.*clear_')
+    
+async def test_one_time2(hass, service_calls, monkeypatch):
+    # Test one-time warning message
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a', 'done_message': 'clear_notification' },
+    ], 'tracked': [
+        { 'domain': 'alert2', 'name': 'warning', 'annotate_messages': False },
+    ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't1: turned on')
+    await setAndWait(hass, "sensor.a", 'off')
+    service_calls.popNotifySearch('persistent_notification', 'annotate', '^Set annotate_m')
+    service_calls.popNotifyEmpty('persistent_notification', 't1: clear_notification')
+    
+async def test_one_time3(hass, service_calls, hass_storage):
+    # Test one-time warning message if happened on previous startup
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a', 'done_message': 'clear_notification' },
+    ], } }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': { 'defaults': {} },
+                                                 'oneTime': { 'set_annotate_messages_for_commands': True } } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't1: turned on')
+    await setAndWait(hass, "sensor.a", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't1.*clear_notification')
+
