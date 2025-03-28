@@ -2224,7 +2224,7 @@ async def test_reload(hass, service_calls, monkeypatch):
     await hass.async_block_till_done()
     entids = hass.states.async_entity_ids()
     _LOGGER.warning(entids)
-    assert len(entids) == 11 # 1 is alert2_error, alert2_warning 1 is binary_sensor.alert2_ha_startup_done
+    assert len(entids) == 12 # 1 is alert2_error, alert2_warning, alert2_global_exception 1 is binary_sensor.alert2_ha_startup_done
     assert t74.future_notification_info is not None
     
     cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True, 'reminder_frequency_mins': 0.01}, 'alerts' : [
@@ -2245,9 +2245,9 @@ async def test_reload(hass, service_calls, monkeypatch):
     await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
     
     entids = hass.states.async_entity_ids()
-    assert len(entids) == 9 # 1 is alert2_error, alert2_warning, 1 is binary_sensor.alert2_ha_startup_done
+    assert len(entids) == 10 # 1 is alert2_error, alert2_warning, alert2_global_exception, 1 is binary_sensor.alert2_ha_startup_done
     for anid in entids:
-        if anid in ['alert2.alert2_error', 'alert2.alert2_warning', 'binary_sensor.alert2_ha_startup_done', 'alert2.test_t77',
+        if anid in ['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'binary_sensor.alert2_ha_startup_done', 'alert2.test_t77',
                   'alert2.test_t82', 'alert2.test_t72',
                   'alert2.test_t80', 'sensor.alert2generator_g18', 'alert2.test_t81']:
             assert hass.states.get(anid).state != 'unavailable'
@@ -2264,9 +2264,9 @@ async def test_reload(hass, service_calls, monkeypatch):
         await hass.async_block_till_done()
     await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
     entids = hass.states.async_entity_ids()
-    assert len(entids) == 3 # 1 is alert2_error alert2_warning
+    assert len(entids) == 4 # 1 is alert2_error alert2_warning, alert2_global_exception
     for anid in entids:
-        if anid in ['alert2.alert2_error', 'alert2.alert2_warning', 'binary_sensor.alert2_ha_startup_done']:
+        if anid in ['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'binary_sensor.alert2_ha_startup_done']:
             assert hass.states.get(anid).state != 'unavailable'
         else:
             assert False
@@ -2307,7 +2307,7 @@ async def test_shutdown(hass, service_calls):
     t84 = gad.alerts['test']['t84']
     entids = hass.states.async_entity_ids()
     assert len(entids) == 8 # 1 is alert2_error, alert2_warning, 1 for binary_sensor.alert2_ha_startup_done
-    for id in ['alert2.alert2_error', 'alert2.alert2_warning', 'binary_sensor.alert2_ha_startup_done',
+    for id in ['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'binary_sensor.alert2_ha_startup_done',
                'alert2.test_t83', 'alert2.test_t84', 'alert2.test_t85',
                'alert2.test_t86', 'sensor.alert2generator_g19']:
         assert id in entids
@@ -2511,6 +2511,7 @@ async def test_ha_event(hass, service_calls):
     assert callHas(EVENT_ALERT2_CREATE, 'sensor.alert2generator_g1') == { 'entity_id': 'sensor.alert2generator_g1', 'domain': 'alert2generator', 'name': 'g1' }
     assert callHas(EVENT_ALERT2_CREATE, 'alert2.alert2_error') == { 'entity_id': 'alert2.alert2_error', 'domain': 'alert2', 'name': 'error' }
     assert callHas(EVENT_ALERT2_CREATE, 'alert2.alert2_warning') == { 'entity_id': 'alert2.alert2_warning', 'domain': 'alert2', 'name': 'warning' }
+    assert callHas(EVENT_ALERT2_CREATE, 'alert2.alert2_global_exception') == { 'entity_id': 'alert2.alert2_global_exception', 'domain': 'alert2', 'name': 'global_exception' }
     assert not calls
 
     await setAndWait(hass, "sensor.c", '[ "x1" ]')
