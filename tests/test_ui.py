@@ -698,13 +698,19 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ 3 > xx }}', 'extraVars': {'z':3} })
     assert re.search('is undefined', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ {"domain":"x","name":"y"} }}', 'extraVars': {'z': 'yay'} })
-    assert rez == { 'rez': { 'domain': 'x', 'name': 'y'} }
+    assert rez == { 'rez': [{ 'domain': 'x', 'name': 'y'}] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{"domain":"x","name":"{{z}}"}', 'extraVars': {'z': 'yay'} })
-    assert rez == { 'rez': { 'domain': 'x', 'name': 'yay'} }
+    assert rez == { 'rez': [{ 'domain': 'x', 'name': 'yay'}] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{domain: x, name: "{{z}}"}', 'extraVars': {'z': 'yay'} })
+    assert rez == { 'rez': [{ 'domain': 'x', 'name': 'yay'}] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{"domain":"x","name":"{{ \'y2\' }}"}', 'extraVars': { 'x': 22 } })
-    assert rez == { 'rez': { 'domain': 'x', 'name': 'y2'} }
+    assert rez == { 'rez': [{ 'domain': 'x', 'name': 'y2'}] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ [ {"domain":"x","name":"y"} ] }}', 'extraVars': { 'x': 22 } })
     assert rez == { 'rez': [ { 'domain': 'x', 'name': 'y'} ] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ {"domain":"x","name":"y"} }}', 'extraVars': { 'x': 22 } })
+    assert rez == { 'rez': [{ 'domain': 'x', 'name': 'y'}] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ {"domainzz":"x","name":"y"} }}', 'extraVars': { 'x': 22 } })
+    assert re.search('extra keys not allowed', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[ { "foo":3 } ]' })
     assert re.search('extra keys not allowed', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[ { "domain":"d","name":"x" } ]' })
@@ -1383,7 +1389,7 @@ async def test_display_cfg(hass, service_calls, hass_client, hass_ws_client, mon
                          })
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    await getResult(wsc, msg_id, result = [{'entityId': 'alert2.d_n2', 'config': {'supersededByList': [], 'priority':'medium'}}])
+    await getResult(wsc, msg_id, result = [{'entityId': 'alert2.d_n2', 'config': {'supersededByList': [] }}])
 
     # existing entity and supersededBy
     msg_id += 1
@@ -1392,7 +1398,7 @@ async def test_display_cfg(hass, service_calls, hass_client, hass_ws_client, mon
                          })
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    await getResult(wsc, msg_id, result = [{'entityId': 'alert2.d_n1', 'config': {'supersededByList': [ 'alert2.d_n2' ], 'priority':'low'}}])
+    await getResult(wsc, msg_id, result = [{'entityId': 'alert2.d_n1', 'config': {'supersededByList': [ 'alert2.d_n2' ] }}])
     msg_id += 1
     await wsc.send_json({ "id": msg_id, "type": "alert2_get_display_config",
                           'dn_list': [ { 'domain': 'd', 'name': 'n1' },{ 'domain': 'd', 'name': 'n2' } ]
@@ -1400,8 +1406,8 @@ async def test_display_cfg(hass, service_calls, hass_client, hass_ws_client, mon
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     await getResult(wsc, msg_id, result = [
-        {'entityId': 'alert2.d_n1', 'config': {'supersededByList': [ 'alert2.d_n2' ], 'priority':'low'}},
-        {'entityId': 'alert2.d_n2', 'config': {'supersededByList': [ ], 'priority':'medium'}},
+        {'entityId': 'alert2.d_n1', 'config': {'supersededByList': [ 'alert2.d_n2' ] }},
+        {'entityId': 'alert2.d_n2', 'config': {'supersededByList': [ ] }},
     ])
     
     # Now check subscription
@@ -1501,6 +1507,62 @@ async def test_uicfg(hass, service_calls, hass_storage):
         ('d','n1'): set( ),
         ('d','n2'): set( [ ('d','hh') ] ),
     }
+    
+async def test_supersede(hass, service_calls, hass_storage):
+    # Test that supersedes is flexible wrt to quoting
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        { 'domain': 'd', 'name': 'n19','supersedes': '{{ [{ "domain": "d", "name": genElem }] }}', 'condition': 'off', 'generator_name':'g1b','generator': ['n1'] },
+        { 'domain': 'd', 'name': 'n2','supersedes': [{ 'domain': 'd', 'name': '{{ genElem }}' }], 'generator_name':'g1a','generator': ['n1'], 'condition': 'off' },
+        { 'domain': 'd', 'name': 'n1', 'condition': 'off'},
+        ] }}
+    uiCfg = { 'defaults' : { },
+              'alerts': [
+                  { 'domain': 'd', 'name': 'n18','supersedes': "{ x: 3 }", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n17','supersedes': "null", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n16','supersedes': "{{ [{ \"domain\": \"d\", \"name\": genElem }] }}", 'generator_name':'g8','generator': "['n1']", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n15','supersedes': "{{ [{ 'domain': 'd', 'name': genElem }] }}", 'generator_name':'g7','generator': "['n1']", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n14','supersedes': "[{ domain: d, name: '{{ genElem }}' }]", 'generator_name':'g6','generator': "['n1']", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n13','supersedes': "{ 'domain': \"d\", 'name': '{{ genElem }}' }", 'generator_name':'g5','generator': "['n1']", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n12','supersedes': "{ 'domain': 'd', 'name': '{{ genElem }}' }", 'generator_name':'g4','generator': "['n1']", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n11','supersedes': "{ domain: 'd', name: '{{ genElem }}' }", 'generator_name':'g3','generator': "['n1']", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n10','supersedes': "[{ domain: d, name: '{{ genElem }}' }]", 'generator_name':'g2','generator': "['n1']", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n9','supersedes': "{ domain: d, name: '{{ genElem }}' }", 'generator_name':'g1','generator': "['n1']", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n8','supersedes': "[{  \"domain\": \"d\", \"name\": \"n1\" }]", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n7','supersedes': "[{  'domain': 'd', 'name': 'n1' }]", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n6','supersedes': "[{  domain: \"d\", name: \"n1\" }]", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n5','supersedes': "[{  domain: 'd', name: 'n1' }]", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n4','supersedes': "[{  domain: d, name: n1 }]", 'condition': 'off' },
+                  { 'domain': 'd', 'name': 'n3','supersedes': "{  domain: d, name: n1 }", 'condition': 'off' },
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'extra keys.*\'x\'')
+    gad = hass.data[DOMAIN]
+    assert gad.supersedeMgr.supersedesMap == {
+        ('d','n19'): set( [ ('d','n1') ] ),
+        ('d','n17'): set( ),
+        ('d','n16'): set( [ ('d','n1') ] ),
+        ('d','n15'): set( [ ('d','n1') ] ),
+        ('d','n14'): set( [ ('d','n1') ] ),
+        ('d','n13'): set( [ ('d','n1') ] ),
+        ('d','n12'): set( [ ('d','n1') ] ),
+        ('d','n11'): set( [ ('d','n1') ] ),
+        ('d','n10'): set( [ ('d','n1') ] ),
+        ('d','n9'): set( [ ('d','n1') ] ),
+        ('d','n8'): set( [ ('d','n1') ] ),
+        ('d','n7'): set( [ ('d','n1') ] ),
+        ('d','n6'): set( [ ('d','n1') ] ),
+        ('d','n5'): set( [ ('d','n1') ] ),
+        ('d','n4'): set( [ ('d','n1') ] ),
+        ('d','n3'): set( [ ('d','n1') ] ),
+        ('d','n2'): set( [ ('d','n1') ] ),
+        ('d','n1'): set( ),
+    }
+          
 
 async def test_one_time(hass, service_calls, monkeypatch):
     # Test one-time warning message
@@ -1563,3 +1625,45 @@ async def test_one_time3(hass, service_calls, hass_storage):
     await setAndWait(hass, "sensor.a", 'off')
     service_calls.popNotifyEmpty('persistent_notification', 't1.*clear_notification')
 
+async def test_unknown(hass, service_calls, hass_storage):
+    # Test one-time warning message if happened on previous startup
+    await setAndWait(hass, "sensor.foo", 'yes')
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        { 'domain': 'd', 'name': 'v', 'condition': '{{ states("sensor.foo") in ["unknown","unavailable"] }}', 'message': 'state became {{ states("sensor.foo") }}' },
+        ]}}
+    uiCfg = { 'defaults' : { },
+              'alerts': [
+                  { 'domain': 'd', 'name': 'tt', 'trigger':
+                    "[{'platform':'state','entity_id':'sensor.foo','to': None},{'platform':'state','entity_id':'sensor.foo','to':'unavailable'}]" },
+                    #"[{'platform':'state','entity_id':'sensor.foo','to':'unavailable'}]" },
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+
+    # Poor man's unavailable hack.  TODO - create sensor with unique_id and remove it to get unavailable.
+    await setAndWait(hass, "sensor.foo", 'unavailable')
+    service_calls.popNotifySearch('persistent_notification', 'd_tt', 'd_tt')
+    service_calls.popNotifyEmpty('persistent_notification', 'd_v: state became unavailable')
+    assert hass.states.get('sensor.foo').state == 'unavailable'
+
+    _LOGGER.info('setting sensor.foo to yes')
+    await setAndWait(hass, "sensor.foo", 'yes')
+    service_calls.popNotifySearch('persistent_notification', 'd_v', 'd_v: turned off')
+    assert service_calls.isEmpty()
+    
+    # Now suppose sensor disappears, states(...) will be 'unknown'
+    _LOGGER.info('removing sensor.foo')
+    hass.states.async_remove('sensor.foo')
+    assert hass.states.get('sensor.foo') == None
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    service_calls.popNotifyEmpty('persistent_notification', 'd_v: state became unknown')
+
+    # NOTE - the trigger won't fire. I can't figure out a way to get the trigger to fire when a sensor is unknown
+    # actually, it'd probably fire with an all state trigger and a condition

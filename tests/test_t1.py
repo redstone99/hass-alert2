@@ -2224,7 +2224,7 @@ async def test_reload(hass, service_calls, monkeypatch):
     await hass.async_block_till_done()
     entids = hass.states.async_entity_ids()
     _LOGGER.warning(entids)
-    assert len(entids) == 10 # 1 is alert2.error, 1 is binary_sensor.alert2_ha_startup_done
+    assert len(entids) == 11 # 1 is alert2_error, alert2_warning 1 is binary_sensor.alert2_ha_startup_done
     assert t74.future_notification_info is not None
     
     cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True, 'reminder_frequency_mins': 0.01}, 'alerts' : [
@@ -2245,9 +2245,9 @@ async def test_reload(hass, service_calls, monkeypatch):
     await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
     
     entids = hass.states.async_entity_ids()
-    assert len(entids) == 8 # 1 is alert2.error, 1 is binary_sensor.alert2_ha_startup_done
+    assert len(entids) == 9 # 1 is alert2_error, alert2_warning, 1 is binary_sensor.alert2_ha_startup_done
     for anid in entids:
-        if anid in ['alert2.alert2_error', 'binary_sensor.alert2_ha_startup_done', 'alert2.test_t77',
+        if anid in ['alert2.alert2_error', 'alert2.alert2_warning', 'binary_sensor.alert2_ha_startup_done', 'alert2.test_t77',
                   'alert2.test_t82', 'alert2.test_t72',
                   'alert2.test_t80', 'sensor.alert2generator_g18', 'alert2.test_t81']:
             assert hass.states.get(anid).state != 'unavailable'
@@ -2264,9 +2264,9 @@ async def test_reload(hass, service_calls, monkeypatch):
         await hass.async_block_till_done()
     await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
     entids = hass.states.async_entity_ids()
-    assert len(entids) == 2 # 1 is alert2.error
+    assert len(entids) == 3 # 1 is alert2_error alert2_warning
     for anid in entids:
-        if anid in ['alert2.alert2_error', 'binary_sensor.alert2_ha_startup_done']:
+        if anid in ['alert2.alert2_error', 'alert2.alert2_warning', 'binary_sensor.alert2_ha_startup_done']:
             assert hass.states.get(anid).state != 'unavailable'
         else:
             assert False
@@ -2306,8 +2306,8 @@ async def test_shutdown(hass, service_calls):
     t83 = gad.alerts['test']['t83']
     t84 = gad.alerts['test']['t84']
     entids = hass.states.async_entity_ids()
-    assert len(entids) == 7 # 1 is alert2.error, 1 for binary_sensor.alert2_ha_startup_done
-    for id in ['alert2.alert2_error', 'binary_sensor.alert2_ha_startup_done',
+    assert len(entids) == 8 # 1 is alert2_error, alert2_warning, 1 for binary_sensor.alert2_ha_startup_done
+    for id in ['alert2.alert2_error', 'alert2.alert2_warning', 'binary_sensor.alert2_ha_startup_done',
                'alert2.test_t83', 'alert2.test_t84', 'alert2.test_t85',
                'alert2.test_t86', 'sensor.alert2generator_g19']:
         assert id in entids
@@ -2510,6 +2510,7 @@ async def test_ha_event(hass, service_calls):
     assert callHas(EVENT_ALERT2_CREATE, 'alert2.test_t11') == { 'entity_id': 'alert2.test_t11', 'domain': 'test', 'name': 't11' }
     assert callHas(EVENT_ALERT2_CREATE, 'sensor.alert2generator_g1') == { 'entity_id': 'sensor.alert2generator_g1', 'domain': 'alert2generator', 'name': 'g1' }
     assert callHas(EVENT_ALERT2_CREATE, 'alert2.alert2_error') == { 'entity_id': 'alert2.alert2_error', 'domain': 'alert2', 'name': 'error' }
+    assert callHas(EVENT_ALERT2_CREATE, 'alert2.alert2_warning') == { 'entity_id': 'alert2.alert2_warning', 'domain': 'alert2', 'name': 'warning' }
     assert not calls
 
     await setAndWait(hass, "sensor.c", '[ "x1" ]')
@@ -2851,15 +2852,12 @@ async def test_supersede_mgr(hass, service_calls):
 
     s = alert2.SupersedeMgr()
     assert s.supersededBySet('d', 'n1') == set()
-    #assert s.topoOrdering() == []
     assert s.addNode('d', 'n1', []) is True
     assert s.supersededBySet('d', 'n1') == set()
-    #assert s.topoOrdering() == [ ('d','n1') ]
     assert service_calls.isEmpty()
     # n2 supersedes n1
     assert s.addNode('d', 'n2', [ { 'domain':'d', 'name': 'n1' }]) is True
     assert s.supersededBySet('d', 'n1') == set([('d', 'n2')])
-    #assert s.topoOrdering() == [ ('d','n1'),('d','n2') ]
     assert service_calls.isEmpty()
     # Trying to add dup throws error, but doesn't mess up results
     assert s.addNode('d', 'n2', [ { 'domain':'d', 'name': 'n1' }]) is True
@@ -2867,7 +2865,6 @@ async def test_supersede_mgr(hass, service_calls):
     service_calls.popNotifyEmpty('persistent_notification', 'should not be adding duplicate')
     assert s.supersededBySet('d', 'n1') == set([ ('d', 'n2') ])
     assert s.supersededBySet('d', 'n2') == set()
-    #assert s.topoOrdering() == [ ('d','n1'),('d','n2') ]
 
     # Trying to add n1 supersedes n2 should fail
     s.removeNode('d', 'n1')
@@ -2877,21 +2874,18 @@ async def test_supersede_mgr(hass, service_calls):
     #service_calls.popNotifyEmpty('persistent_notification', 'should not be adding duplicate')
     assert s.supersededBySet('d', 'n1') == set([ ('d', 'n2') ])
     assert s.supersededBySet('d', 'n2') == set()
-    #assert s.topoOrdering() == [ ('d','n2') ]
 
     # n3 supersedes n2
     assert s.addNode('d', 'n3', [ { 'domain':'d', 'name': 'n2' }]) is True
     assert s.supersededBySet('d', 'n1') == set([ ('d', 'n2'), ('d', 'n3') ])
     assert s.supersededBySet('d', 'n2') == set([ ('d', 'n3') ])
     assert s.supersededBySet('d', 'n3') == set([ ])
-    #assert s.topoOrdering() == [ ('d','n2'),('d','n3') ]
     
     # Trying to add n1 supersedes n3 should fail
     assert s.addNode('d', 'n1', [ { 'domain':'d', 'name': 'n3' }]) is False
     assert s.supersededBySet('d', 'n1') == set([ ('d', 'n2'), ('d', 'n3') ])
     assert s.supersededBySet('d', 'n2') == set([ ('d', 'n3') ])
     assert s.supersededBySet('d', 'n3') == set([ ])
-    #assert s.topoOrdering() == [ ('d','n2'),('d','n3') ]
 
     # should be able to supersede an alert that doesn't yet exist
     assert s.addNode('d', 'n5', [ { 'domain':'d', 'name': 'n4' }, { 'domain': 'd', 'name': 'n3' },
@@ -2901,7 +2895,6 @@ async def test_supersede_mgr(hass, service_calls):
     assert s.supersededBySet('d', 'n3') == set([ ('d', 'n5') ])
     assert s.supersededBySet('d', 'n4') == set([ ('d', 'n5') ])
     assert s.supersededBySet('d', 'n5') == set([ ])
-    #assert s.topoOrdering() == [ ('d','n2'),('d','n3'),('d','n5') ]
 
     # supersedes graph is
     #
@@ -2916,8 +2909,6 @@ async def test_supersede_mgr(hass, service_calls):
     assert s.supersededBySet('d', 'n3') == set([ ('d', 'n5') ])
     assert s.supersededBySet('d', 'n4') == set([ ('d', 'n5') ])
     assert s.supersededBySet('d', 'n5') == set([ ])
-    #assert s.topoOrdering() == [ ('d','n2'),('d','n3'),('d','n4'),('d','n5') ] or \
-    #    s.topoOrdering() == [ ('d','n2'),('d','n4'),('d','n3'),('d','n5') ]
 
     s.removeNode('d', 'n2')
     assert s.supersededBySet('d', 'n1') == set()
@@ -2925,16 +2916,15 @@ async def test_supersede_mgr(hass, service_calls):
     assert s.supersededBySet('d', 'n3') == set([ ('d', 'n5') ])
     assert s.supersededBySet('d', 'n4') == set([ ('d', 'n5') ])
     assert s.supersededBySet('d', 'n5') == set([ ])
-    #assert s.topoOrdering() == [ ('d','n3'),('d','n4'),('d','n5') ] or \
-    #    s.topoOrdering() == [ ('d','n4'),('d','n3'),('d','n5') ]
     
     # try two roots
     s = alert2.SupersedeMgr()
     assert s.addNode('d', 'n1', [ { 'domain':'d', 'name': 'n3' }]) is True
     assert s.addNode('d', 'n2', [ { 'domain':'d', 'name': 'n3' }]) is True
-    #assert s.topoOrdering() == [ ('d','n1'),('d','n2') ] or s.topoOrdering() == [ ('d','n2'),('d','n1') ]
     assert s.addNode('d', 'n3', [ ]) is True
-    #assert s.topoOrdering() == [ ('d','n3'),('d','n2'),('d','n1') ] or s.topoOrdering() == [ ('d','n3'),('d','n1'),('d','n2') ]
+    assert s.supersededBySet('d', 'n1') == set()
+    assert s.supersededBySet('d', 'n2') == set()
+    assert s.supersededBySet('d', 'n3') == set([ ('d', 'n1'),('d', 'n2') ])
     
     # Try cycle separated by a node
     s = alert2.SupersedeMgr()
@@ -2944,7 +2934,6 @@ async def test_supersede_mgr(hass, service_calls):
     assert s.supersededBySet('d', 'n8') == set([ ('d', 'n7'), ('d', 'n6') ])
     assert s.supersededBySet('d', 'n7') == set([ ('d', 'n6') ])
     assert s.supersededBySet('d', 'n6') == set()
-    #assert s.topoOrdering() == [ ('d','n7'),('d','n6') ]
 
     # Try diamond shape
     s = alert2.SupersedeMgr()
@@ -2959,9 +2948,7 @@ async def test_supersede_mgr(hass, service_calls):
     assert s.supersededBySet('d', 'n10') == set([ ('d', 'n9') ])
     assert s.supersededBySet('d', 'n11') == set([ ('d', 'n9') ])
     assert s.supersededBySet('d', 'n12') == set([ ('d', 'n9'), ('d', 'n10'), ('d', 'n11') ])
-    #assert s.topoOrdering() == [ ('d','n10'),('d','n11'),('d','n9') ] or s.topoOrdering() == [ ('d','n11'),('d','n10'),('d','n9') ]
     assert s.addNode('d', 'n12', [ ]) is True
-    #assert s.topoOrdering() == [ ('d','n12'),('d','n10'),('d','n11'),('d','n9') ] or s.topoOrdering() == [ ('d','n12'),('d','n11'),('d','n10'),('d','n9') ]
 
     # Try removing node that collapses parent
     s = alert2.SupersedeMgr()
@@ -2972,6 +2959,11 @@ async def test_supersede_mgr(hass, service_calls):
     assert s.supersededBySet('d', 'n1') == set()
     assert s.supersededBySet('d', 'n2') == set()
     
+    # NOTE
+    #
+    # If you add any tests here, also add tests to t2.html::doTestSupersedeMgr
+    #
+
     
 async def test_supersede_mgr2(hass, service_calls, monkeypatch):
     await setAndWait(hass, "sensor.t1", 'off')
@@ -3066,6 +3058,13 @@ async def test_supersede3(hass, service_calls, monkeypatch):
           'supersedes': '{{ { "domain": "test", "name": genElem+"_is_low" } }}', 'generator': 'tg2','generator_name':'g4' },
         { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off',
           'supersedes': { "domain": "dd{{ genElem }}", "name": "nn{{ genElem }}" }, 'generator': 'tg3','generator_name':'g5' },
+        # Template produces dict with wrong keys
+        { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off',
+          'supersedes': '{{ { "domainzz": "dd", "name": "nn" } }}', 'generator': 'tg3a','generator_name':'g5a' },
+        # Template produces single dict rather than array
+        # This works because it is proessed into yaml, then cv.ensure_list
+        { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off',
+          'supersedes': '{{ { "domain": "dd", "name": "nntg3b" } }}', 'generator': 'tg3b','generator_name':'g5b' },
         { 'domain': 'test', 'name': '{{genElem}}', 'condition': 'off',
           'supersedes': { "domain": "dd", "name": "nn{{ genElem }}" }, 'generator': 'tg4','generator_name':'g6' },
         # Bad template
@@ -3089,23 +3088,25 @@ async def test_supersede3(hass, service_calls, monkeypatch):
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
     service_calls.popNotifySearch('persistent_notification', 't8', 'expected a dictionary')
     service_calls.popNotifySearch('persistent_notification', 'g2', 'trying to parse.*was never closed')
     service_calls.popNotifySearch('persistent_notification', 'tg6', 'Illegal characters')
     service_calls.popNotifySearch('persistent_notification', 'tg8', 'Illegal characters')
     service_calls.popNotifySearch('persistent_notification', 't10', 'Illegal characters')
+    service_calls.popNotifySearch('persistent_notification', 'tg3a', 'extra keys not allowed.*domainzz')
     service_calls.popNotifyEmpty('persistent_notification', 'unexpected end of template.*g7')
     gad = hass.data[DOMAIN]
-    assert list(gad.alerts['test'].keys()) == [ 'tg1', 'tg2', 'tg3', 'tg4', 'tg7' ]
+    assert list(gad.alerts['test'].keys()) == [ 'tg1', 'tg2', 'tg3', 'tg3b', 'tg4', 'tg7' ]
     _LOGGER.warning(gad.supersedeMgr.supersedesMap)
     assert gad.supersedeMgr.supersedesMap == {
         ('test','tg1'): set( [ ('test','tg1_is_low') ] ),
         ('test','tg2'): set( [ ('test','tg2_is_low') ] ),
         ('test','tg3'): set( [ ('ddtg3','nntg3') ] ),
+        ('test','tg3b'): set( [ ('dd','nntg3b') ] ),
         ('test','tg4'): set( [ ('dd','nntg4') ] ),
         ('test','tg7'): set( [ ('ddtg7','nntg7'),('ddtg7','nn2tg7') ] ),
     }
-
     
 async def test_no_yaml(hass, service_calls):
     # First, let's say YAML setup happens before config entry
