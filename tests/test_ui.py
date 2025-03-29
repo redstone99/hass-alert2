@@ -1556,17 +1556,11 @@ async def test_internal(hass, service_calls, hass_storage):
     assert gad.tracked['alert2']['warning']._friendly_name == 'f1'
     assert gad.tracked['alert2']['global_exception']._friendly_name == 'f3'
 
-async def test_internal2(hass, service_calls, hass_storage):
+async def test_internal2(hass, service_calls, hass_storage, hass_client):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
         ]}}
-    uiCfg = { 'defaults' : { },
-              'tracked' : [
-                  { 'domain': 'alert2', 'name': 'warning', 'supersedes': '[ 3' },
-              ]
-             }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
-    assert await async_setup_component(hass, DOMAIN, cfg)
-    await hass.async_start()
-    await hass.async_block_till_done()
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    rez = await tpost("/api/alert2/manageAlert", {'create': {
+        'domain':'alert2', 'name':'warning', 'notifier': "[ 4" } })
+    assert re.search('parsing a flow sequence', rez['error'])
     assert service_calls.isEmpty()
