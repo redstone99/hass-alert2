@@ -1214,7 +1214,8 @@ async def test_condition(hass, service_calls):
     
     
 async def test_err_args(hass, service_calls):
-    # test pssing entity name instead of template for condition or threshold value
+    # alert2_warning is tests in test_ui::test_one_time*
+    #
     cfg = { 'alert2' : { 'tracked': [
         { 'domain': 'alert2', 'name': 'error', 'friendly_name': 'happy-terr1' },
         ] } }
@@ -1229,6 +1230,39 @@ async def test_err_args(hass, service_calls):
     service_calls.popNotifySearch('persistent_notification', 'undeclared', 'happy-terr1: undeclared event.*t39')
     assert service_calls.isEmpty()
 
+    # let's crash a task
+    async def gdie():
+        raise Exception('boo')
+    alert2.create_task(hass, 'alert2', gdie())
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'unhandled_exception.*boo')
+    
+    gad = hass.data[DOMAIN]
+    assert gad.tracked['alert2']['error'].movingSum is None
+    assert gad.tracked['alert2']['global_exception'].movingSum is not None
+
+async def test_err_args1a(hass, service_calls):
+    hass.services.async_register('notify','foo', mock_service_foo)
+    cfg = { 'alert2' : { 'tracked': [
+        { 'domain': 'alert2', 'name': 'error', 'throttle_fires_per_mins': [5,6] },
+        { 'domain': 'alert2', 'name': 'global_exception', 'throttle_fires_per_mins': [7,8], 'notifier': 'foo' },
+        ] } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+    assert gad.tracked['alert2']['global_exception'].movingSum.maxCount == 7
+    assert gad.tracked['alert2']['error'].movingSum.maxCount == 5
+
+    # let's crash a task
+    async def gdie():
+        raise Exception('boo')
+    alert2.create_task(hass, 'alert2', gdie())
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('foo', 'unhandled_exception.*boo')
+    assert service_calls.isEmpty()
+    
 @pytest.mark.parametrize("cfg, errMsg", [
     ({ 'alert2' : { 'tracked': [ { 'domain': 'alert2', 'nname': 'error', 'friendly_name': 'happy-terr2' }, ] } },
      'extra keys.*nname'),
@@ -2306,7 +2340,7 @@ async def test_shutdown(hass, service_calls):
     t83 = gad.alerts['test']['t83']
     t84 = gad.alerts['test']['t84']
     entids = hass.states.async_entity_ids()
-    assert len(entids) == 8 # 1 is alert2_error, alert2_warning, 1 for binary_sensor.alert2_ha_startup_done
+    assert len(entids) == 9 # 1 is alert2_error, alert2_warning, 1 for binary_sensor.alert2_ha_startup_done
     for id in ['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'binary_sensor.alert2_ha_startup_done',
                'alert2.test_t83', 'alert2.test_t84', 'alert2.test_t85',
                'alert2.test_t86', 'sensor.alert2generator_g19']:

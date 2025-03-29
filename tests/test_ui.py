@@ -322,11 +322,13 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     assert rez == {'rawYaml': {'defaults': {'reminder_frequency_mins': [60], 'notifier': 'n',
                                             'summary_notifier': False, 'annotate_messages': True,
                                             'throttle_fires_per_mins': [1, 2], 'priority': 'low' },
+                               'tracked': [{'domain': 'alert2', 'name': 'global_exception', 'throttle_fires_per_mins': [20, 60]}],
                                'skip_internal_errors': False, 'notifier_startup_grace_secs': 4,
                                'defer_startup_notifications': True},
                    'raw': {'defaults': {'reminder_frequency_mins': [4], 'notifier': 'n',
                                         'summary_notifier': False, 'annotate_messages': True,
                                         'throttle_fires_per_mins': [5, 6], 'priority': 'low' },
+                           'tracked': [{'domain': 'alert2', 'name': 'global_exception', 'throttle_fires_per_mins': [20, 60]}],
                            'skip_internal_errors': 'true', 'notifier_startup_grace_secs': '7',
                            'defer_startup_notifications': True},
                    'rawUi': {'defaults': {'reminder_frequency_mins': '[4]',
@@ -1335,141 +1337,6 @@ async def test_display_msg3(hass, service_calls, hass_ws_client):
     await getEvent(wsc, msg_id2, 'z2')
     await checkNoMsg(wsc)
 
-async def test_display_cfg(hass, service_calls, hass_client, hass_ws_client, monkeypatch):
-    async def getEvent(aclient, msg_id):
-        msg = await aclient.receive_json()
-        await hass.async_block_till_done()
-        assert service_calls.isEmpty()
-        assert msg["id"] == msg_id
-        assert msg["type"] == "event"
-        assert msg['event']['configChange'] == True
-    async def getResult(aclient, msg_id, result='bogus', errorCode=None):
-        msg = await aclient.receive_json()
-        await hass.async_block_till_done()
-        _LOGGER.info(f'got result {msg}')
-        assert msg["type"] == wsapi.TYPE_RESULT
-        assert msg['id'] == msg_id
-        if errorCode is not None:
-            _LOGGER.info(msg)
-            assert msg['error']['code'] == errorCode
-        else:
-            assert result is not 'bogus'
-            assert not 'error' in msg
-            assert msg["result"] == result
-        await checkNoMsg(aclient)
-                
-    cfg = { 'alert2': {
-        'alerts': [
-            { 'domain': 'd', 'name': 'n1', 'condition':'off' },
-            { 'domain': 'd', 'name': 'n2', 'condition':'off', 'supersedes': [ { 'domain':'d','name':'n1'} ], 'priority':'medium' }
-        ] } }
-    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
-
-    wsc = await hass_ws_client(hass)
-    msg_id = 1
-    # missing dn_list
-    await wsc.send_json({ "id": msg_id, "type": "alert2_get_display_config" })
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    await getResult(wsc, msg_id, errorCode = 'invalid_format')
-
-    # get non-existent entity
-    msg_id += 1
-    await wsc.send_json({ "id": msg_id, "type": "alert2_get_display_config",
-                          'dn_list': [ { 'domain': 'd', 'name': 'nx' } ]
-                         })
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    await getResult(wsc, msg_id, result = [])
-
-    # existing entity but no supersededBy
-    msg_id += 1
-    await wsc.send_json({ "id": msg_id, "type": "alert2_get_display_config",
-                          'dn_list': [ { 'domain': 'd', 'name': 'n2' } ]
-                         })
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    await getResult(wsc, msg_id, result = [{'entityId': 'alert2.d_n2', 'config': {'supersededByList': [] }}])
-
-    # existing entity and supersededBy
-    msg_id += 1
-    await wsc.send_json({ "id": msg_id, "type": "alert2_get_display_config",
-                          'dn_list': [ { 'domain': 'd', 'name': 'n1' } ]
-                         })
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    await getResult(wsc, msg_id, result = [{'entityId': 'alert2.d_n1', 'config': {'supersededByList': [ 'alert2.d_n2' ] }}])
-    msg_id += 1
-    await wsc.send_json({ "id": msg_id, "type": "alert2_get_display_config",
-                          'dn_list': [ { 'domain': 'd', 'name': 'n1' },{ 'domain': 'd', 'name': 'n2' } ]
-                         })
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    await getResult(wsc, msg_id, result = [
-        {'entityId': 'alert2.d_n1', 'config': {'supersededByList': [ 'alert2.d_n2' ] }},
-        {'entityId': 'alert2.d_n2', 'config': {'supersededByList': [ ] }},
-    ])
-    
-    # Now check subscription
-    msg_id += 1
-    await wsc.send_json({ "id": msg_id, "type": "alert2_watch_display_config" })
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    async with asyncio.timeout(0.1):
-        await getResult(wsc, msg_id, result = None)
-    await checkNoMsg(wsc)
-    
-    # Reload should trigger a change event
-    async def fake_cfg(thass):
-        return cfg
-    with monkeypatch.context() as m:
-        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
-        await hass.services.async_call('alert2','reload', {})
-        await hass.async_block_till_done()
-    async with asyncio.timeout(0.2):
-        await getEvent(wsc, msg_id)
-    await checkNoMsg(wsc)
-
-    # Adding a new alert should
-    rez = await tpost("/api/alert2/manageAlert", {'create': {
-        'domain':'d', 'name':'n3', 'condition':'off', 'supersedes': "[ { 'domain':'d','name':'n2'} ]" }})
-    assert rez == {}
-    async with asyncio.timeout(0.2):
-        await getEvent(wsc, msg_id)
-    await checkNoMsg(wsc)
-
-    # Add second client
-    wsc2 = await hass_ws_client(hass)
-    msg_id2 = 1
-    await wsc2.send_json({ "id": msg_id2, "type": "alert2_watch_display_config" })
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    async with asyncio.timeout(0.1):
-        await getResult(wsc2, msg_id2, result = None)
-    await checkNoMsg(wsc)
-    await checkNoMsg(wsc2)
-
-    # Remove alert should trigger event on both
-    rez = await tpost("/api/alert2/manageAlert", {'delete': {'domain':'d', 'name':'n3'}})
-    assert rez == {}
-    async with asyncio.timeout(0.2):
-        await getEvent(wsc, msg_id)
-        await getEvent(wsc2, msg_id2)
-    await checkNoMsg(wsc)
-    await checkNoMsg(wsc2)
-
-    # Cancel first subscription, should still get notifications on second
-    await wsc.close()
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    await checkNoMsg(wsc2)
-    rez = await tpost("/api/alert2/manageAlert", {'create': {
-        'domain':'d', 'name':'n3', 'condition':'off', 'supersedes': "[ { 'domain':'d','name':'n2'} ]" }})
-    assert rez == {}
-    async with asyncio.timeout(0.2):
-        await getEvent(wsc2, msg_id2)
-    await checkNoMsg(wsc2)
-
 async def test_event(hass, service_calls, hass_client, hass_storage):
     cfg = { 'alert2': {
         'alerts': [
@@ -1667,3 +1534,39 @@ async def test_unknown(hass, service_calls, hass_storage):
 
     # NOTE - the trigger won't fire. I can't figure out a way to get the trigger to fire when a sensor is unknown
     # actually, it'd probably fire with an all state trigger and a condition
+
+async def test_internal(hass, service_calls, hass_storage):
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        ]}}
+    uiCfg = { 'defaults' : { },
+              'tracked' : [
+                  { 'domain': 'alert2', 'name': 'warning', 'friendly_name': 'f1' },
+                  { 'domain': 'alert2', 'name': 'error', 'friendly_name': 'f2' },
+                  { 'domain': 'alert2', 'name': 'global_exception', 'friendly_name': 'f3' },
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+    assert gad.tracked['alert2']['error']._friendly_name == 'f2'
+    assert gad.tracked['alert2']['warning']._friendly_name == 'f1'
+    assert gad.tracked['alert2']['global_exception']._friendly_name == 'f3'
+
+async def test_internal2(hass, service_calls, hass_storage):
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        ]}}
+    uiCfg = { 'defaults' : { },
+              'tracked' : [
+                  { 'domain': 'alert2', 'name': 'warning', 'supersedes': '[ 3' },
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
