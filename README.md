@@ -229,11 +229,17 @@ Alert2 does not yet support [Notify Entity Groups](https://www.home-assistant.io
 
 ### Alert2 internal errors
 
-Alert2 automatically defines an alert, `alert2.error`. It fires and will notify you of problems in your configuration file as well as if Alert2 internally encounters a problem, such as a notifier that does not exist.  If you don't want to be notified of errors like these, an option, `skip_internal_errors`, is available. One reason this alert is important is because if Alert2 itself encounters a problem, you may stop receiving alerts for things you do care about. So in a sense, this alert is at least as important as your most important alert.
+Alert2 automatically defines a few event alerts that fire internally:
 
-`alert2.error` may be configured. See example in the [Tracked](#tracked) section, below.  If you specify a notifier that doesn't exist for `alert2.error` itself, then it falls back to `persistent_notification`.
+* `alert2.alert2_global_exception` - This event alert fires if an HA task crashes due to an unhandled exception. This includes tasks for components outside Alert2.  For this alert, `throttle_fires_per_mins` defaults to `[20,60]` to limit alerts if some component goes into a crash loop.
 
-Alert2 installs a HA global handler to detect internal tasks that die and fires `alert2.error`. So you may see it fire for problems outside of Alert2.
+* `alert2.alert2_warning` - This event alert fires if the config contains something that is likely wrong but not an error (for example setting `clear_notificaiton` without setting `annotate_messages` to false).  It fires at most once for each type of warning over the lifetime of your HA install.
+
+* `alert2.alert2_error` - This event alert fires on config errors and errors in Alert2 itself. If you specify a notifier that doesn't exist for `alert2.error` itself, then it falls back to `persistent_notification`.
+
+Each of these alerts can be configured in your config, either YAML or via the UI.  To disable notifications for an alert, you can set the notifier to `null`. See example in the [Tracked](#tracked) section, below.
+
+If you want to completely disable these internal alerts, you can set `skip_internal_errors` to true. However, note that if `alert2.alert2_error` fires indicating a problem, you may stop receiving alerts for things you do care about. So in a sense, this alert is at least as important as your most important alert.
 
 ## Configuration
 

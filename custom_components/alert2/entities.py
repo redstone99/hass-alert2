@@ -1658,7 +1658,7 @@ class ConditionAlert(AlertBase):
             if self.annotate_messages and (msg.startswith('command_') or \
                                            any([msg.startswith(x) for x in ['clear_badge', 'clear_notification', 'update_widgets', 'remove_channel'] ])):
                 if self.alertData.uiMgr.setOneTime('set_annotate_messages_for_commands'):
-                    report(DOMAIN, 'warning', f'Set annotate_messages to "false" if sending commands to the HA companion app (This one time suggestion is due to {self.entity_id})')
+                    report(DOMAIN, 'warning', f'Set annotate_messages to "false" if sending commands to the HA companion app (This one time suggestion is due to {self.entity_id} with msg={msg})')
             self.async_write_ha_state()
             if state:
                 self.hass.bus.async_fire(EVENT_ALERT2_ON, { 'entity_id': self.entity_id,

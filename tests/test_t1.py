@@ -3142,6 +3142,31 @@ async def test_supersede3(hass, service_calls, monkeypatch):
         ('test','tg4'): set( [ ('dd','nntg4') ] ),
         ('test','tg7'): set( [ ('ddtg7','nntg7'),('ddtg7','nn2tg7') ] ),
     }
+
+async def test_supersede4(hass, service_calls):
+    # Test ok supersedes.
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        # Yaml interpretation happens only in UI
+        #{ 'domain': 'd', 'name': 'n2','supersedes': '{ "domain": "d" , "name": "n1" }', 'condition': 'off' },
+        { 'domain': 'd', 'name': 'n3','supersedes': '{ "domain": "d" , "name": "{{ genElem }}" }', 'condition': 'off', 'generator_name':'g3','generator': ['n1'] },
+        { 'domain': 'd', 'name': 'n4','supersedes': '{{ [{ "domain": "d", "name": genElem }] }}', 'condition': 'off', 'generator_name':'g2','generator': ['n1'] },
+        { 'domain': 'd', 'name': 'n5','supersedes': [{ 'domain': 'd', 'name': '{{ genElem }}' }], 'generator_name':'g5a','generator': ['n1'], 'condition': 'off' },
+        { 'domain': 'd', 'name': 'n1', 'condition': 'off'},
+        ] }}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    #service_calls.popNotifyEmpty('persistent_notification', 'extra keys.*\'x\'')
+    gad = hass.data[DOMAIN]
+    assert gad.supersedeMgr.supersedesMap == {
+        ('d','n5'): set( [ ('d','n1') ] ),
+        ('d','n4'): set( [ ('d','n1') ] ),
+        ('d','n3'): set( [ ('d','n1') ] ),
+        #('d','n2'): set( [ ('d','n1') ] ),
+        ('d','n1'): set( ),
+    }
+
     
 async def test_no_yaml(hass, service_calls):
     # First, let's say YAML setup happens before config entry

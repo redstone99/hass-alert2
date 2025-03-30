@@ -16,6 +16,7 @@ from homeassistant.components.http.data_validator import RequestDataValidator
 from homeassistant.exceptions import HomeAssistantError, TemplateError
 from homeassistant.helpers.storage import Store
 from homeassistant.util.yaml import parse_yaml
+import homeassistant.util.dt as dt
 from .util import (
     create_task,
     create_background_task,
@@ -779,6 +780,6 @@ class UiMgr:
             self.data['oneTime'] = {}
         if akey in self.data['oneTime']:
             return False
-        self.data['oneTime'][akey] = True
+        self.data['oneTime'][akey] = dt.now().isoformat()
         self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
         return True

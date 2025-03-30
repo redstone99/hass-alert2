@@ -23,6 +23,7 @@ from homeassistant.helpers import json as json_helper
 from   homeassistant.helpers import template as template_helper
 from homeassistant import config as conf_util
 import homeassistant.components.websocket_api as wsapi
+import homeassistant.util.dt as dt
 
 a2Ui.SAVE_DELAY = 0
 alert2.gGcDelaySecs = 0.1
@@ -1378,8 +1379,6 @@ async def test_uicfg(hass, service_calls, hass_storage):
 async def test_supersede(hass, service_calls, hass_storage):
     # Test that supersedes is flexible wrt to quoting
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
-        { 'domain': 'd', 'name': 'n19','supersedes': '{{ [{ "domain": "d", "name": genElem }] }}', 'condition': 'off', 'generator_name':'g1b','generator': ['n1'] },
-        { 'domain': 'd', 'name': 'n2','supersedes': [{ 'domain': 'd', 'name': '{{ genElem }}' }], 'generator_name':'g1a','generator': ['n1'], 'condition': 'off' },
         { 'domain': 'd', 'name': 'n1', 'condition': 'off'},
         ] }}
     uiCfg = { 'defaults' : { },
@@ -1410,7 +1409,6 @@ async def test_supersede(hass, service_calls, hass_storage):
     service_calls.popNotifyEmpty('persistent_notification', 'extra keys.*\'x\'')
     gad = hass.data[DOMAIN]
     assert gad.supersedeMgr.supersedesMap == {
-        ('d','n19'): set( [ ('d','n1') ] ),
         ('d','n17'): set( ),
         ('d','n16'): set( [ ('d','n1') ] ),
         ('d','n15'): set( [ ('d','n1') ] ),
@@ -1426,7 +1424,6 @@ async def test_supersede(hass, service_calls, hass_storage):
         ('d','n5'): set( [ ('d','n1') ] ),
         ('d','n4'): set( [ ('d','n1') ] ),
         ('d','n3'): set( [ ('d','n1') ] ),
-        ('d','n2'): set( [ ('d','n1') ] ),
         ('d','n1'): set( ),
     }
           
@@ -1481,7 +1478,7 @@ async def test_one_time3(hass, service_calls, hass_storage):
     ], } }
     hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
                                        'data': { 'config': { 'defaults': {} },
-                                                 'oneTime': { 'set_annotate_messages_for_commands': True } } }
+                                                 'oneTime': { 'set_annotate_messages_for_commands': dt.now().isoformat() } } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
