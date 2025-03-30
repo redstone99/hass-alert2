@@ -269,12 +269,13 @@ DOMAIN_NAME_DICT_GEN = {
     vol.Required('domain'): cv.template,
     vol.Required('name'): cv.template,
 }
+SUPERSEDES_GEN = vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT_GEN ]), supersedesTemplate)
 GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): cv.template,
     vol.Required('name'): cv.template,
     vol.Required('generator'): jtemplate,
     vol.Required('generator_name'): jstringName,
-    vol.Optional('supersedes'): vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT_GEN ]), supersedesTemplate),
+    vol.Optional('supersedes'): SUPERSEDES_GEN,
     # Overrides 'priority'
     vol.Optional('priority'): cv.template,
 })

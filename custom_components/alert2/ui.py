@@ -27,7 +27,7 @@ from .util import (
 from .config import ( TOP_LEVEL_SCHEMA, DEFAULTS_SCHEMA, SINGLE_TRACKED_SCHEMA_PRE_NAME,
                       SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME, SINGLE_TRACKED_SCHEMA,
                       SINGLE_ALERT_SCHEMA_EVENT, SINGLE_ALERT_SCHEMA_CONDITION, THRESHOLD_SCHEMA,
-                      GENERATOR_SCHEMA, NO_GENERATOR_SCHEMA )
+                      GENERATOR_SCHEMA, NO_GENERATOR_SCHEMA, SUPERSEDES_GEN )
 from .util import (     GENERATOR_DOMAIN )
 from .entities import (notifierTemplateToList, renderResultToList, generatorElemToVars, AlertGenerator, Tracker,
                        processSupersedes)
@@ -99,10 +99,15 @@ class SaveDefaultsView(HomeAssistantView):
 
 # Throws HomeAssistantError
 # converts raw input txt string to val as if it were coming from YAML, so ready for validation
-def prepStrConfigField(fname, tval):
+def prepStrConfigField(fname, tval, doReport=True):
     if fname in [ 'notifier', 'summary_notifier', 'reminder_frequency_mins', 'throttle_fires_per_mins',
-                  'data', 'generator', 'supersedes', 'defer_startup_notifications']:
+                  'data', 'generator', 'defer_startup_notifications' ]:
         if template_helper.is_template_string(tval):
+            return tval
+        return parse_yaml(tval)
+    elif fname in [ 'supersedes' ]:
+        stripped_tval = tval.strip()
+        if stripped_tval.startswith('{%') or stripped_tval.startswith('{{') or stripped_tval.startswith('{#') :
             return tval
         return parse_yaml(tval)
     elif fname in [ 'trigger', 'trigger_on', 'trigger_off' ]:
@@ -125,7 +130,11 @@ def prepStrConfigField(fname, tval):
             return parse_yaml(tval)
         return tval
     else:
-        report(DOMAIN, 'error', f'{gAssertMsg} prepStrConfigField got unrecognized field: "{fname}"')
+        msg = f'{gAssertMsg} prepStrConfigField got unrecognized field: "{fname}"'
+        if doReport:
+            report(DOMAIN, 'error', msg)
+        else:
+            raise HomeAssistantError(msg)
         return tval
     
 dummyTriggerDict = { 'trigger': 'homeassistant', 'event': 'start' }
@@ -178,7 +187,10 @@ class RenderValueView(HomeAssistantView):
                     (err, rez) = processSupersedes(tval, extraVars)
                     if err:
                         raise vol.Invalid(err)
-                    tval = rez
+                    obj = { 'domain': 'foo', 'name': 'bar' }
+                    obj[name] = rez
+                    tval = NO_GENERATOR_SCHEMA(obj)[name]
+                    #tval = rez
                     simple = True
                 else:
                     obj = { 'domain': 'foo', 'name': 'bar' }
@@ -355,19 +367,27 @@ def removeEmpty(adict):
             removeEmpty(adict[key])
         else:
             raise vol.Invalid(f'key "{key}" has non-string value "{adict[key]}" of type {type(adict[key])}')
-def prepStrConfig(adict):
+# report - either report or raise on error
+def prepStrConfig(adict, doReport=True):
     newDict = {}
     keys = adict.keys()
     for key in keys:
         if isinstance(adict[key], str):
-            newDict[key] = prepStrConfigField(key, adict[key])
+            newDict[key] = prepStrConfigField(key, adict[key], doReport=doReport)
         elif isinstance(adict[key], dict):
             newDict[key] = prepStrConfig(adict[key])
         elif key == 'alerts' and isinstance(adict[key], list):
             # We're processing a whole alert2 config, not just the config of a single alert
             newDict[key] = [ prepStrConfig(x) for x in adict[key] ]
+        elif key == 'tracked' and isinstance(adict[key], list):
+            # We're processing a whole alert2 config, not just the config of a single alert
+            newDict[key] = [ prepStrConfig(x) for x in adict[key] ]
         else:
-            report(DOMAIN, 'error', f'somehow key "{key}" has non-string val "{adict[key]}" of type "{type(adict[key])}" in dict {adict}')
+            if doReport:
+                msg = f'somehow key "{key}" has non-string val "{adict[key]}" of type "{type(adict[key])}" in dict {adict}'
+                report(DOMAIN, 'error', msg)
+            else:
+                raise vol.Invalid(msg)
             return newDict
     return newDict
 # Throws vol.Invalid
@@ -393,86 +413,6 @@ def debounce(hass, waitSecs, function):
         debounced._timerTask = create_background_task(hass, DOMAIN, call_function())
     debounced._timerTask = None
     return debounced
-
-# js can look at binary_sensor.alert2_ha_startup_done to be "on" for when ha has started
-# js can look at binary_sensor.alert2_ha_startup_done attribute last_reload_time for reloads
-class DisplayCfgSocketMgr:
-    def __init__(self, hass, alertData):
-        self.hass = hass
-        self.alertData = alertData
-        self.allSubscriptions = []
-        async_register_command(hass, self.async_handle_watch)
-        async_register_command(hass, self.async_handle_get)
-        self.noteConfigChange = debounce(hass, 0.1, self.noteConfigChangeInt)
-        
-        #if self.alertData.haStarted:
-        #    pass
-        #else:
-        #    async def doStart(ev): # async so that we're called in event loop thread
-        #        for asub in self.allSubscriptions:
-        #            asub['connection'].send_message({ "id": msgId, "type": "event",
-        #                                              "event": {'ha-started': True }, } )
-        #    self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, doStart)
-        
-    def displayCfgFromEnt(self, ent):
-        tt = self.alertData.supersedeMgr.supersededBySet(ent.alDomain, ent.alName)
-        supersededByIds = [ self.alertData.domainNameToId(x[0], x[1]) for x in tt ]
-        return {
-            'supersededByList': supersededByIds,
-            'priority': ent._priority,
-        }
-
-    # Called for any adding/deleting of alerts
-    def noteConfigChangeInt(self):
-        _LOGGER.info(f'note config change')
-        self.hass.verify_event_loop_thread(f'chk loop thread in DisplayCfgSocketMgr::notifyConfigChange')
-        for asub in self.allSubscriptions:
-            asub['connection'].send_message({ "id": asub['subscribeMsg']['id'], "type": "event",
-                                              #"event": { 'configChange': { 'entityId': ent.entity_id } } } )
-                                              "event": { 'configChange': True } } )
-    #def noteReload(self):
-    #    for asub in self.allSubscriptions:
-    #        asub['connection'].send_message({ "id": msgId, "type": "event",
-    #                                          "event": {'reload': True }, } )
-        
-    @callback
-    @decorators.websocket_command({
-            vol.Required("type"): 'alert2_watch_display_config',
-    })
-    def async_handle_watch(self, hass, connection, subscribeMsg):
-        msgId = subscribeMsg['id']
-        subscriptionEntry = {'connection': connection, 'subscribeMsg': subscribeMsg }
-        self.allSubscriptions.append(subscriptionEntry)
-        def unsubscribe():
-            idx = next((i for i, item in enumerate(self.allSubscriptions) if item['connection'] is connection), -1)
-            if idx == -1:
-                _LOGGER.warning(f'display_config unsubscribe called, msgId={msgId} but no subscription found')
-            else:
-                del self.allSubscriptions[idx]
-        connection.subscriptions[msgId] = unsubscribe
-        connection.send_result(msgId)
-        
-    @callback
-    @decorators.websocket_command( {
-            vol.Required("type"): 'alert2_get_display_config',
-            vol.Required('dn_list'): vol.All(cv.ensure_list, [
-                vol.Schema({
-                    vol.Required('domain'): cv.string,
-                    vol.Required('name'): cv.string,
-                    }) ]) })
-    def async_handle_get(self, hass, connection, requestMsg):
-        rez = []
-        for dn in requestMsg['dn_list']:
-            domain = dn['domain']
-            name = dn['name']
-            if domain in self.alertData.alerts and name in self.alertData.alerts[domain]:
-                ent = self.alertData.alerts[domain][name]
-                rez.append({ 'entityId': ent.entity_id, 'config': self.displayCfgFromEnt(ent) })
-        connection.send_message({ "id": requestMsg['id'], "type": "result",
-                                  'success': True,
-                                  "result": rez
-                                 } )
-        
 
 # Purpose is to support the UI watching for updates to the display_msg template.
 class DisplayMsgSocketMgr:
@@ -639,7 +579,16 @@ class UiMgr:
         #for aview in self.views:
         #    await aview.shutdown()
 
-    # Throws HomeAssistantError
+    def getEarlyInternalRawConfig(self, internalType):
+        cfg = self.data['config'] if 'config' in self.data else {}
+        if 'tracked' in self.data['config']:
+            for obj in self.data['config']['tracked']:
+                # can raise HomeAssistantError
+                pobj = prepStrConfig(obj, doReport=False)
+                if pobj['domain'] == DOMAIN and pobj['name'] == internalType:
+                    return pobj
+        return None
+        
     def getPreppedConfig(self):
         cfg = self.data['config'] if 'config' in self.data else {}
         try:
@@ -825,3 +774,11 @@ class UiMgr:
                 results.append({ 'id': ent.entity_id, 'domain': ent.alDomain, 'name': ent.alName })
         return results
 
+    def setOneTime(self, akey):
+        if not 'oneTime' in self.data:
+            self.data['oneTime'] = {}
+        if akey in self.data['oneTime']:
+            return False
+        self.data['oneTime'][akey] = True
+        self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
+        return True

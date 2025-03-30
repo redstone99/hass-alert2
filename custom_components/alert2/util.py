@@ -30,7 +30,10 @@ def report(domain: str, name: str, message: str | None = None, isException: bool
     else:
         #import traceback
         #_LOGGER.warning(f' err reported from: {"".join(traceback.format_stack())}')
-        _LOGGER.error(f'Err reported: {data}')
+        if domain == DOMAIN and name == 'warning':
+            _LOGGER.warning(f'Warning reported: {data}')
+        else:
+            _LOGGER.error(f'Err reported: {data}')
     #_LOGGER.warning(f'  report() called from: {"".join(traceback.format_stack())}')
     ghass = global_hass
     if ghass and ghass.loop.is_running():
@@ -87,7 +90,7 @@ def taskDone(domain, atask):
         astack = output.getvalue()
         _LOGGER.error(f'unhandled_exception with stack {astack}')
         if domain == 'alert2':
-            report(domain, 'error', f'unhandled_exception: {ex}')
+            report(domain, 'global_exception', f'unhandled_exception: {ex}')
         else:
             report(domain, 'unhandled_exception', str(ex))
 

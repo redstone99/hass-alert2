@@ -140,11 +140,15 @@ class MovingSum:
             return 60
         return secsToWait
 
-def getField(fieldName, config, defaults):
+def getField(fieldName, config, defaultCfg):
     if fieldName in config:
         return config[fieldName]
-    elif fieldName in defaults:
-        return defaults[fieldName]
+    if config['domain'] == DOMAIN:
+        for atracked in defaultCfg['tracked']:
+            if atracked['name'] == config['name'] and fieldName in atracked:
+                return atracked[fieldName]
+    if fieldName in defaultCfg['defaults']:
+        return defaultCfg['defaults'][fieldName]
     else:
         raise vol.Invalid(f'Alert {config["domain"]},{config["name"]} config or defaults must specify {fieldName}')
 
@@ -459,8 +463,10 @@ class AlertCommon(Entity):
                                                          'name': self.alName })
 
 # cfgElem is YAML element of 'supersedes'
-# returns pair of ( errStr_or_none, result )
+# returns pair of ( errStr_or_none, result ).  result can be either list of dict, or a single dict (if template).
+# if a single dict, it gets converted to list of dict when the generator-produced config is validated.
 # errStr does not include generator name
+# 
 def processSupersedes(cfgElem, svars):
     #if template_helper.is_template_string(frn.template):
     if isinstance(cfgElem, template_helper.Template):
@@ -473,6 +479,10 @@ def processSupersedes(cfgElem, svars):
         except Exception as err:  # literal_eval can throw various kinds of exceptions
             return (f'Supersedes template trying to parse "{sStr}" returned err {err}', None)
         return (None, sArr)
+        #if isinstance(sArr, list):
+        #    return (None, sArr)
+        #else:
+        #    return (None, [sArr])
     elif isinstance(cfgElem, list):
         newSupersedes = []
         for adn in cfgElem:
@@ -729,12 +739,13 @@ class AlertBase(AlertCommon, RestoreEntity):
             hass: HomeAssistant,
             alertData,
             config: dict[str, Any],
-            defaults: dict[str, Any],
+            defaultCfg: dict[str, Any],
             genVars = None
     ):
         AlertCommon.__init__(self, hass, alertData, config)
         RestoreEntity.__init__(self)
         # super().__init__()
+        self.config = config
         self.alDomain = config['domain']
         self.alName = config['name']
         self._attr_name = entNameFromDN(self.alDomain, self.alName)
@@ -742,9 +753,9 @@ class AlertBase(AlertCommon, RestoreEntity):
         self._attr_unique_id = f'd={self.alDomain}-n={self.alName}'
         
         # config stuff
-        self._notifier_list_template = getField('notifier', config, defaults)
-        self._summary_notifier = getField('summary_notifier', config, defaults)
-        self._priority = getField('priority', config, defaults)
+        self._notifier_list_template = getField('notifier', config, defaultCfg)
+        self._summary_notifier = getField('summary_notifier', config, defaultCfg)
+        self._priority = getField('priority', config, defaultCfg)
         self._condition_template = config['condition'] if 'condition' in config else None
         self._message_template = config['message'] if 'message' in config else None
         self._title_template = config['title'] if 'title' in config else None
@@ -778,8 +789,8 @@ class AlertBase(AlertCommon, RestoreEntity):
             self._notifier_list_template.hass = hass
         if isinstance(self._summary_notifier, template_helper.Template):
             self._summary_notifier.hass = hass
-        self.annotate_messages = getField('annotate_messages', config, defaults)
-        throttle_fires_per_mins = getField('throttle_fires_per_mins', config, defaults)
+        self.annotate_messages = getField('annotate_messages', config, defaultCfg)
+        throttle_fires_per_mins = getField('throttle_fires_per_mins', config, defaultCfg)
         self.movingSum = None
         if throttle_fires_per_mins is not None:
             self.movingSum = MovingSum(throttle_fires_per_mins[0], throttle_fires_per_mins[1])
@@ -884,6 +895,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             'domain': self.alDomain,
             'name': self.alName,
             'has_display_msg': (self._display_msg_template is not None),
+            'priority': self._priority,
         }
         baseDict.update(self.more_state_attributes())
         return baseDict
@@ -1298,10 +1310,9 @@ class EventAlert(AlertBase):
             hass: HomeAssistant,
             alertData,
             config: dict[str, Any],
-            defaults: dict[str, any],
+            defaultCfg: dict[str, any],
     ):
-        super().__init__(hass, alertData, config, defaults)
-        self.config = config
+        super().__init__(hass, alertData, config, defaultCfg)
         self.detach_trigger = None
         self.triggerCond = None
         if 'trigger' in config:
@@ -1385,10 +1396,10 @@ class ConditionAlert(AlertBase):
             hass: HomeAssistant,
             alertData,
             config: dict[str, Any],
-            defaults,
+            defaultCfg,
             genVars = None
     ) -> None:
-        AlertBase.__init__(self, hass, alertData, config=config, defaults=defaults, genVars=genVars)
+        AlertBase.__init__(self, hass, alertData, config=config, defaultCfg=defaultCfg, genVars=genVars)
 
         # Restored on HA restart
         self.last_on_time = None
@@ -1399,7 +1410,7 @@ class ConditionAlert(AlertBase):
         # used so we can then notify it turned off.
         #self.notified_on = False
         self.added_to_hass_called = False
-        self.reminder_frequency_mins = getField('reminder_frequency_mins', config, defaults)
+        self.reminder_frequency_mins = getField('reminder_frequency_mins', config, defaultCfg)
         self._done_message_template = config['done_message'] if 'done_message' in config else None
         if self._done_message_template is not None:
             self._done_message_template.hass = hass
@@ -1487,14 +1498,18 @@ class ConditionAlert(AlertBase):
             return "off"
                 
     def more_state_attributes(self):
-        return {
+        rez = {
             'last_on_time': self.last_on_time,
             'last_off_time': self.last_off_time,
             'reminders_since_fire': self.reminders_since_fire,
             'cond_true_time': self.cond_true_time,
             #'notified_on': self.notified_on,
         }
-
+        # Don't add attribute if it is None
+        if 'supersedes' in self.config and self.config['supersedes']:
+            rez['supersedes'] = self.config['supersedes']
+        return rez
+    
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
         if self.cond_true_task:
@@ -1639,6 +1654,11 @@ class ConditionAlert(AlertBase):
                 didNotify = self._notify(now, NotificationReason.StopFiring, msg,
                                          skip_notify=is_acked)
                 self.reminder_check(now)
+            
+            if self.annotate_messages and (msg.startswith('command_') or \
+                                           any([msg.startswith(x) for x in ['clear_badge', 'clear_notification', 'update_widgets', 'remove_channel'] ])):
+                if self.alertData.uiMgr.setOneTime('set_annotate_messages_for_commands'):
+                    report(DOMAIN, 'warning', f'Set annotate_messages to "false" if sending commands to the HA companion app (This one time suggestion is due to {self.entity_id})')
             self.async_write_ha_state()
             if state:
                 self.hass.bus.async_fire(EVENT_ALERT2_ON, { 'entity_id': self.entity_id,

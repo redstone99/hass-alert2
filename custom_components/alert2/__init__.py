@@ -21,6 +21,7 @@ from   homeassistant.const import (
 )
 from   homeassistant.core import HomeAssistant, Event
 from   homeassistant.helpers import discovery
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.service import async_register_admin_service
 import homeassistant.helpers.config_validation as cv
 from   homeassistant.helpers.entity_component import EntityComponent
@@ -41,7 +42,7 @@ from .config import (
 from .entities import (
     EventAlert, ConditionAlert, AlertGenerator
 )
-from .ui import ( UiMgr, DisplayCfgSocketMgr )
+from .ui import ( UiMgr )
 from .util import (
     report,
     create_task,
@@ -354,6 +355,10 @@ class Alert2Data:
                 'throttle_fires_per_mins': None,
                 'priority': 'low',
             },
+            # Optional defaults for internal alerts
+            'tracked': [
+                { 'domain': DOMAIN, 'name': 'global_exception', 'throttle_fires_per_mins': [20, 60] }
+            ],
             'skip_internal_errors': False,
             'notifier_startup_grace_secs': kNotifierStartupGraceSecs,
             'defer_startup_notifications': False,
@@ -400,33 +405,39 @@ class Alert2Data:
             if err:
                 self.earlyErrors.append(err)
                 
-           
+        #self.deepcleanEntityRegistry()
+            
         if not self.topConfig['skip_internal_errors']:
-            errCfg = None
-            try:
-                if 'tracked' in self._rawYamlConfig:
-                    for obj in self._rawYamlConfig['tracked']:
-                        if obj['domain'] == DOMAIN and obj['name'] == 'error':
-                            errCfg = SINGLE_TRACKED_SCHEMA(obj)
-                            break
-            except (vol.Invalid, TypeError, KeyError):
-                pass
-            if errCfg:
-                errorEnt = self.declareEventInt(errCfg)
-            else:
-                errorEnt = self.declareEvent(DOMAIN, 'error')
-            if isinstance(errorEnt, Entity):
-                await self.component.async_add_entities([ errorEnt ])
-                _LOGGER.debug(f'Lifecycle create alert {errorEnt.entity_id}')
-            else:
-                report(DOMAIN, 'error', errorEnt) # errMsg
+            for internalType in ['error', 'warning', 'global_exception']:
+                errCfg = None
+                try:
+                    cfgObj = None
+                    if 'tracked' in self._rawYamlConfig:
+                        for obj in self._rawYamlConfig['tracked']:
+                            if obj['domain'] == DOMAIN and obj['name'] == internalType:
+                                cfgObj = obj
+                                break
+                    if cfgObj is None:
+                        cfgObj = self.uiMgr.getEarlyInternalRawConfig(internalType)
+                    if cfgObj:
+                        errCfg = SINGLE_TRACKED_SCHEMA(cfgObj)
+                except (vol.Invalid, HomeAssistantError, TypeError, KeyError):
+                    pass # Handled below in loadAlertBlock
+                if errCfg:
+                    errorEnt = self.declareEventInt(errCfg)
+                else:
+                    errorEnt = self.declareEvent(DOMAIN, internalType)
+                if isinstance(errorEnt, Entity):
+                    await self.component.async_add_entities([ errorEnt ])
+                    _LOGGER.debug(f'Lifecycle create alert {errorEnt.entity_id}')
+                else:
+                    report(DOMAIN, 'error', errorEnt) # errMsg
 
 
         if isFirstInit:
             self.delayedNotifierMgr = DelayedNotifierMgr(self._hass,
                                                          self.topConfig['notifier_startup_grace_secs'],
                                                          self.topConfig['defer_startup_notifications'])
-            self.displayCfgWsMgr = DisplayCfgSocketMgr(self._hass, self)
             
         # Now that report() is available, continue init that might use it
         
@@ -441,12 +452,12 @@ class Alert2Data:
                     _LOGGER.error(f'Exception {context}')
                     return
                 self.inHandler = True
-                excMsg = f'Global exception handler: a task died to due to an unhandled exception: '
+                excMsg = f'An HA task (possibly unrelated to Alert2) died to due to an unhandled exception: '
                 if 'exception' in context:
                     ex = context['exception']
                     excMsg += f'{ex.__class__}: {ex}. '
                 excMsg += f'full context: {context}'
-                report(DOMAIN, 'error', excMsg)
+                report(DOMAIN, 'global_exception', excMsg)
                 if oldHandler:
                     oldHandler(loop, context)
                 self.inHandler = False
@@ -546,7 +557,7 @@ class Alert2Data:
         # We already tried processing the defaults section once. Report errors encountered.
         if self.earlyErrors:
             report(DOMAIN, 'error', f'{self.earlyErrors}')
-            
+
         # Now check the rest of the config
         # TODO - this is redoing a bunch of work parsing templates.
         try:
@@ -580,7 +591,7 @@ class Alert2Data:
                 skipReport = False
                 try:
                     aCfg = SINGLE_TRACKED_SCHEMA(obj)
-                    if aCfg['domain'] == DOMAIN and aCfg['name'] == 'error':
+                    if aCfg['domain'] == DOMAIN and aCfg['name'] in ['error', 'warning','global_exception']:
                         skipReport = True # already handled above
                     else:
                         newEnt = self.declareEventInt(aCfg)
@@ -644,7 +655,6 @@ class Alert2Data:
             # notify uiMgr so can update display_msg watcher if appropriate
             #_LOGGER.warning(f'will call alertCreated: {"".join(traceback.format_stack())}')
             self.uiMgr.alertCreated(newEnt.alDomain, newEnt.alName)
-            self.displayCfgWsMgr.noteConfigChange()
         elif doReport:
             # Must be error message
             report(DOMAIN, 'error', newEnt)
@@ -689,7 +699,6 @@ class Alert2Data:
                 _LOGGER.info(f'Removing undeclared registry entry for {entId}')
                 entRegistry.async_remove(entId)
         
-        self.displayCfgWsMgr.noteConfigChange()
         return None
 
     def delayGcRegistry(self):
@@ -707,6 +716,20 @@ class Alert2Data:
             self.gcEntityRegistry()
         self.gcTask = create_background_task(self._hass, DOMAIN, adelay())
 
+    # Only useful if you change how unique_id is generated
+    def deepcleanEntityRegistry(self):
+        entRegistry = entity_registry.async_get(self._hass)
+        hassIds = self._hass.states.async_entity_ids(DOMAIN)
+        for anId in hassIds:
+            if entRegistry.async_is_registered(anId):
+                _LOGGER.info(f'gcEntityRegistry: Removing registry entry for {anId}')
+                entRegistry.async_remove(anId)
+        hassIds = self._hass.states.async_entity_ids('sensor')
+        for anId in hassIds:
+            if anId.startswith('sensor.alert2generator_') and entRegistry.async_is_registered(anId):
+                _LOGGER.info(f'gcEntityRegistry: Removing registry entry for {anId}')
+                entRegistry.async_remove(anId)
+        
     def gcEntityRegistry(self):
         #_LOGGER.info('gcEntityRegistry: Purging unused Alert2 registry entries')
         entRegistry = entity_registry.async_get(self._hass)
@@ -813,7 +836,7 @@ class Alert2Data:
             return errMsg
         if not domain in self.tracked:
             self.tracked[domain] = {}
-        entity = EventAlert(self._hass, self, config, self.topConfig['defaults'])
+        entity = EventAlert(self._hass, self, config, self.topConfig)
         self.tracked[domain][name] = entity
         #self.notifiers.add(entity.notifier)
         return entity
@@ -834,7 +857,7 @@ class Alert2Data:
             return errMsg
         if not domain in self.alerts:
             self.alerts[domain] = {}
-        entity = ConditionAlert(self._hass, self, config, self.topConfig['defaults'], genVars=genVars)
+        entity = ConditionAlert(self._hass, self, config, self.topConfig, genVars=genVars)
         self.alerts[domain][name] = entity
         #self.notifiers.add(entity.notifier)
         return entity
@@ -904,7 +927,7 @@ class Alert2Data:
         domain = data['domain']
         name = data['name']
         if self.topConfig['skip_internal_errors']:
-            if domain == DOMAIN and name == 'error':
+            if domain == DOMAIN and name in ['error', 'warning', 'global_exception']:
                 # The internal error was logged back up in report(), so no need to log again
                 return
         
