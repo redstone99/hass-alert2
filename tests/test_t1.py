@@ -3235,3 +3235,52 @@ async def test_native_friendly(hass, service_calls):
 
     assert hass.states.get('alert2.test_t1').attributes['friendly_name'] == 'test_t1'
     assert hass.states.get('alert2.test_t2').attributes['friendly_name'] == 'happy'
+
+async def test_supersedes_off(hass, service_calls, caplog):
+    # Test when alert A & B both turn on or off at the same time and A supersedes B
+    # Test bug where fires_since_last_notify was being set for superseded alert, resulting in skipped summary
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        #{ 'domain': 't', 'name': 't2', 'condition': 'sensor.a' },
+        { 'domain': 't', 'name': 't3', 'condition': 'sensor.a', 'supersedes': [{'domain':'t','name':'t1'},{'domain':'t','name':'t2'}] },
+        { 'domain': 't', 'name': 't1', 'condition': 'sensor.a' },
+        { 'domain': 't', 'name': 't4', 'condition': 'sensor.a', 'supersedes': {'domain':'t','name':'t1'} },
+    ], } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifySearch('persistent_notification', 't3', 'turned on')
+    service_calls.popNotifySearch('persistent_notification', 't4', 'turned on')
+    assert service_calls.isEmpty()
+    
+    await setAndWait(hass, "sensor.a", 'off')
+    service_calls.popNotifySearch('persistent_notification', 't3', 'turned off')
+    service_calls.popNotifySearch('persistent_notification', 't4', 'turned off')
+    assert service_calls.isEmpty()
+    assert not 'skipping summaries' in caplog.text
+    
+async def test_supersedes_off2(hass, service_calls, caplog):
+    # Test when alert A & B both turn on or off at the same time and A supersedes B
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        { 'domain': 't', 'name': 't2', 'condition': 'sensor.a' },
+        { 'domain': 't', 'name': 't3', 'condition': 'sensor.a', 'supersedes': [{'domain':'t','name':'t1'},{'domain':'t','name':'t2'}] },
+        { 'domain': 't', 'name': 't1', 'condition': 'sensor.a' },
+    ], } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifySearch('persistent_notification', 't3', 'turned on')
+    assert service_calls.isEmpty()
+    
+    await setAndWait(hass, "sensor.a", 'off')
+    service_calls.popNotifySearch('persistent_notification', 't3', 'turned off')
+    assert service_calls.isEmpty()
+    assert not 'skipping summaries' in caplog.text
+    
