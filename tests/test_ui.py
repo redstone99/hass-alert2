@@ -505,11 +505,19 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert rez == { 'rez': 'foo' }
     rez = await tpost("/api/alert2/renderValue", {'name': 'done_message', 'txt': 'foo{' })
     assert rez == { 'rez': 'foo{' }
-    #rez = await tpost("/api/alert2/renderValue", {'name': 'done_message', 'txt': '"bar"' })
-    #assert rez == { 'rez': 'bar' }
     rez = await tpost("/api/alert2/renderValue", {'name': 'done_message', 'txt': '{{ "joe"+"ggg" }}' })
     assert rez == { 'rez': 'joeggg' }
     rez = await tpost("/api/alert2/renderValue", {'name': 'done_message', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
+    assert rez == { 'rez': 'joeyay' }
+    
+    # reminder_message
+    rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_message', 'txt': 'foo' })
+    assert rez == { 'rez': 'foo' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_message', 'txt': 'foo{' })
+    assert rez == { 'rez': 'foo{' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_message', 'txt': '{{ "joe"+"ggg" }}' })
+    assert rez == { 'rez': 'joeggg' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_message', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
     assert rez == { 'rez': 'joeyay' }
     
     # trigger
