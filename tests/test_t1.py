@@ -1,4 +1,6 @@
 #
+# venv/bin/pip install --upgrade -r requirements.txt -r requirements_test.txt
+#
 # JTESTDIR=/home/redstone/home-monitoring/homeassistant  venv/bin/pytest --show-capture=no
 #
 #from homeassistant.helpers import entity_registry as er
