@@ -56,6 +56,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
             'reminder_frequency_mins': [3],
             'throttle_fires_per_mins': [1,2],
             'priority': 'medium',
+            'supersede_debounce_secs': 4,
         },
         'alerts': [
             { 'domain': 'test', 'name': 't1', 'condition': 'off' }
@@ -75,6 +76,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert t1._notifier_list_template.template == cfga['defaults']['notifier']
     assert t1._summary_notifier.template == cfga['defaults']['summary_notifier']
     assert t1.reminder_frequency_mins == cfga['defaults']['reminder_frequency_mins']
+    assert t1._supersede_debounce_secs == cfga['defaults']['supersede_debounce_secs']
     assert t1.movingSum.maxCount == cfga['defaults']['throttle_fires_per_mins'][0]
     assert t1.movingSum.intervalSecs == cfga['defaults']['throttle_fires_per_mins'][1]*60
 
@@ -131,6 +133,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'notifier_startup_grace_secs': 3 }})
     assert re.search('non-string value', rez['error'])
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'notifier_startup_grace_secs': '3' }})
+    assert rez['raw']['notifier_startup_grace_secs'] == '3'
     assert rez['rawUi']['notifier_startup_grace_secs'] == '3'
     assert hass_storage['alert2.storage']['data']['config']['notifier_startup_grace_secs'] == '3'
     assert gad.topConfig['notifier_startup_grace_secs'] == 3
@@ -225,6 +228,19 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert hass_storage['alert2.storage']['data']['config']['defaults']['reminder_frequency_mins'] == '["5","7"]'
     assert gad.topConfig['defaults']['reminder_frequency_mins'] == [5,7]
 
+    # supersede_debounce_secs
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'supersede_debounce_secs': 3} }})
+    assert re.search('non-string value', rez['error'])
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'supersede_debounce_secs': '4'} }})
+    assert rez['rawUi']['defaults']['supersede_debounce_secs'] == '4'
+    assert hass_storage['alert2.storage']['data']['config']['defaults']['supersede_debounce_secs'] == '4'
+    assert gad.topConfig['defaults']['supersede_debounce_secs'] == 4
+    rez = await tpost("/api/alert2/loadTopConfig", {})
+    assert rez['raw']['defaults']['supersede_debounce_secs'] == '4'
+    assert rez['rawUi']['defaults']['supersede_debounce_secs'] == '4'
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'supersede_debounce_secs': '-4'} }})
+    assert re.search('be at least 0', rez['error'])
+
     # throttle_fires_per_mins
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'throttle_fires_per_mins': ''} }})
     #   pick up the default val
@@ -284,6 +300,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
             #'reminder_frequency_mins': [3], UI overrides base
             'throttle_fires_per_mins': [1,2]  # UI overrides yaml
             # 'priority' - underlying default comes through
+            # supersede_debounce_secs: overridden
         },
         'alerts': [
             { 'domain': 'test', 'name': 't1', 'condition': 'off' }
@@ -295,6 +312,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     cfga = cfg['alert2']
     uiCfg = { 'defaults' : { 'reminder_frequency_mins': '[4]',
                               'throttle_fires_per_mins': '[5,6]',
+                             'supersede_debounce_secs': '6',
                              },
                'skip_internal_errors': 'true',
                'notifier_startup_grace_secs': '7',
@@ -321,18 +339,21 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/loadTopConfig", {})
     _LOGGER.warning(rez)
     assert rez == {'rawYaml': {'defaults': {'reminder_frequency_mins': [60], 'notifier': 'n',
+                                            'supersede_debounce_secs': 0.5,
                                             'summary_notifier': False, 'annotate_messages': True,
                                             'throttle_fires_per_mins': [1, 2], 'priority': 'low' },
                                'tracked': [{'domain': 'alert2', 'name': 'global_exception', 'throttle_fires_per_mins': [20, 60]}],
                                'skip_internal_errors': False, 'notifier_startup_grace_secs': 4,
                                'defer_startup_notifications': True},
                    'raw': {'defaults': {'reminder_frequency_mins': [4], 'notifier': 'n',
+                                        'supersede_debounce_secs': '6',
                                         'summary_notifier': False, 'annotate_messages': True,
                                         'throttle_fires_per_mins': [5, 6], 'priority': 'low' },
                            'tracked': [{'domain': 'alert2', 'name': 'global_exception', 'throttle_fires_per_mins': [20, 60]}],
                            'skip_internal_errors': 'true', 'notifier_startup_grace_secs': '7',
                            'defer_startup_notifications': True},
                    'rawUi': {'defaults': {'reminder_frequency_mins': '[4]',
+                                          'supersede_debounce_secs': '6',
                                           'throttle_fires_per_mins': '[5,6]'},
                              'skip_internal_errors': 'true', 'notifier_startup_grace_secs': '7'}}
 
@@ -395,6 +416,12 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_frequency_mins', 'txt': '"[3,5]"' })
     assert re.search('expected float', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_frequency_mins', 'txt': '-3' })
+    assert re.search('must be at least', rez['error'])
+
+    # supersede_debounce_secs
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersede_debounce_secs', 'txt': '3' })
+    assert rez == { 'rez': 3 }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'supersede_debounce_secs', 'txt': '-3' })
     assert re.search('must be at least', rez['error'])
 
     # throttle_fires_per_mins
@@ -1276,8 +1303,8 @@ async def test_display_msg2(hass, service_calls, hass_storage, caplog):
     assert n3.notification_control == a2Entities.NOTIFICATIONS_ENABLED
     assert n4.notification_control == a2Entities.NOTIFICATIONS_ENABLED
     assert service_calls.isEmpty()
-    assert 'Summary: Alert2 d_n4 fired 1x' in caplog.text
-    assert 'Summary: Alert2 d_n3 fired 1x' in caplog.text
+    assert re.search('Summary: Alert2 d_n4: .*fired 1x', caplog.text)
+    assert re.search('Summary: Alert2 d_n3: .*fired 1x', caplog.text)
 
 async def test_display_msg3(hass, service_calls, hass_ws_client):
     # Purpose is to both test an event alert
