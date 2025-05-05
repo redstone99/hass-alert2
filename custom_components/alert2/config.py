@@ -208,6 +208,7 @@ DEFAULTS_SCHEMA = vol.Schema({
         None, vol.All(vol.ExactSequence([int, vol.Coerce(float)]),
                       vol.ExactSequence([vol.Range(min=1.),vol.Range(min=0.01)]))),
     vol.Optional('priority'): vol.Any('low', 'medium', 'high', msg='must be one of "low", "medium" or "high"'),
+    vol.Optional('supersede_debounce_secs'): vol.All(vol.Coerce(float), vol.Range(min=0)),
 })
 
 SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({
@@ -260,10 +261,12 @@ SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Optional('condition_on'): boolTemplate,
     vol.Optional('trigger_on'): jProtectedTrigger,
     vol.Optional('manual_on'): cv.boolean,
+    vol.Optional('reminder_message'): cv.template,
     vol.Optional('done_message'): cv.template,
     vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
     vol.Optional('delay_on_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
     vol.Optional('early_start'): cv.boolean,
+    vol.Optional('supersede_debounce_secs'): vol.All(vol.Coerce(float), vol.Range(min=0)),
 })
 DOMAIN_NAME_DICT_GEN = {
     vol.Required('domain'): cv.template,

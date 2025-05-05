@@ -1,6 +1,11 @@
+import os
+import sys
 import re
 import pytest
 from homeassistant.core import (ServiceRegistry)
+if os.environ.get('JTESTDIR'):
+    sys.path.insert(0, os.environ['JTESTDIR'])
+from custom_components.alert2.util import (     set_shutting_down, )
 #import logging
 #_LOGGER = logging.getLogger(None) # get root logger
 #_LOGGER.setLevel(logging.INFO)
@@ -83,3 +88,10 @@ from pytest_socket import enable_socket, disable_socket, socket_allow_hosts
 def pytest_runtest_setup():
     enable_socket()
     socket_allow_hosts(["127.0.0.1", "localhost", "::1"], allow_unix_socket=True)
+
+@pytest.fixture(autouse=True)
+def global_setup_teardown():
+    # setup code for every test
+    set_shutting_down(False)
+    yield
+    # teardown code for every test

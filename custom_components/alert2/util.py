@@ -15,6 +15,7 @@ EVENT_ALERT2_DELETE  = 'alert2_delete'
 EVENT_ALERT2_FIRE = 'alert2_alert_fire'
 EVENT_ALERT2_ON = 'alert2_alert_on'
 EVENT_ALERT2_OFF = 'alert2_alert_off'
+shutting_down = False
 
 #
 # report() - report that an event alert has fired.
@@ -27,6 +28,7 @@ def report(domain: str, name: str, message: str | None = None, isException: bool
         data['message'] = message
     if isException:
         _LOGGER.exception(f'Exception reported: {data}')
+        #    _LOGGER.exception(f'Exception reported: {data}', exc_info=isException)
     else:
         #import traceback
         #_LOGGER.warning(f' err reported from: {"".join(traceback.format_stack())}')
@@ -35,6 +37,10 @@ def report(domain: str, name: str, message: str | None = None, isException: bool
         else:
             _LOGGER.error(f'Err reported: {data}')
     #_LOGGER.warning(f'  report() called from: {"".join(traceback.format_stack())}')
+    if shutting_down:
+        _LOGGER.warning(f'   Not notifying or further processing alert because HA is shutting donw')
+        return
+        
     ghass = global_hass
     if ghass and ghass.loop.is_running():
         ghass.loop.call_soon_threadsafe(lambda: ghass.bus.async_fire(EVENT_TYPE, data))
@@ -94,6 +100,9 @@ def taskDone(domain, atask):
         else:
             report(domain, 'unhandled_exception', str(ex))
 
+def set_shutting_down(abool):
+    global shutting_down
+    shutting_down = abool
 def set_global_hass(ahass):
     global global_hass
     global_hass = ahass

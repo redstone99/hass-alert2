@@ -171,7 +171,7 @@ Each alert can specify a priority. Priority affects how the alert is displayed i
 
 Notifications are sent when an event alert fires, when a condition alert starts or stops firing, and periodically as a reminder that a condition alert is still firing.  You can optionally request that notifications be sent at the end of periods when notifications where snoozed or throttled if there was any alert activity in the interval. This is via the `summary_notifier` config option.  We recommend setting `summary_notifier` to be notified when e.g., throttling ends.
 
-Each notification by default includes some basic context information (detailed below).  An alert can also specify a template `message` to be sent  each time the alert fires. That message is sent out with notifications and also is viewable in the front-end UI.  Condition alerts can also specify a `done_message` to be sent when the alert stops firing.
+Each notification by default includes some basic context information (detailed below).  An alert can also specify a template `message` to be sent  each time the alert fires. That message is sent out with notifications and also is viewable in the front-end UI.  Condition alerts can also specify a `done_message` to be sent when the alert stops firing, and a `reminder_message` to customize reminder notifications.
 
 There are a few mechanisms available for controlling when and whether notifications are sent.
 
@@ -188,7 +188,7 @@ There are a few mechanisms available for controlling when and whether notificati
 
 #### Notification text
 
-The text of each notification by default includes some basic context information that varies based on the type of notification. That information may be augmented with the `message` or `done_message` options.  Notification text looks like:
+The text of each notification by default includes some basic context information that varies based on the type of notification. That information may be augmented with the `message`, `done_message`, or `reminder_message` options.  Notification text looks like:
 
 * Event alert fires: `message` text prepended with name (or `friendly_name`) of alert.
 
@@ -198,7 +198,7 @@ The text of each notification by default includes some basic context information
 
         Alert2 kitchen_door_open: turned on
 
-* Condition alert reminder that it's still on:
+* Condition alert reminder that it's still on. This can be customized via `reminder_message`:
 
         Alert2 kitchen_door_open: on for 5m
 
@@ -233,7 +233,7 @@ Alert2 automatically defines a few event alerts that fire internally:
 
 * `alert2.alert2_global_exception` - This event alert fires if an HA task crashes due to an unhandled exception. This includes tasks for components outside Alert2.  For this alert, `throttle_fires_per_mins` defaults to `[20,60]` to limit alerts if some component goes into a crash loop.
 
-* `alert2.alert2_warning` - This event alert fires if the config contains something that is likely wrong but not an error (for example setting `clear_notificaiton` without setting `annotate_messages` to false).  It fires at most once for each type of warning over the lifetime of your HA install.
+* `alert2.alert2_warning` - This event alert fires if the config contains something that is likely wrong but not an error (for example setting `clear_notification` without setting `annotate_messages` to false).  It fires at most once for each type of warning over the lifetime of your HA install.
 
 * `alert2.alert2_error` - This event alert fires on config errors and errors in Alert2 itself. If you specify a notifier that doesn't exist for `alert2.error` itself, then it falls back to `persistent_notification`.
 
@@ -289,6 +289,7 @@ The `defaults:` subsection specifies optional default values for parameters comm
 | `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notification, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
 | `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on a list of two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, "[10, 60]" means you'll receive no more than 10 notifications of the alert firing every hour.<br><br>Default is no throttling. You can set `summary_notifier` to be notified when throttling ends (by default you won't be). |
 | `priority` | string | Can be "low", "medium", or "high". Affects display of alert in the Alert2 UI Overview card.  Active alerts are sorted by priority and medium and high-priority alerts have a badge colored orange and red, respectively. May be template when used with generators. Default is "low" |
+| `supersede_debounce_secs` | float | Suppress notifications of an alert if any superseding alert has fired within this many seconds of now. The purpose of this setting is to reduce extraneous notifications due to races between two alerts both turning on or off at almost the same time. Defaults to 0.5 seconds.  Can be any value >= 0. |
 
 Example:
 
@@ -333,6 +334,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `delay_on_secs` | float | optional | Specifies number of seconds that any `condition` must be true and any threshold specified must be exceeded before the alert starts firing. Similar in motivation to the `skip_first` option in the old Alert integration. |
 | `message` | template | optional | Template string evaluated when the alert fires. For event-based alerts, it can reference the `trigger` variable (see example below). Defaults to simple alert state change message like "... turned on".  <br><br>Any message specified here will be prepended with context information including the alert domain and name.  Set `annotate_messages` to false to disable that behavior (eg if you want to send a notification command to the companion app mobile_app platform). |
 | `done_message` | template | optional |Template string evaluated when an alert turns off. Defaults to simple alert state change message like "... turned off after x minutes".<br><br>Any message specified here will be prepended with context information including the alert domain and name.  Set `annotate_messages` to false to disable that behavior (eg if you want to send a notification command like "clear_notification" to the companion app mobile_app platform).
+| `reminder_message` | template | optional |Template string evaluated each time a reminder notification will be sent. Defaults to message indicating how long the alert has been firing for, e.g., "... on for x minutes".<br><br>Any message specified here will be prepended with context information including the alert domain and name.
 | `display_msg` | template | optional | Message to display in the Alert2 UI overview card below the alert line.  Appears while the alert is visible in the card. If not specified or specified as "null", no message is shown. |
 | `data` | dict | optional | Optional dictionary passed as the "data" parameter to the notify service call |
 | `target` | template | optional | Passed as the "target" parameter to the notify service call |
@@ -344,6 +346,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `supersedes` | List | optional | A list of domain+name pairs of alerts that this alert supersedes. Notifications will be skipped for superseded alerts while this alert is firing.  Applies transitively. May use templates when used with generators. See [Supersedes](#supersedes) section below for examples. |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `priority` | string | optional | Override the default value of `priority` |
+| `supersede_debounce_secs` | float | optional | Override the default value of `supersede_debounce_secs` |
 | `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts. Not available for [generator patterns](#generator-patterns).  |
 | `generator` | template | optional | If specified, this alert is a [generator pattern](#generator-patterns). |
 | `generator_name` | string | optional | Each generator creates a sensor entity with the name `sensor.alert2generator_[generator_name]`. See [generator patterns](#generator-patterns). |
@@ -481,8 +484,7 @@ The following example creates two alerts, test_low_disk_20 and test_low_disk_10.
           generator: [ 20, 10 ]
           generator_name: g1
 
-
-
+To reduce spurious notifications due to races between two hierarchically-related alerts turning on or off at almost the same time, we offer the parameter `supersede_debounce_secs`, that defaults to 0.5 seconds. When an alert starts firing, the notification is delayed for `supersede_debounce_secs` to see if a superseding alert also starts firing.  Similarly, when an alert stops firing, the notifications of any superseded alerts are suppressed for the next `supersede_debounce_secs`.
 
 #### Common alert features
 

@@ -5,6 +5,7 @@ from   enum import Enum
 import logging
 from   typing import Any
 import voluptuous as vol
+import traceback
 from   homeassistant.const import (
     EVENT_HOMEASSISTANT_STARTED
 )
@@ -795,6 +796,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         if throttle_fires_per_mins is not None:
             self.movingSum = MovingSum(throttle_fires_per_mins[0], throttle_fires_per_mins[1])
         self.notified_max_on = False
+        self._supersede_debounce_secs = 0 # condition alerts will override this
 
         # State restored on restart
         #
@@ -1074,7 +1076,13 @@ class AlertBase(AlertCommon, RestoreEntity):
                 snooze_remaining_secs = 0
 
         max_limit_remaining_secs = self.movingSum.remainingSecs(now) if self.movingSum is not None else 0
-
+        
+        debounce_remaining_secs = 0
+        if self.alertData.supersedeNotifyMgr.isWaiting(self):
+            # The number here is just to delay reminding until after the supersedeNotifyMgr wait finishes.
+            # when it finishes, supersedeNotifyMgr will call reminder_check() to process reminding for real.
+            debounce_remaining_secs = self._supersede_debounce_secs + 1
+        
         normal_remaining_secs = 0
         if reason == NotificationReason.ReminderOn:
             reminder_frequency_mins = self.sub_calc_next_reminder_frequency_mins(now)
@@ -1092,6 +1100,9 @@ class AlertBase(AlertCommon, RestoreEntity):
         # Now combine the logic
         remaining_secs = 0
         freas = 'good-to-go-should-never-see'
+        if debounce_remaining_secs > remaining_secs:
+            remaining_secs = debounce_remaining_secs
+            freas = 'supersede_debounce'
         if max_limit_remaining_secs > remaining_secs:
             remaining_secs = max_limit_remaining_secs
             freas = 'max_limited'
@@ -1121,7 +1132,7 @@ class AlertBase(AlertCommon, RestoreEntity):
                 self.future_notification_info = None
                 self.reminder_check()
             except asyncio.CancelledError:
-                _LOGGER.debug(f'Skipping cancel exception for task {asyncio.current_task()}')
+                pass #_LOGGER.debug(f'Skipping cancel exception for task {asyncio.current_task()}')
             except Exception as ex:
                 msg = f'{self.name} In schedule_reminder/foo got exception: {ex.__class__}, {ex}'
                 report(DOMAIN, 'error', f'{gAssertMsg} msg', isException=True)
@@ -1145,7 +1156,37 @@ class AlertBase(AlertCommon, RestoreEntity):
     #    max disengaged with alert off (max stopped. filtered 3 firings, mostly recently x min ago, which turned off x min ago
     #    max disengaged with alert on  (max stopped. filtered 3 firings, mostly recently x min ago, (still on)
     #
-    def _notify(self, now, reason: NotificationReason, message, skip_notify=False):
+    def _notify_pre_debounce(self, now, reason: NotificationReason, message, skip_notify=False):
+        msg = ''
+        if reason == NotificationReason.Summary:
+            msg += 'Summary: '
+        addedName = False
+        if self.annotate_messages or reason in [ NotificationReason.ReminderOn, NotificationReason.Summary ]:
+            addedName = True
+            if self._friendly_name is None:
+                msg += f'Alert2 {self.name}'
+            else:
+                msg += self._friendly_name
+
+        if len(message) > 0:
+            if addedName:
+                msg += ': '
+            msg += f'{message}'
+
+        _LOGGER.warning(msg)
+        #_LOGGER.warning(f'_notify_pre_debounce: {"".join(traceback.format_stack())}')
+\
+        last_fired_time = self.last_fired_time
+        if reason == NotificationReason.Fire:
+            self.last_fired_message = message
+            self.last_fired_time = now
+
+        alertData = self.hass.data[DOMAIN]
+        alertData.supersedeNotifyMgr.processNotify(self, now, msg, reason, last_fired_time, skip_notify, debounce_secs=self._supersede_debounce_secs)
+            
+    def _notify_post_debounce(self, msg, reason: NotificationReason, last_fired_time, now, *, skip_notify, isSuperseded):
+        assert isinstance(msg, str)
+        assert isinstance(reason, NotificationReason)
         # Call can_notify_now before reportFire so that if reportFire crosses max threshold, we
         # still notify that max threshold has been crossed
         remaining_secs, remaining_reason = self.can_notify_now(now, reason)
@@ -1159,12 +1200,10 @@ class AlertBase(AlertCommon, RestoreEntity):
         skipSummary = (reason in [ NotificationReason.Summary ]) and self._summary_notifier is False
         if skip_notify or skipSummary:
             doNotify = False
-        isSuperseded = self.alertData.isSupersededByOn(self.alDomain, self.alName)
+        #isSuperseded = self.alertData.isSupersededByOn(self.alDomain, self.alName)
         if isSuperseded:
             doNotify = False
-            
-        msg = ''
-            
+        
         triggeredMaxLimit = False
         if reason == NotificationReason.Fire:
             if doNotify and self.movingSum is not None:
@@ -1181,7 +1220,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         if max_limit_remaining_secs > 0 and not self.notified_max_on:
             # throttling started hopefully due to a Fire that just happened.
             self.notified_max_on = True
-            msg += '[Throttling started] '
+            msg += ' [Throttling started]'
             if not doNotify:
                 report(DOMAIN, 'error', f'{gAssertMsg} {self.name}: saw throttling start, but not notifying. Seems impossible. {max_limit_remaining_secs} ')
         elif doNotify and max_limit_remaining_secs > 0 and self.notified_max_on:
@@ -1191,34 +1230,18 @@ class AlertBase(AlertCommon, RestoreEntity):
             # schedule_reminder() adds a second delay, so it's possible the reminder is a second away.
             # In other otherwords, a fire happened in the gap between throttling expiring and the reminder call to _notify to observe it.
             #_LOGGER.error('seems like throttling turned off earlier but without notification :(')
-            msg += '[Throttling restarted] '
+            msg += ' [Throttling restarted]'
         elif max_limit_remaining_secs == 0 and self.notified_max_on:
             self.notified_max_on = False
-            msg += '[Throttling ending] '
+            msg += ' [Throttling ending]'
             if not doNotify and remaining_reason not in [ NOTIFICATIONS_DISABLED, 'snoozed' ] and not skipSummary:
                 report(DOMAIN, 'error', f'{gAssertMsg} {self.name}: saw throttling stop, but not notifying, seems impossible. {remaining_secs}, {remaining_reason}')
 
-        if reason == NotificationReason.Summary:
-            msg += 'Summary: '
-                
-        addedName = False
-        if self.annotate_messages or reason in [ NotificationReason.ReminderOn, NotificationReason.Summary ]:
-            addedName = True
-            if self._friendly_name is None:
-                msg += f'Alert2 {self.name}'
-            else:
-                msg += self._friendly_name
-            
-        if (doNotify or skipSummary)  and self.fires_since_last_notify > 0:
-            secs_since_last = (now - self.last_fired_time).total_seconds()
-            msg += f' fired {self.fires_since_last_notify}x (most recently {agoStr(secs_since_last)} ago)'
+        if (doNotify or skipSummary) and self.fires_since_last_notify > 0:
+            secs_since_last = (now - last_fired_time).total_seconds()
+            msg += f' (fired {self.fires_since_last_notify}x - most recently {agoStr(secs_since_last)} ago)'
             self.fires_since_last_notify = 0
             
-        if len(message) > 0:
-            if addedName:
-                msg += ': '
-            msg += f'{message}'
-
         #_LOGGER.warning(f'_notify msg={msg}')
             
         self.last_tried_notify_time = now
@@ -1273,7 +1296,9 @@ class AlertBase(AlertCommon, RestoreEntity):
                 _LOGGER.warning(f'{self.entity_id} (null notifier): {args["message"]}')
                 
         else:
-            if reason == NotificationReason.Fire:
+            # doNotify is False
+            
+            if reason == NotificationReason.Fire and not isSuperseded:
                 self.fires_since_last_notify += 1
 
             if remaining_reason == NOTIFICATIONS_DISABLED:
@@ -1295,13 +1320,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             #    if remaining_secs > 0:
             #        self.schedule_reminder(remaining_secs)
             #    # else:  must be that skip_notify is true because alert has already been acked
-                
-        if reason == NotificationReason.Fire:
-            self.last_fired_message = message
-            self.last_fired_time = now
             
-        return doNotify
-
 
 # Entity for an event alert.
 class EventAlert(AlertBase):
@@ -1358,8 +1377,9 @@ class EventAlert(AlertBase):
         
     async def record_event(self, message: str):
         now = dt.now()
+        _LOGGER.warning(f'Activity {self.entity_id} fired')
         msg = message
-        didNotify = self._notify(now, NotificationReason.Fire, message)
+        self._notify_pre_debounce(now, NotificationReason.Fire, message)
         self.reminder_check(now) # To schedule reminder - the only reminder I think that could be needed is if throttled, a notificaiton that throttling has turned off
         self.async_write_ha_state()
         self.hass.bus.async_fire(EVENT_ALERT2_FIRE, { 'entity_id': self.entity_id,
@@ -1375,7 +1395,7 @@ class EventAlert(AlertBase):
             # could be that we were throttled, and throttling is expiring. that's why we're getting the notify reminder cb
             msg = 'Did not fire during throttled interval'
             #report(DOMAIN, 'error', f'{gAssertMsg} notify_timer_cb, fires_since_last_notify is not positive, is {self.fires_since_last_notify} for {self.name}')
-        didNotify = self._notify(now, NotificationReason.Summary, msg)
+        self._notify_pre_debounce(now, NotificationReason.Summary, msg)
         self.reminder_check(now)
         self.async_write_ha_state()
     
@@ -1414,6 +1434,10 @@ class ConditionAlert(AlertBase):
         self._done_message_template = config['done_message'] if 'done_message' in config else None
         if self._done_message_template is not None:
             self._done_message_template.hass = hass
+        self._reminder_message_template = config['reminder_message'] if 'reminder_message' in config else None
+        if self._reminder_message_template is not None:
+            self._reminder_message_template.hass = hass
+        self._supersede_debounce_secs = getField('supersede_debounce_secs', config, defaultCfg)
             
         # For hysteresis turning on
         self.delay_on_secs = config['delay_on_secs'] if 'delay_on_secs' in config else 0
@@ -1637,7 +1661,7 @@ class ConditionAlert(AlertBase):
                         report(DOMAIN, 'error', f'{self.name} Condition template: {err}')
                         return
                 self.reminders_since_fire = 0
-                didNotify = self._notify(now, NotificationReason.Fire, msg)
+                self._notify_pre_debounce(now, NotificationReason.Fire, msg)
                 self.reminder_check(now)
             else:
                 _LOGGER.warning(f'Activity {self.entity_id} turned off')
@@ -1651,8 +1675,7 @@ class ConditionAlert(AlertBase):
                     except TemplateError as err:
                         report(DOMAIN, 'error', f'{self.name} done_message template: {err}')
                         msg = f'turned off after {agoStr(secs_on)}. [done_message template error]'
-                didNotify = self._notify(now, NotificationReason.StopFiring, msg,
-                                         skip_notify=is_acked)
+                self._notify_pre_debounce(now, NotificationReason.StopFiring, msg, skip_notify=is_acked)
                 self.reminder_check(now)
             
             if self.annotate_messages and (msg.startswith('command_') or \
@@ -1678,14 +1701,21 @@ class ConditionAlert(AlertBase):
                 report(DOMAIN, 'error', f'{gAssertMsg} notify_timer_cb, is_on=True but no self.last_on_time={self.last_on_time} for {self.name}')
             else:
                 secs_on = (now - self.last_on_time).total_seconds()
-                msg += f'on for {agoStr(secs_on)}'
+                if self._reminder_message_template is None:
+                    msg += f'on for {agoStr(secs_on)}'
+                else:
+                    try:
+                        msg += self._reminder_message_template.async_render(variables=self.extraVariables, parse_result=False)
+                    except TemplateError as err:
+                        report(DOMAIN, 'error', f'{self.name} reminder_message template: {err}')
+                        msg += f'on for {agoStr(secs_on)} [reminder_message template error]'
             reason = NotificationReason.ReminderOn
         else:
             secs_off = (now - self.last_off_time).total_seconds()
             secs_on = (self.last_off_time - self.last_on_time).total_seconds()
             msg += f'turned off {agoStr(secs_off)} ago after being on for {agoStr(secs_on)}'
             reason = NotificationReason.Summary
-        didNotify = self._notify(now, reason, msg)
+        self._notify_pre_debounce(now, reason, msg)
         # Whether or not we actually notified, for the purposes of counting reminder delays we say we did.
         # TODO - I think we could remove reminders_since_fire and instead calculate it based on time since
         # fire.

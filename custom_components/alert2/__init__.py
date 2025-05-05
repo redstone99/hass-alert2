@@ -11,6 +11,7 @@ import copy
 import ast
 import datetime as rawdt
 import logging
+from functools import partial
 _LOGGER = logging.getLogger(__name__)
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
@@ -40,7 +41,7 @@ from .config import (
     TOP_LEVEL_SCHEMA,
 )
 from .entities import (
-    EventAlert, ConditionAlert, AlertGenerator
+    EventAlert, ConditionAlert, AlertGenerator, NotificationReason
 )
 from .ui import ( UiMgr )
 from .util import (
@@ -53,6 +54,7 @@ from .util import (
     EVENT_TYPE,
     set_global_hass,
     get_global_hass,
+    set_shutting_down,
     global_tasks,
     gAssertMsg
 )
@@ -260,6 +262,20 @@ class SupersedeMgr:
                 del self.supersededByMap[apair]
         del self.supersedesMap[thisPair]
 
+    def supersedesSet(self, domain, name):
+        thisPair = (domain, name)
+        rez = set()
+        visitSet = set()
+        if thisPair in self.supersedesMap:
+            visitSet.add( thisPair )
+        while visitSet:
+            tpair = visitSet.pop()
+            if tpair in self.supersedesMap:
+                for apair in self.supersedesMap[tpair]:
+                    # This may visit a node multiple but finite times if the graph is diamond shaped
+                    rez.add(apair)
+                    visitSet.add(apair)
+        return rez
     def supersededBySet(self, domain, name):
         thisPair = (domain, name)
         rez = set()
@@ -275,10 +291,10 @@ class SupersedeMgr:
                     visitSet.add(apair)
         return rez
 
-    def unused___________topoOrdering(self):
+    def unused___________topoOrdering(self, aset):
         # We'll repeatedly look for nodes that are not superseded by any except visisted nodes
         result = []
-        remainingNodes = set(self.supersedesMap.keys())
+        remainingNodes = aset.copy() # shallow
         #_LOGGER.info(f'will do topo ordering for {remainingNodes}')
         while remainingNodes:
             # Look for aNode that is not superseded by any except visisted node
@@ -298,12 +314,139 @@ class SupersedeMgr:
                 report(DOMAIN, 'error', f'{gAssertMsg} topo ordering failed somehow')
                 result.append(aNode)
                 remainingNodes.remove(aNode)
-        result.reverse()
+        #result.reverse()
         return result
         
-                    
+# The issue this class tries to solve is the race between two alerts that want
+# to notify, where one supersedes the other.  E.g., say an entity changes
+# state, causing two alerts to fire.  The order in which the two alert objects
+# see the state change depends on HA implementation details, as well as some
+# Alert2 details (eg if one alert uses TriggerCond and one uses Tracker, and the
+# order in which the alerts were declared and called
+# async_track_template_result)
+# Theoretically, the race could involve state outside HA. Eg two alerts are based on two
+# external temperature sensors, and both sensors report hot.
+#
+# To mitigate this, we potentially delay the call to _notify() to give a superseding alert a
+# chance to fire.
+#
+# A similar race occurs when two alerts stop firing.
+class SupersedeNotifyMgr:
+    def __init__(self, alert2Data):
+        self.alert2Data = alert2Data
+        # waitFireMap is map of alerts waiting to see if superseding alerts fire
+        self.waitFireMap = {} # map (domain,name) -> {event, queue of partials, task, alert, isSuperseded}
+        # recentOffAlerts is map of alerts that recently stopped firing. Checked
+        # by other alerts to see if a superseding alert recently stopped firing.
+        self.recentOffAlerts = {} # map of (domain,name) -> expire task
+
+    def isWaiting(self, alert):
+        thisPair = (alert.alDomain, alert.alName)
+        return thisPair in self.waitFireMap
+        
+    def addAndFlushNotifications(self, thisPair, pcall, *, isSuperseded):
+        if thisPair in self.waitFireMap:
+            self.waitFireMap[thisPair]['queue'].append(pcall)
+            self.flushNotifications(thisPair, isSuperseded)
+        else:
+            pcall(dt.now(), isSuperseded=isSuperseded)
+    def addNotification(self, thisPair, pcall):
+        if thisPair in self.waitFireMap:
+            self.waitFireMap[thisPair]['queue'].append(pcall)
+        else:
+            pcall(dt.now(), isSuperseded=False)
+    def flushNotifications(self, thisPair, isSuperseded, fromWait=False):
+        now = dt.now()
+        if thisPair in self.waitFireMap:
+            nqueue = self.waitFireMap[thisPair]['queue']
+            if not fromWait:
+                task = self.waitFireMap[thisPair]['task']
+                cancel_task(DOMAIN, task)
+            alert = self.waitFireMap[thisPair]['alert']
+            # delete waitFireMap entry so that isWaiting returns false
+            # before we call _notify_post_debounce, which calls can_notify_now which checks isWaiting
+            del self.waitFireMap[thisPair]
+            for pcall in nqueue:
+                pcall(now, isSuperseded=isSuperseded)
+            # isWaiting is now false, so recalculate any reminder times
+            alert.reminder_check(now)
+                
+    def processNotify(self, alert, now, msg, reason: NotificationReason, last_fired_time, skip_notify, debounce_secs):
+        supersedesSet = self.alert2Data.supersedeMgr.supersedesSet(alert.alDomain, alert.alName)
+        thisPair = (alert.alDomain, alert.alName)
+        pcall = partial(alert._notify_post_debounce, msg, reason, last_fired_time, skip_notify=skip_notify)
+        
+        # Update recentOffAlerts
+        if reason == NotificationReason.Fire:
+            if thisPair in self.recentOffAlerts:
+                cancel_task(DOMAIN, self.recentOffAlerts[thisPair])
+                del self.recentOffAlerts[thisPair]
+        elif reason == NotificationReason.StopFiring:
+            if debounce_secs > 0:
+                async def removeSoon():
+                    await asyncio.sleep(debounce_secs)
+                    del self.recentOffAlerts[thisPair]
+                self.recentOffAlerts[thisPair] = create_background_task(self.alert2Data._hass, DOMAIN, removeSoon())
+
+        # Notify waitFireMap
+        if reason == NotificationReason.Fire:
+            if supersedesSet:
+                for apair in supersedesSet:
+                    if apair in self.waitFireMap:
+                        self.waitFireMap[apair]['isSuperseded'] = apair
+                        self.waitFireMap[apair]['event'].set()
+
+        # If not superseded by any alerts, go ahead and notify
+        supersededBySet = self.alert2Data.supersedeMgr.supersededBySet(alert.alDomain, alert.alName)
+        if not supersededBySet:
+            # There should not be anything queued, but still call addAndFlushNotifications for consistency
+            #pcall(dt.now(), is_superseded=False)
+            self.addAndFlushNotifications(thisPair, pcall, isSuperseded=False)
+            return
+
+        # Alert has superseding alerts - need to debounce
+        
+        # If superseded by firing alert, no need to debounce
+        for apair in supersededBySet:
+            alEnt = self.alert2Data.alerts[apair[0]][apair[1]]
+            assert isinstance(alEnt, ConditionAlert)
+            if alEnt.state == 'on':
+                # We're superseded by an firing alert.
+                # TODO - _notify will recalculate if we're superseded. Skip that.
+                _LOGGER.debug(f'{alert.name} in processNotify: sup pass true')
+                self.addAndFlushNotifications(thisPair, pcall, isSuperseded=apair)
+                return
+
+        # We are superseded by other alerts, and none of them are firing at present
+        if debounce_secs == 0:
+            self.addAndFlushNotifications(thisPair, pcall, isSuperseded=False)
+            return
+        
+        # if lower alert starts right after superseding one ends, count as superseded
+        if reason == NotificationReason.Fire:
+            if thisPair not in self.waitFireMap:
+                ev = asyncio.Event()
+                waitObj = { 'event': ev, 'queue': [], 'task': None, 'alert': alert, 'isSuperseded': False }
+                async def wait():
+                    hass = self.alert2Data._hass
+                    try:
+                        await asyncio.wait_for(ev.wait(), timeout=debounce_secs)
+                    except TimeoutError:
+                        pass
+                    self.flushNotifications(thisPair, isSuperseded=waitObj['isSuperseded'], fromWait=True)
+                waitObj['task'] = create_background_task(self.alert2Data._hass, DOMAIN, wait())
+                self.waitFireMap[thisPair] = waitObj
+        else:
+            for apair in supersededBySet:
+                if apair in self.recentOffAlerts:
+                    self.addAndFlushNotifications(thisPair, pcall, isSuperseded=apair)
+                    return
+        self.addNotification(thisPair, pcall)
+
 class Alert2Data:
     def __init__(self, hass, config):
+        # Call set_shutting_down mostly for unittests which create sequentially multiple Alert2Data
+        #set_shutting_down(False)
         self._hass = hass
         self._rawYamlConfig = config[DOMAIN] if DOMAIN in config else {}
         self.tracked = {}
@@ -321,7 +464,8 @@ class Alert2Data:
         self.topConfig = None # processed Schema() for defaults and top-level options
         self.supersedeMgr = SupersedeMgr()
         self.gcTask = None
-        
+        self.supersedeNotifyMgr = SupersedeNotifyMgr(self)
+
     def noteUiUpdate(self):
         tmpUiConfig = copy.deepcopy(self.rawYamlBaseTopConfig)
         cfg = self.uiMgr.getPreppedConfig()
@@ -354,6 +498,7 @@ class Alert2Data:
                 'summary_notifier': False, 'annotate_messages': True,
                 'throttle_fires_per_mins': None,
                 'priority': 'low',
+                'supersede_debounce_secs': 0.5,
             },
             # Optional defaults for internal alerts
             'tracked': [
@@ -453,11 +598,13 @@ class Alert2Data:
                     return
                 self.inHandler = True
                 excMsg = f'An HA task (possibly unrelated to Alert2) died to due to an unhandled exception: '
+                isException = False
                 if 'exception' in context:
                     ex = context['exception']
                     excMsg += f'{ex.__class__}: {ex}. '
+                    isException = True #context['exception'] (could pass as exc_info to logging, but not necessary)
                 excMsg += f'full context: {context}'
-                report(DOMAIN, 'global_exception', excMsg)
+                report(DOMAIN, 'global_exception', excMsg, isException=isException)
                 if oldHandler:
                     oldHandler(loop, context)
                 self.inHandler = False
@@ -789,6 +936,7 @@ class Alert2Data:
     #def startShutdown(self, event):
     #    self._hass.loop.call_soon_threadsafe(self.shutdown)
     async def shutdown(self, event):
+        set_shutting_down(True)
         await self.unload_alerts()
         if self.uiMgr:
             self.uiMgr.shutdown()

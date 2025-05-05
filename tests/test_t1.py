@@ -19,6 +19,7 @@ from custom_components.alert2 import (DOMAIN, Alert2Data)
 import custom_components.alert2 as alert2
 import custom_components.alert2.entities as a2Entities
 from custom_components.alert2.util import (     GENERATOR_DOMAIN,
+                                                set_shutting_down,
                                                 EVENT_ALERT2_CREATE,
                                                 EVENT_ALERT2_DELETE,
                                                 EVENT_ALERT2_FIRE,
@@ -560,7 +561,7 @@ async def test_throttle(hass, service_calls):
                 
                 # 3rd fire should have throttle sign and no turn off or reminders
                 await setAndWait(hass, sname, 'on')
-                service_calls.popNotifyEmpty('persistent_notification', f'Throttling started.*test_{tname}.*turned on')
+                service_calls.popNotifyEmpty('persistent_notification', f'test_{tname}.*turned on.*Throttling started')
                 # no reminders
                 await asyncio.sleep(2)
                 assert service_calls.isEmpty()
@@ -578,17 +579,17 @@ async def test_throttle(hass, service_calls):
                 if summaryEnabled:
                     if onAtEnd:
                         if extraFire:
-                            service_calls.popNotifyEmpty('persistent_notification', f'Throttling ending] Alert2 test_{tname} fired 1x.*: on for 2 s$')
+                            service_calls.popNotifyEmpty('persistent_notification', f'Alert2 test_{tname}: on for 2 s .Throttling ending] .fired 1x ')
                         else:
-                            service_calls.popNotifyEmpty('persistent_notification', f'Throttling ending] Alert2 test_{tname}: on for 4 s$')
+                            service_calls.popNotifyEmpty('persistent_notification', f'Alert2 test_{tname}: on for 4 s .Throttling ending]$')
                     else:
-                        service_calls.popNotifyEmpty('persistent_notification', f'Throttling ending] Summary.*test_{tname}.*turned off.*after being on')
+                        service_calls.popNotifyEmpty('persistent_notification', f'Summary.*test_{tname}.*turned off.*after being on .*Throttling ending]')
                 else:
                     if onAtEnd:
                         if extraFire:
-                            service_calls.popNotifyEmpty('persistent_notification', f'Throttling ending] Alert2 test_{tname} fired 1x.*on for 2 s$')
+                            service_calls.popNotifyEmpty('persistent_notification', f'Alert2 test_{tname}: on for 2 s .Throttling ending] .fired 1x ')
                         else:
-                            service_calls.popNotifyEmpty('persistent_notification', f'Throttling ending] Alert2 test_{tname}: on for 4 s$')
+                            service_calls.popNotifyEmpty('persistent_notification', f'Alert2 test_{tname}: on for 4 s .Throttling ending]$')
                     else:
                         assert service_calls.isEmpty()
 
@@ -1076,7 +1077,7 @@ async def test_event2(hass, service_calls):
             # Start of throttling
             await hass.services.async_call('alert2','report', {'domain':'test','name':tname})
             await hass.async_block_till_done()
-            service_calls.popNotifyEmpty('persistent_notification', f'Throttling started] Alert2 test_{tname}')
+            service_calls.popNotifyEmpty('persistent_notification', f'Alert2 test_{tname} .Throttling started]$')
 
             if extraFire:
                 # Two more fires shouldn't notify
@@ -1091,9 +1092,9 @@ async def test_event2(hass, service_calls):
             await asyncio.sleep(2)
             if summaryEnabled:
                 if extraFire:
-                    service_calls.popNotifyEmpty('persistent_notification', 'Throttling ending] Summary.*test_t27 fired 2x')
+                    service_calls.popNotifyEmpty('persistent_notification', 'Summary: Alert2 test_t27 .Throttling ending] .fired 2x ')
                 else:
-                    service_calls.popNotifyEmpty('persistent_notification', 'Throttling ending] Summary.*test_t27: Did not fire')
+                    service_calls.popNotifyEmpty('persistent_notification', 'Summary: Alert2 test_t27: Did not fire .*Throttling ending]$')
             else:
                 assert service_calls.isEmpty()
 
@@ -1343,7 +1344,7 @@ async def test_unack(hass, service_calls):
     service_calls.popNotifyEmpty('persistent_notification', 't41')
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t41'})
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'Throttling started.*t41')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t41 .Throttling started]$')
 
     # Now should have notification built up
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t41'})
@@ -1356,7 +1357,7 @@ async def test_unack(hass, service_calls):
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     await asyncio.sleep(2)
-    service_calls.popNotifyEmpty('persistent_notification', 'Throttling ending.*t41.*Did not fire')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t41: Did not fire .*Throttling ending]$')
 
 async def test_grace(hass, service_calls):
     # Test some invalid value, no defer, so notify soon
@@ -1517,9 +1518,9 @@ async def test_snooze(hass, service_calls):
     # snooze expires, get reminder notification summary
     await asyncio.sleep(2)
     assert t53c.notification_control == a2Entities.NOTIFICATIONS_ENABLED
-    service_calls.popNotifySearch('persistent_notification', 't53c', 't53c.*fired 1x.*on for')
-    service_calls.popNotifySearch('persistent_notification', 't53a', 't53a.*fired 1x.*on for')
-    service_calls.popNotifyEmpty('persistent_notification', 't53b.*fired 1x.*on for')
+    service_calls.popNotifySearch('persistent_notification', 't53c', 't53c.*on for.*fired 1x')
+    service_calls.popNotifySearch('persistent_notification', 't53a', 't53a.*on for.*fired 1x')
+    service_calls.popNotifyEmpty('persistent_notification', 't53b.*on for.*fired 1x')
     # Should still get reminders after snooze expires
     await asyncio.sleep(2)
     service_calls.popNotifySearch('persistent_notification', 't53c', 't53c: on for')
@@ -1559,8 +1560,8 @@ async def test_snooze(hass, service_calls):
     assert service_calls.isEmpty()
     # snooze expires, get summary notification
     await asyncio.sleep(2)
-    service_calls.popNotifySearch('persistent_notification', 't53c', 't53c fired 1x')
-    service_calls.popNotifyEmpty('foo', 't53b fired 1x')
+    service_calls.popNotifySearch('persistent_notification', 't53c', 't53c: .*fired 1x')
+    service_calls.popNotifyEmpty('foo', 't53b: .*fired 1x')
 
     # Try events
     now = rawdt.datetime.now(rawdt.timezone.utc)
@@ -2643,7 +2644,7 @@ async def test_restore_on(hass, service_calls, hass_storage):
     await hass.async_start()
     await hass.async_block_till_done()
     await asyncio.sleep(0.3)
-    service_calls.popNotifyEmpty('persistent_notification', 'test_t1 fired 7x')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t1: .*fired 7x')
 
 async def test_onoff_cond(hass, service_calls, caplog):
     cfg = { 'alert2' : {  'alerts' : [
@@ -3026,7 +3027,7 @@ async def test_supersede_mgr2(hass, service_calls, monkeypatch):
     await setAndWait(hass, "sensor.t1", 'off')
     await setAndWait(hass, "sensor.t2", 'off')
     await setAndWait(hass, "sensor.t3", 'off')
-    cfg = { 'alert2' : { 'defaults': { 'reminder_frequency_mins': 0.01 }, 'alerts' : [
+    cfg = { 'alert2' : { 'defaults': { 'reminder_frequency_mins': 0.01, 'supersede_debounce_secs': 0 }, 'alerts' : [
         { 'domain': 'test', 'name': 't1', 'condition': 'sensor.t1' },
         { 'domain': 'test', 'name': 't2', 'condition': 'sensor.t2', 'supersedes': [ {'domain':'test','name':'t1'} ] },
         # t3 added later
@@ -3258,51 +3259,188 @@ async def test_native_friendly(hass, service_calls):
     assert hass.states.get('alert2.test_t1').attributes['friendly_name'] == 'test_t1'
     assert hass.states.get('alert2.test_t2').attributes['friendly_name'] == 'happy'
 
-async def test_supersedes_off(hass, service_calls, caplog):
+async def test_supersedes_debounce(hass, service_calls, caplog):
     # Test when alert A & B both turn on or off at the same time and A supersedes B
     # Test bug where fires_since_last_notify was being set for superseded alert, resulting in skipped summary
     await setAndWait(hass, "sensor.a", 'off')
-    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
-        #{ 'domain': 't', 'name': 't2', 'condition': 'sensor.a' },
+    await setAndWait(hass, "sensor.b", 'off')
+    await setAndWait(hass, "sensor.c", 'off')
+    await setAndWait(hass, "sensor.s7", 'off')
+    await setAndWait(hass, "sensor.s8", 'off')
+    debounce_secs = 0.3
+    cfg = { 'alert2' : { 'defaults': { 'supersede_debounce_secs': debounce_secs }, 'alerts' : [
         { 'domain': 't', 'name': 't3', 'condition': 'sensor.a', 'supersedes': [{'domain':'t','name':'t1'},{'domain':'t','name':'t2'}] },
         { 'domain': 't', 'name': 't1', 'condition': 'sensor.a' },
         { 'domain': 't', 'name': 't4', 'condition': 'sensor.a', 'supersedes': {'domain':'t','name':'t1'} },
+
+        { 'domain': 't', 'name': 't5', 'condition': 'sensor.b' },
+        { 'domain': 't', 'name': 't6', 'condition': 'sensor.c', 'supersedes': {'domain':'t','name':'t5'} },
+
+        { 'domain': 't', 'name': 't7', 'condition': 'sensor.s7', 'reminder_frequency_mins': 0.01, 'supersede_debounce_secs':2 },
+        { 'domain': 't', 'name': 't8', 'condition': 'sensor.s8', 'supersedes': {'domain':'t','name':'t7'}, 'supersede_debounce_secs': 2 },
     ], } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
 
+    # t1 superseded. on at same time
     await setAndWait(hass, "sensor.a", 'on')
     service_calls.popNotifySearch('persistent_notification', 't3', 'turned on')
     service_calls.popNotifySearch('persistent_notification', 't4', 'turned on')
     assert service_calls.isEmpty()
     
+    # t1 superseded. off at same time
     await setAndWait(hass, "sensor.a", 'off')
     service_calls.popNotifySearch('persistent_notification', 't3', 'turned off')
     service_calls.popNotifySearch('persistent_notification', 't4', 'turned off')
     assert service_calls.isEmpty()
     assert not 'skipping summaries' in caplog.text
+    await asyncio.sleep(debounce_secs + 0.05)
+
+    # t6 supersedews t5
+
+    # t5 on shortly before t6
+    await asyncio.sleep(debounce_secs + 0.05)  # reset for next test
+    await setAndWait(hass, "sensor.b", 'on')
+    await asyncio.sleep(0.05)
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.c", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned on')
+    # t6 off shortly before t5
+    await setAndWait(hass, "sensor.c", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned off')
+    await asyncio.sleep(0.05)
+    await setAndWait(hass, "sensor.b", 'off')
+    assert service_calls.isEmpty()
+
+    await asyncio.sleep(debounce_secs + 0.05)  # reset for next test
+    await setAndWait(hass, "sensor.b", 'on')
+    await setAndWait(hass, "sensor.c", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned on')
+    # t6 off long before t5
+    await setAndWait(hass, "sensor.c", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned off')
+    await asyncio.sleep(debounce_secs + 0.05)
+    await setAndWait(hass, "sensor.b", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't5: turned off')
+
+    # t5 on long before t6
+    await asyncio.sleep(debounce_secs + 0.05)  # reset for next test
+    await setAndWait(hass, "sensor.b", 'on')
+    await asyncio.sleep(debounce_secs + 0.05)
+    service_calls.popNotifyEmpty('persistent_notification', 't5: turned on')
+    await setAndWait(hass, "sensor.c", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned on')
+    # t5 off shortly before t6
+    await setAndWait(hass, "sensor.b", 'off')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.c", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned off')
+
+    # t6 on shortly before t5
+    await asyncio.sleep(debounce_secs + 0.05)  # reset for next test
+    await setAndWait(hass, "sensor.c", 'on')
+    await setAndWait(hass, "sensor.b", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned on')
+    await setAndWait(hass, "sensor.c", 'off')
+    await setAndWait(hass, "sensor.b", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned off')
+
+    # t5 goes on/off before t6 turns on
+    await asyncio.sleep(debounce_secs + 0.05)  # reset for next test
+    await setAndWait(hass, "sensor.b", 'on')
+    await setAndWait(hass, "sensor.b", 'off')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.c", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned on')
+    await setAndWait(hass, "sensor.c", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned off')
+
+    # t5 goes on/off/on before t6 turns on
+    await asyncio.sleep(debounce_secs + 0.05)  # reset for next test
+    await setAndWait(hass, "sensor.b", 'on')
+    await setAndWait(hass, "sensor.b", 'off')
+    await setAndWait(hass, "sensor.b", 'on')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.c", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned on')
+    await setAndWait(hass, "sensor.c", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned off')
+    await setAndWait(hass, "sensor.b", 'off')
+    assert service_calls.isEmpty()
     
-async def test_supersedes_off2(hass, service_calls, caplog):
-    # Test when alert A & B both turn on or off at the same time and A supersedes B
-    await setAndWait(hass, "sensor.a", 'off')
-    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
-        { 'domain': 't', 'name': 't2', 'condition': 'sensor.a' },
-        { 'domain': 't', 'name': 't3', 'condition': 'sensor.a', 'supersedes': [{'domain':'t','name':'t1'},{'domain':'t','name':'t2'}] },
-        { 'domain': 't', 'name': 't1', 'condition': 'sensor.a' },
-    ], } }
+    await asyncio.sleep(debounce_secs + 0.05)  # reset for next test
+    await setAndWait(hass, "sensor.b", 'on')
+    await setAndWait(hass, "sensor.b", 'off')
+    await setAndWait(hass, "sensor.b", 'on')
+    await setAndWait(hass, "sensor.b", 'off')
+    await asyncio.sleep(debounce_secs + 0.05)
+    service_calls.popNotifySearch('persistent_notification', 't5', 't5: turned on')
+    service_calls.popNotifySearch('persistent_notification', 't5', 't5: turned off')
+    service_calls.popNotifySearch('persistent_notification', 't5', 't5: turned on')
+    service_calls.popNotifyEmpty('persistent_notification', 't5: turned off')
+
+    _LOGGER.info('testing............')
+    await setAndWait(hass, "sensor.s7", 'on')
+    await asyncio.sleep(1.5) # should get reminder that is delayed
+    assert service_calls.isEmpty()
+    await asyncio.sleep(1) # now wait expires
+    gad = hass.data[DOMAIN]
+    t7 = gad.alerts['t']['t7']
+    assert gad.supersedeNotifyMgr.isWaiting(t7) is False
+    # no reminder notification cuz reminder timer starts from first call to _notify_post_debounce
+    service_calls.popNotifyEmpty('persistent_notification', 't7: turned on')
+    await setAndWait(hass, "sensor.s7", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't7: turned off')
+
+
+    _LOGGER.info('testing2............')
+    now = rawdt.datetime.now(rawdt.timezone.utc)
+    await hass.services.async_call('alert2','notification_control',
+        {'entity_id': 'alert2.t_t7', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=0.5) })
+    await setAndWait(hass, "sensor.s7", 'on')
+    await setAndWait(hass, "sensor.s7", 'off')
+    await setAndWait(hass, "sensor.s7", 'on')
+    await setAndWait(hass, "sensor.s7", 'off')
+    await asyncio.sleep(2) # snooze expires and wait expires
+    assert gad.supersedeNotifyMgr.isWaiting(t7) is False
+    # snoozing check is done in _notify_post_debounce, so they all go through since snooze expired
+    service_calls.popNotifySearch('persistent_notification', 't7', 't7: turned on')
+    service_calls.popNotifySearch('persistent_notification', 't7', 't7: turned off')
+    service_calls.popNotifySearch('persistent_notification', 't7', 't7: turned on')
+    service_calls.popNotifyEmpty('persistent_notification', 't7: turned off')
+
+async def test_shutdown(hass, service_calls):
+    cfg = { 'alert2' : { 'defaults': { },
+                         'tracked': [{ 'domain':'t', 'name': 't1' }],
+                        } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
+    await asyncio.sleep(0.3)
 
-    await setAndWait(hass, "sensor.a", 'on')
-    service_calls.popNotifySearch('persistent_notification', 't3', 'turned on')
+    ev = asyncio.Event()
+    async def sd(event):
+        await asyncio.sleep(0.1)
+        ev.set()
+        # Wish we could raise exception and let report() do its thing naturally.
+        # pytest can't handle that though :(
+        # raise Exception('darn')
+        #
+        # Instead we report manually
+        alert2.report('t', 't1', 'some error')
+    hass.bus.async_listen_once(homeassistant.const.EVENT_HOMEASSISTANT_STOP, sd)
+
+    await hass.async_stop()
+    await hass.async_block_till_done()
+    await ev.wait()
+    await asyncio.sleep(0.3)
+
+    # This is the main test - that no undeclared alert errors occurred
     assert service_calls.isEmpty()
-    
-    await setAndWait(hass, "sensor.a", 'off')
-    service_calls.popNotifySearch('persistent_notification', 't3', 'turned off')
-    assert service_calls.isEmpty()
-    assert not 'skipping summaries' in caplog.text
+
+    # Restore shutting down for next test
+    set_shutting_down(False)
     

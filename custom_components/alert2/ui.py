@@ -115,7 +115,8 @@ def prepStrConfigField(fname, tval, doReport=True):
         return parse_yaml(tval)
     elif fname in [ 'annotate_messages', 'manual_off', 'manual_on', 'priority', 'friendly_name',
                     'title', 'target', 'domain', 'name', 'message', 'done_message',
-                    'condition', 'condition_on', 'condition_off', 'early_start',
+                    'reminder_message',
+                    'condition', 'condition_on', 'condition_off', 'early_start', 'supersede_debounce_secs',
                     # We have entries for both "threshold." prefixed values
                     # as well as the values without prefix.
                     # Prefix version is used by renderValue
@@ -177,7 +178,8 @@ class RenderValueView(HomeAssistantView):
                 ttype = 'notifier_list'
                 if isinstance(tval, bool):
                     simple = True
-            elif name in ['annotate_messages', 'reminder_frequency_mins', 'throttle_fires_per_mins']:
+            elif name in ['annotate_messages', 'reminder_frequency_mins', 'throttle_fires_per_mins',
+                          'supersede_debounce_secs']:
                 tval = DEFAULTS_SCHEMA({ name: ttxt })[name]
                 simple = True
             elif name in ['supersedes']:
@@ -201,7 +203,7 @@ class RenderValueView(HomeAssistantView):
             elif name in ['friendly_name', 'title', 'target']:
                 tval = SINGLE_TRACKED_SCHEMA_PRE_NAME({ name: ttxt })[name]
                 ttype = 'string'
-            elif name in ['message', 'done_message' ]:
+            elif name in ['message', 'done_message', 'reminder_message' ]:
                 tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME({ name: ttxt})[name]
                 ttype = 'string'
             elif name in ['display_msg' ]:
