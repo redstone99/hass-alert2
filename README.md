@@ -198,13 +198,13 @@ The text of each notification by default includes some basic context information
 
         Alert2 kitchen_door_open: turned on
 
-* Condition alert reminder that it's still on. This can be customized via `reminder_message`:
+* Condition alert reminder that it's still on. This can be customized via `reminder_message`. Alert name omitted if `annotate_messages` is false.
 
-        Alert2 kitchen_door_open: on for 5m
+        Alert2 kitchen_door_open: on for 5 m
 
 * Condition alert stops firing: `done_message` text prepended with name (or `friendly_name`) of alert.  Default message is "turned off after ..." if no `done_message` specified. Only `done_message` text is sent if `annotate_messages` is false. Setting `annotate_messages` to false may be useful for notification platforms that parse the message (such as the "clear_notification" message of the `mobile_app` platform)
 
-        Alert2 kitchen_door_open: turned off after 10m
+        Alert2 kitchen_door_open: turned off after 10 m
 
 * Either event or condition alert fires and exceeds `throttle_fires_per_mins`.  Message is prepended with "[Throttling starts]", which can not be overridden with `annotate_messages`:
 
@@ -334,7 +334,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `delay_on_secs` | float | optional | Specifies number of seconds that any `condition` must be true and any threshold specified must be exceeded before the alert starts firing. Similar in motivation to the `skip_first` option in the old Alert integration. |
 | `message` | template | optional | Template string evaluated when the alert fires. For event-based alerts, it can reference the `trigger` variable (see example below). Defaults to simple alert state change message like "... turned on".  <br><br>Any message specified here will be prepended with context information including the alert domain and name.  Set `annotate_messages` to false to disable that behavior (eg if you want to send a notification command to the companion app mobile_app platform). |
 | `done_message` | template | optional |Template string evaluated when an alert turns off. Defaults to simple alert state change message like "... turned off after x minutes".<br><br>Any message specified here will be prepended with context information including the alert domain and name.  Set `annotate_messages` to false to disable that behavior (eg if you want to send a notification command like "clear_notification" to the companion app mobile_app platform).
-| `reminder_message` | template | optional |Template string evaluated each time a reminder notification will be sent. Defaults to message indicating how long the alert has been firing for, e.g., "... on for x minutes".<br><br>Any message specified here will be prepended with context information including the alert domain and name.
+| `reminder_message` | template | optional |Template string evaluated each time a reminder notification will be sent. Variable `on_secs` contains float seconds alert has been on.  Variable `on_time_str` contains time alert has been on as a string.  `reminder_message` defaults to:<br>`  on for {{ on_time_str }}`<br><br>Any message specified here will be prepended with alert domain and name unless `annotate_messages` is false.
 | `display_msg` | template | optional | Message to display in the Alert2 UI overview card below the alert line.  Appears while the alert is visible in the card. If not specified or specified as "null", no message is shown. |
 | `data` | dict | optional | Optional dictionary passed as the "data" parameter to the notify service call |
 | `target` | template | optional | Passed as the "target" parameter to the notify service call |

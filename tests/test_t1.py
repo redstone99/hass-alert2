@@ -68,11 +68,14 @@ async def test_ack(hass, service_calls):
     t1 = gad.alerts['test']['t1']
 
     # First let's try condition on then off
+    assert t1.is_acked() == False
+    assert t1.extra_state_attributes['is_acked'] == False
     hass.states.async_set("sensor.b1", "on")
     await hass.async_block_till_done()
     assert t1.state == 'on'
     service_calls.popNotify('persistent_notification', r'test_t1: turned on')
     assert service_calls.isEmpty()
+    assert t1.extra_state_attributes['is_acked'] == False
     # turning it on again should have no effect
     hass.states.async_set("sensor.b1", "on")
     await hass.async_block_till_done()
@@ -81,6 +84,7 @@ async def test_ack(hass, service_calls):
     hass.states.async_set("sensor.b1", "off")
     await hass.async_block_till_done()
     assert t1.state == 'off'
+    assert t1.extra_state_attributes['is_acked'] == False
     service_calls.popNotify('persistent_notification', r'test_t1: turned off')
     assert service_calls.isEmpty()
     # turn off again shouldn't change anything
@@ -92,19 +96,26 @@ async def test_ack(hass, service_calls):
     hass.states.async_set("sensor.b1", "on")
     await hass.async_block_till_done()
     service_calls.popNotify('persistent_notification', r'test_t1: turned on')
+    assert t1.extra_state_attributes['is_acked'] == False
     await t1.async_ack()
+    assert t1.is_acked() == True
+    assert t1.extra_state_attributes['is_acked'] == True
     await hass.async_block_till_done()
     hass.states.async_set("sensor.b1", "off")
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
+    assert t1.extra_state_attributes['is_acked'] == True
 
     # and let's try ack_all
     hass.states.async_set("sensor.b1", "on")
     await hass.async_block_till_done()
+    assert t1.extra_state_attributes['is_acked'] == False
     service_calls.popNotify('persistent_notification', r'test_t1: turned on')
     await hass.services.async_call('alert2', 'ack_all', {})
+    assert t1.extra_state_attributes['is_acked'] == True
     hass.states.async_set("sensor.b1", "off")
     await hass.async_block_till_done()
+    assert t1.extra_state_attributes['is_acked'] == True
     # auto_check_empty_calls makes sure no calls left in stack
 
 async def setAndWait(hass, eid, state): 
@@ -165,6 +176,8 @@ async def test_reminder(hass, service_calls):
         { 'domain': 'test', 'name': 't3a', 'condition': 'sensor.b1', 'reminder_frequency_mins': [0.01, 0.05] },
         { 'domain': 'test', 'name': 't3c', 'condition': 'sensor.b3', 'reminder_frequency_mins': [0.01, 0.05], 'reminder_message': 'on for {{ (now().timestamp() - state_attr("alert2.test_t3d","last_on_time").timestamp())|int }} zsecs' },
         { 'domain': 'test', 'name': 't3d', 'condition': 'sensor.b3', 'reminder_frequency_mins': [0.01, 0.05], 'reminder_message': '{{ nnn  + 3 }}' },
+        { 'domain': 'test', 'name': 't3e', 'condition': 'sensor.b3', 'reminder_frequency_mins': [0.01, 0.05], 'reminder_message': 'yay-{{ on_secs }}-{{ on_time_str }}', 'annotate_messages': False },
+        { 'domain': 'test', 'name': 't3f', 'condition': 'sensor.b3', 'reminder_frequency_mins': [0.01, 0.05], 'annotate_messages': False },
         { 'domain': 'test', 'name': 't3b', 'condition': 'sensor.b2' },
     ], } }
     assert await async_setup_component(hass, DOMAIN, cfg)
@@ -176,15 +189,23 @@ async def test_reminder(hass, service_calls):
     service_calls.popNotifyEmpty('persistent_notification', r'test_t3a: turned on')
     await setAndWait(hass, 'sensor.b3', 'on')
     service_calls.popNotifySearch('persistent_notification', 't3c', r'test_t3c: turned on')
-    service_calls.popNotifyEmpty('persistent_notification', r'test_t3d: turned on')
+    service_calls.popNotifySearch('persistent_notification', 't3d', r'test_t3d: turned on')
+    service_calls.popNotifySearch('persistent_notification', 'on', r'^turned on') #t3e
+    service_calls.popNotifySearch('persistent_notification', 'on', r'^turned on') #t3f
+    assert service_calls.isEmpty()
     await asyncio.sleep(1.7) # reminder interval is 1 + specified interval
     service_calls.popNotifySearch('persistent_notification', 't3a', r'test_t3a.*on for [12] s$')
+    service_calls.popNotifySearch('persistent_notification', 't3c', r'test_t3c.*on for [12] zsecs$')
     service_calls.popNotifySearch('persistent_notification', 't3d', r'test_t3d.*on for [12] s \[reminder_message template error\]$')
+    service_calls.popNotifySearch('persistent_notification', 'yay', r'^yay-[12][.0-9]*-[12] s$') # t3e
+    service_calls.popNotifySearch('persistent_notification', 't3f', r'test_t3f.*on for [12] s$')
     service_calls.popNotifySearch('persistent_notification', 'nnn', r'is undefined')
-    service_calls.popNotifyEmpty('persistent_notification', r'test_t3c.*on for [12] zsecs$')
+    assert service_calls.isEmpty()
     await setAndWait(hass, 'sensor.b3', 'off')
     service_calls.popNotifySearch('persistent_notification', 't3c', r'test_t3c: turned off')
-    service_calls.popNotifyEmpty('persistent_notification', r'test_t3d: turned off')
+    service_calls.popNotifySearch('persistent_notification', 't3d', r'test_t3d: turned off')
+    service_calls.popNotifySearch('persistent_notification', 'off', r'^turned off') #t3e
+    service_calls.popNotifyEmpty('persistent_notification', r'^turned off') #t3f
     
     await asyncio.sleep(2)  # not enough
     assert service_calls.isEmpty()
@@ -604,7 +625,7 @@ async def test_annotate(hass, service_calls):
         { 'domain': 'test', 'name': 't11a', 'condition': 'sensor.a' },
         { 'domain': 'test', 'name': 't11b', 'condition': 'sensor.a', 'message': 'ick-t11b' },
         { 'domain': 'test', 'name': 't11c', 'condition': 'sensor.a', 'message': 'ick-t11c', 'done_message': 'ick-t11c done' },
-        { 'domain': 'test', 'name': 't11d', 'condition': 'sensor.a', 'message': 'ick-t11d', 'annotate_messages': False, 'reminder_message': 'foo' },
+        { 'domain': 'test', 'name': 't11d', 'condition': 'sensor.a', 'message': 'ick-t11d', 'annotate_messages': False, 'reminder_message': 'foo-t11d' },
         { 'domain': 'test', 'name': 't11e', 'condition': 'sensor.a', 'message': 'ick-t11e', 'annotate_messages': False, 'done_message': 'ick-t11e done' },
         { 'domain': 'test', 'name': 't11f', 'condition': 'sensor.a', 'friendly_name': 'friend_t11f' },
         { 'domain': 'test', 'name': 't11g', 'condition': 'sensor.a', 'message': 'ick-t11g', 'annotate_messages': False, 'friendly_name': 'friend_t11g' },
@@ -636,7 +657,7 @@ async def test_annotate(hass, service_calls):
     service_calls.popNotifySearch('persistent_notification', 't11a', 'Alert2 test_t11a: on for')
     service_calls.popNotifySearch('persistent_notification', 't11b', 'Alert2 test_t11b: on for')
     service_calls.popNotifySearch('persistent_notification', 't11c', 'Alert2 test_t11c: on for')
-    service_calls.popNotifySearch('persistent_notification', 't11d', 'Alert2 test_t11d: foo')
+    service_calls.popNotifySearch('persistent_notification', 't11d', 'foo-t11d')
     service_calls.popNotifySearch('persistent_notification', 't11e', 'Alert2 test_t11e: on for')
     service_calls.popNotifySearch('persistent_notification', 't11f', 'friend_t11f: on for')
     service_calls.popNotifySearch('persistent_notification', 't11g', 'friend_t11g: on for')
@@ -1304,28 +1325,36 @@ async def test_unack(hass, service_calls):
     await hass.async_start()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-
+    gad = hass.data[DOMAIN]
+    t40 = gad.alerts['test']['t40']
+    t41 = gad.tracked['test']['t41']
+    
     await setAndWait(hass, 'sensor.a', 'on')
     service_calls.popNotifyEmpty('persistent_notification', 't40.*turned on')
     await hass.services.async_call('alert2', 'ack', {'entity_id': 'alert2.test_t40'})
     await hass.async_block_till_done()
+    assert t40.extra_state_attributes['is_acked'] == True
     await hass.services.async_call('alert2', 'unack', {'entity_id': 'alert2.test_t40'})
     await hass.async_block_till_done()
+    assert t40.extra_state_attributes['is_acked'] == False
     assert service_calls.isEmpty()
 
     # reminder should happen after 0.9 secs more of sleeping + 1 sec bufer time
     await asyncio.sleep(2)
     service_calls.popNotifyEmpty('persistent_notification', 't40.*on for ')
+    assert t40.extra_state_attributes['is_acked'] == False
 
     # Ack and so no notification.
     await hass.services.async_call('alert2', 'ack', {'entity_id': 'alert2.test_t40'})
     await hass.async_block_till_done()
+    assert t40.extra_state_attributes['is_acked'] == True
     await asyncio.sleep(2)
     assert service_calls.isEmpty()
 
     # it's been a while since last notify, so unack'ing should result in immediate notify
     await hass.services.async_call('alert2', 'unack', {'entity_id': 'alert2.test_t40'})
     await hass.async_block_till_done()
+    assert t40.extra_state_attributes['is_acked'] == False
     service_calls.popNotifyEmpty('persistent_notification', 't40.*on for ')
 
     # and also future reminders
@@ -1335,12 +1364,16 @@ async def test_unack(hass, service_calls):
     # Now turn off
     await hass.services.async_call('alert2', 'ack', {'entity_id': 'alert2.test_t40'})
     await hass.async_block_till_done()
+    assert t40.extra_state_attributes['is_acked'] == True
     await setAndWait(hass, 'sensor.a', 'off')
     assert service_calls.isEmpty()
+    assert t40.extra_state_attributes['is_acked'] == True
 
     # First two should notify fine
+    assert t41.extra_state_attributes['is_acked'] == False
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t41'})
     await hass.async_block_till_done()
+    assert t41.extra_state_attributes['is_acked'] == False
     service_calls.popNotifyEmpty('persistent_notification', 't41')
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t41'})
     await hass.async_block_till_done()
@@ -1349,15 +1382,19 @@ async def test_unack(hass, service_calls):
     # Now should have notification built up
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t41'})
     await hass.async_block_till_done()
+    assert t41.extra_state_attributes['is_acked'] == False
     assert service_calls.isEmpty()
     # Ack erases the unotififed firing (fires_since_last_notify).  and unack does not restore it
     await hass.services.async_call('alert2', 'ack', {'entity_id': 'alert2.test_t41'})
+    assert t41.extra_state_attributes['is_acked'] == True
     await hass.async_block_till_done()
     await hass.services.async_call('alert2', 'unack', {'entity_id': 'alert2.test_t41'})
+    assert t41.extra_state_attributes['is_acked'] == False
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     await asyncio.sleep(2)
     service_calls.popNotifyEmpty('persistent_notification', 'test_t41: Did not fire .*Throttling ending]$')
+    assert t41.extra_state_attributes['is_acked'] == False
 
 async def test_grace(hass, service_calls):
     # Test some invalid value, no defer, so notify soon
@@ -1500,7 +1537,8 @@ async def test_snooze(hass, service_calls):
 
     t53c = gad.alerts['test']['t53c']
     assert t53c.notification_control == a2Entities.NOTIFICATIONS_ENABLED
-
+    assert t53c.extra_state_attributes['is_acked'] == False
+    
     # Snoozed so no notification
     now = rawdt.datetime.now(rawdt.timezone.utc)
     await hass.services.async_call('alert2','notification_control',
@@ -1510,10 +1548,12 @@ async def test_snooze(hass, service_calls):
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t53b', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.async_block_till_done()
+    assert t53c.extra_state_attributes['is_acked'] == False
     assert isinstance(t53c.notification_control, rawdt.datetime)
     await setAndWait(hass, 'sensor.a', 'on')
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
+    assert t53c.extra_state_attributes['is_acked'] == False
     
     # snooze expires, get reminder notification summary
     await asyncio.sleep(2)
@@ -1536,11 +1576,13 @@ async def test_snooze(hass, service_calls):
         {'entity_id': 'alert2.test_t53b', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.async_block_till_done()
     # No reminders cuz snooze is implicit ack
+    assert t53c.extra_state_attributes['is_acked'] == True
     await asyncio.sleep(2)
     assert service_calls.isEmpty()
     await setAndWait(hass, 'sensor.a', 'off')
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
+    assert t53c.extra_state_attributes['is_acked'] == True
     
     # Snoozed so no notification
     now = rawdt.datetime.now(rawdt.timezone.utc)
@@ -1552,8 +1594,10 @@ async def test_snooze(hass, service_calls):
         {'entity_id': 'alert2.test_t53b', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
+    assert t53c.extra_state_attributes['is_acked'] == True
     await setAndWait(hass, 'sensor.a', 'on')
     await hass.async_block_till_done()
+    assert t53c.extra_state_attributes['is_acked'] == False
     assert service_calls.isEmpty()
     await setAndWait(hass, 'sensor.a', 'off')
     await hass.async_block_till_done()
@@ -1564,6 +1608,8 @@ async def test_snooze(hass, service_calls):
     service_calls.popNotifyEmpty('foo', 't53b: .*fired 1x')
 
     # Try events
+    t54d = gad.tracked['test']['t54d']
+    assert t54d.extra_state_attributes['is_acked'] == False
     now = rawdt.datetime.now(rawdt.timezone.utc)
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t54d', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
@@ -1574,6 +1620,7 @@ async def test_snooze(hass, service_calls):
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t54c', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.async_block_till_done()
+    assert t54d.extra_state_attributes['is_acked'] == False # since has never fired
     assert service_calls.isEmpty()
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t54d'})
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t54a'})
@@ -1581,6 +1628,7 @@ async def test_snooze(hass, service_calls):
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t54c'})
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
+    assert t54d.extra_state_attributes['is_acked'] == False
     # snooze expires, get notification summary
     await asyncio.sleep(2)
     service_calls.popNotifySearch('persistent_notification', 't54d', 't54d.*fired 1x.*ago\\)$')
@@ -1708,7 +1756,7 @@ async def test_snooze2(hass, service_calls):
 
 async def test_generator(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True}, 'alerts' : [
-        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't55a', 'condition': 'sensor.a',  },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g1', 'generator': 't55a', 'condition': 'sensor.a', 'reminder_frequency_mins': 0.01, 'reminder_message': 'yay-{{ on_secs }}-{{ on_time_str }}-{{ genElem }}' },
         { 'domain': 'test', 'name': '{{ genElem }}', 'generator_name': 'g2', 'generator': '{{ states("sensor.g") }}', 'condition': 'sensor.a',  },
         { 'domain': 'test', 'name': '{{ genElem }}z', 'generator_name': 'g3', 'generator': '{{ states("sensor.g3") }}', 'condition': 'sensor.a',  },
     ] } }
@@ -1733,6 +1781,14 @@ async def test_generator(hass, service_calls):
     assert hass.states.get(g1.entity_id)
     assert service_calls.isEmpty()
 
+    # interlude, test reminder message for generators with variables
+    await setAndWait(hass, "sensor.a", "on")
+    service_calls.popNotifyEmpty('persistent_notification', 't55a: turned on')
+    await asyncio.sleep(1.7) # reminder interval is 1 + specified interval
+    service_calls.popNotifyEmpty('persistent_notification', 't55a: yay-[12][.0-9]*-[12] s-t55a$')
+    await setAndWait(hass, "sensor.a", "off")
+    service_calls.popNotifyEmpty('persistent_notification', 't55a: turned off')
+    
     # And suppose generator is a template and produces an error.  should not change generated alerts.
     #
     # So first generate an alert

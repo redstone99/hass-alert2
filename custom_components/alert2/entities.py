@@ -890,6 +890,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             'last_fired_time': self.last_fired_time,
             'last_fired_message': self.last_fired_message,
             'last_ack_time': self.last_ack_time,
+            'is_acked': self.is_acked(),
             #'friendly_name2': self._friendly_name, # Entity class defines "friendly_name" so we have to use something different.
             'fires_since_last_notify': self.fires_since_last_notify,
             'notified_max_on': self.notified_max_on,
@@ -907,6 +908,8 @@ class AlertBase(AlertCommon, RestoreEntity):
     def sub_need_reminder(self):
         assert False, "not implemented"
     def sub_ack_int(self):
+        assert False, "not implemented"
+    def is_acked(self):
         assert False, "not implemented"
 
     async def async_notification_control(
@@ -1161,7 +1164,9 @@ class AlertBase(AlertCommon, RestoreEntity):
         if reason == NotificationReason.Summary:
             msg += 'Summary: '
         addedName = False
-        if self.annotate_messages or reason in [ NotificationReason.ReminderOn, NotificationReason.Summary ]:
+        if self.annotate_messages or \
+           reason == NotificationReason.Summary or \
+           reason == NotificationReason.ReminderOn and self._reminder_message_template is None:
             addedName = True
             if self._friendly_name is None:
                 msg += f'Alert2 {self.name}'
@@ -1401,6 +1406,9 @@ class EventAlert(AlertBase):
     
     def sub_ack_int(self):
         return self.last_fired_time and (not self.last_ack_time or self.last_ack_time <= self.last_fired_time)
+    def is_acked(self):
+        return bool(self.last_fired_time and self.last_ack_time and self.last_ack_time > self.last_fired_time)
+
     #def sub_unack_int(self):
     #    return self.last_fired_time and (not self.last_ack_time or self.last_ack_time <= self.last_fired_time)
     def sub_need_reminder(self):
@@ -1665,7 +1673,7 @@ class ConditionAlert(AlertBase):
                 self.reminder_check(now)
             else:
                 _LOGGER.warning(f'Activity {self.entity_id} turned off')
-                is_acked = self.last_ack_time and self.last_on_time and self.last_ack_time > self.last_on_time
+                #is_acked = self.last_ack_time and self.last_on_time and self.last_ack_time > self.last_on_time
                 secs_on = (self.last_off_time - self.last_on_time).total_seconds()
                 if self._done_message_template is None:
                     msg = f'turned off after {agoStr(secs_on)}.'
@@ -1675,7 +1683,7 @@ class ConditionAlert(AlertBase):
                     except TemplateError as err:
                         report(DOMAIN, 'error', f'{self.name} done_message template: {err}')
                         msg = f'turned off after {agoStr(secs_on)}. [done_message template error]'
-                self._notify_pre_debounce(now, NotificationReason.StopFiring, msg, skip_notify=is_acked)
+                self._notify_pre_debounce(now, NotificationReason.StopFiring, msg, skip_notify=self.is_acked())
                 self.reminder_check(now)
             
             if self.annotate_messages and (msg.startswith('command_') or \
@@ -1700,20 +1708,23 @@ class ConditionAlert(AlertBase):
             if not self.last_on_time:
                 report(DOMAIN, 'error', f'{gAssertMsg} notify_timer_cb, is_on=True but no self.last_on_time={self.last_on_time} for {self.name}')
             else:
-                secs_on = (now - self.last_on_time).total_seconds()
+                on_secs = (now - self.last_on_time).total_seconds()
                 if self._reminder_message_template is None:
-                    msg += f'on for {agoStr(secs_on)}'
+                    msg += f'on for {agoStr(on_secs)}'
                 else:
+                    evars = self.extraVariables.copy() if self.extraVariables else {}
+                    evars['on_secs'] = on_secs
+                    evars['on_time_str'] = agoStr(on_secs)
                     try:
-                        msg += self._reminder_message_template.async_render(variables=self.extraVariables, parse_result=False)
+                        msg += self._reminder_message_template.async_render(variables=evars, parse_result=False)
                     except TemplateError as err:
                         report(DOMAIN, 'error', f'{self.name} reminder_message template: {err}')
-                        msg += f'on for {agoStr(secs_on)} [reminder_message template error]'
+                        msg += f'on for {agoStr(on_secs)} [reminder_message template error]'
             reason = NotificationReason.ReminderOn
         else:
             secs_off = (now - self.last_off_time).total_seconds()
-            secs_on = (self.last_off_time - self.last_on_time).total_seconds()
-            msg += f'turned off {agoStr(secs_off)} ago after being on for {agoStr(secs_on)}'
+            on_secs = (self.last_off_time - self.last_on_time).total_seconds()
+            msg += f'turned off {agoStr(secs_off)} ago after being on for {agoStr(on_secs)}'
             reason = NotificationReason.Summary
         self._notify_pre_debounce(now, reason, msg)
         # Whether or not we actually notified, for the purposes of counting reminder delays we say we did.
@@ -1728,6 +1739,8 @@ class ConditionAlert(AlertBase):
         if self.state == 'on':
             return True
         return self.last_off_time and (not self.last_ack_time or self.last_ack_time <= self.last_off_time)
+    def is_acked(self):
+        return bool(self.last_on_time and self.last_ack_time and self.last_ack_time > self.last_on_time)
     
     def sub_need_reminder(self):
         return self.state == 'on' and (not self.last_ack_time or self.last_ack_time < self.last_on_time)
