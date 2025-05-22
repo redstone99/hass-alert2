@@ -3301,6 +3301,38 @@ async def test_priority(hass, service_calls):
     assert gad.alerts['test']['t5']._priority == 'high'
     assert gad.alerts['test']['t6']._priority == 'medium'
     assert gad.alerts['test']['t7']._priority == 'high'
+
+
+async def test_delay_on_secs(hass, service_calls):
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        { 'domain': 'test', 'name': 't1', 'condition': 'off' },
+        { 'domain': 'test', 'name': 't2', 'condition': 'off', 'delay_on_secs': 3 },
+        { 'domain': 'test', 'name': 't3', 'condition': 'off', 'delay_on_secs': '4' },
+        { 'domain': 'test', 'name': 't4', 'condition': 'off', 'delay_on_secs': 'foo' },
+        { 'domain': 'test', 'name': 't5', 'condition': 'off', 'delay_on_secs': -2 },
+        # Template only allowed in generator
+        { 'domain': 'test', 'name': 't6', 'condition': 'off', 'delay_on_secs': '{{ 5 }}' },
+        { 'domain': 'test', 'name': 't7', 'condition': 'off', 'delay_on_secs': '{{ "6" }}', 'generator': 'gg1', 'generator_name': 'g1' },
+        { 'domain': 'test', 'name': 't8', 'condition': 'off', 'delay_on_secs': '{{ -7 }}', 'generator': 'gg2', 'generator_name': 'g2' },
+        { 'domain': 'test', 'name': 't9', 'condition': 'off', 'delay_on_secs': '{{ [8][genIdx] }}', 'generator': 'gg3', 'generator_name': 'g3' },
+    ], } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifySearch('persistent_notification', 't4', 'required key not provided')
+    service_calls.popNotifySearch('persistent_notification', 't5', 'required key not provided')
+    service_calls.popNotifySearch('persistent_notification', 't6', 'required key not provided')
+    service_calls.popNotifySearch('persistent_notification', 't8', 'required key not provided')
+    assert service_calls.isEmpty()
+
+    gad = hass.data[DOMAIN]
+    assert list(gad.alerts['test'].keys()) == [ 't1', 't2', 't3', 't7', 't9' ]
+    assert gad.alerts['test']['t1'].delay_on_secs == 0
+    assert gad.alerts['test']['t2'].delay_on_secs == 3
+    assert gad.alerts['test']['t3'].delay_on_secs == 4
+    assert gad.alerts['test']['t7'].delay_on_secs == 6
+    assert gad.alerts['test']['t9'].delay_on_secs == 8
+
     
 async def test_native_friendly(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [

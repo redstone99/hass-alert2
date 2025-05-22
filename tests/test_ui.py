@@ -683,7 +683,25 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     #assert rez == { 'rez': 3 }
     rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': '{{ 5+6 }}' })
     assert re.search('expected float', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': '{{ 5+6 }}', 'extraVars': { 'foo': 3} })
+    assert rez == { 'rez': 11 }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': '{{ foo }}', 'extraVars': { 'foo': 12} })
+    assert rez == { 'rez': 12 }
 
+
+    # priority
+    rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': 'low' })
+    assert rez == { 'rez': 'low' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': '{{ foo }}' })
+    assert re.search('must be one of', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': '{{ foo }}', 'extraVars': { 'foo': 'medium' } })
+    assert rez == { 'rez': 'medium' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': 'foo' })
+    assert re.search('must be one of', rez['error'])
+
+
+
+    
     # generator_name
     rez = await tpost("/api/alert2/renderValue", {'name': 'generator_name', 'txt': 'foo' })
     assert rez == { 'rez': 'foo' }
@@ -1393,7 +1411,9 @@ async def test_uicfg(hass, service_calls, hass_storage):
     cfg = { 'alert2': { } }
     uiCfg = { 'defaults' : { },
               'alerts': [
-                  { 'domain': 'd', 'name': 'n1', 'condition':'off', 'priority': '{{ ["high"][genIdx]}}', 'generator': 'hh', 'generator_name': 'g1' },
+                  { 'domain': 'd', 'name': 'n1', 'condition':'off', 'priority': '{{ ["high"][genIdx]}}',
+                    'delay_on_secs': '{{ [33][genIdx] }}',
+                    'generator': 'hh', 'generator_name': 'g1' },
                   { 'domain': 'd', 'name': 'n2', 'condition':'off', 'supersedes': '{ "domain": "d", "name":"{{genElem}}" }', 'generator': 'hh', 'generator_name': 'g2' },
               ]
              }
@@ -1405,6 +1425,7 @@ async def test_uicfg(hass, service_calls, hass_storage):
     assert service_calls.isEmpty()
     gad = hass.data[DOMAIN]
     assert gad.alerts['d']['n1']._priority == 'high'
+    assert gad.alerts['d']['n1'].delay_on_secs == 33
 
     assert gad.supersedeMgr.supersedesMap == {
         ('d','n1'): set( ),
