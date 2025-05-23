@@ -1908,6 +1908,21 @@ async def test_generator2(hass, service_calls):
               'maximum': 9
           },
          },
+        { 'domain': 'test', 'name': '{{ genElem[0] }}', 'generator_name': 'g6', 'generator': '[ ["t59d",4] ]',
+          'delay_on_secs': '{{ genElem[1] }}', 'condition': 'off',
+         },
+        { 'domain': 'test', 'name': '{{ genElem[0] }}', 'generator_name': 'g7', 'generator': '{{ [ ["t59e",5] ] }}',
+          'delay_on_secs': '{{ genElem[1] }}', 'condition': 'off',
+         },
+        { 'domain': 'test', 'name': '{{ elem }}', 'generator_name': 'g8', 'generator': '{{ [ {"elem":"t59f","num":6} ] }}',
+          'delay_on_secs': '{{ num }}', 'condition': 'off',
+         },
+        { 'domain': 'test', 'name': '{{ elem }}', 'generator_name': 'g9', 'generator': '[ {"elem":"t59g","num":7} ]',
+          'delay_on_secs': '{{ num }}', 'condition': 'off',
+         },
+        { 'domain': 'test', 'name': '{{ elem }}', 'generator_name': 'g10', 'generator': [ {"elem":"t59h","num":8} ],
+          'delay_on_secs': '{{ num }}', 'condition': 'off',
+         },
     ] } }
     hass.states.async_set("sensor.a", "off")
     hass.states.async_set("sensor.v", "1")
@@ -1921,14 +1936,24 @@ async def test_generator2(hass, service_calls):
     service_calls.popNotifyEmpty('persistent_notification', 'Duplicate generator name=g1')
 
     # first generations happenned
-    assert len(gad.alerts['test']) == 5
+    assert len(gad.alerts['test']) == 10
     assert not 'tracked' in gad.alerts
     t57 = gad.alerts['test']['t57']
     t58 = gad.alerts['test']['t58']
     t59a = gad.alerts['test']['t59a']
     t59b = gad.alerts['test']['t59b']
     t59c = gad.alerts['test']['t59c']
-    assert len(gad.generators) == 5
+    t59d = gad.alerts['test']['t59d']
+    assert t59d.delay_on_secs == 4
+    t59e = gad.alerts['test']['t59e']
+    assert t59e.delay_on_secs == 5
+    t59f = gad.alerts['test']['t59f']
+    assert t59f.delay_on_secs == 6
+    t59g = gad.alerts['test']['t59g']
+    assert t59g.delay_on_secs == 7
+    t59h = gad.alerts['test']['t59h']
+    assert t59h.delay_on_secs == 8
+    assert len(gad.generators) == 10
     g1 = gad.generators['g1']
     g2 = gad.generators['g2']
     g3 = gad.generators['g3']
@@ -3499,7 +3524,7 @@ async def test_supersedes_debounce(hass, service_calls, caplog):
     service_calls.popNotifySearch('persistent_notification', 't7', 't7: turned on')
     service_calls.popNotifyEmpty('persistent_notification', 't7: turned off')
 
-async def test_shutdown(hass, service_calls):
+async def test_shutdown2(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { },
                          'tracked': [{ 'domain':'t', 'name': 't1' }],
                         } }
