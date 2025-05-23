@@ -3557,3 +3557,31 @@ async def test_shutdown2(hass, service_calls):
     # Restore shutting down for next test
     set_shutting_down(False)
     
+async def test_done_notifier(hass, service_calls):
+    def mock_service_foo(call):
+        return None
+    hass.services.async_register('notify', 'foo', mock_service_foo)
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2' : { 'defaults': { },
+                         'alerts': [
+                             { 'domain':'t', 'name': 't1', 'condition': 'sensor.a', 'done_notifier': False  },
+                             { 'domain':'t', 'name': 't2', 'condition': 'sensor.a', 'done_notifier': 'foo'  },
+                             { 'domain':'t', 'name': 't3', 'condition': 'off', 'done_notifier': 'no'  },
+                         ],
+                        } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+    assert gad.alerts['t']['t1']._done_notifier == False
+    assert gad.alerts['t']['t2']._done_notifier.template == 'foo'
+    assert gad.alerts['t']['t3']._done_notifier == False
+
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifySearch('persistent_notification', 't1', 't1: turned on')
+    service_calls.popNotifyEmpty('persistent_notification', 't2: turned on')
+
+    await setAndWait(hass, "sensor.a", 'off')
+    service_calls.popNotifyEmpty('foo', 't2: turned off')

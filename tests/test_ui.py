@@ -53,6 +53,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
         'defaults' : {
             'notifier' : 'n',
             'summary_notifier' : 'sn',
+            'done_notifier' : 'dn',
             'reminder_frequency_mins': [3],
             'throttle_fires_per_mins': [1,2],
             'priority': 'medium',
@@ -75,6 +76,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     # and check all the defaults
     assert t1._notifier_list_template.template == cfga['defaults']['notifier']
     assert t1._summary_notifier.template == cfga['defaults']['summary_notifier']
+    assert t1._done_notifier.template == cfga['defaults']['done_notifier']
     assert t1.reminder_frequency_mins == cfga['defaults']['reminder_frequency_mins']
     assert t1._supersede_debounce_secs == cfga['defaults']['supersede_debounce_secs']
     assert t1.movingSum.maxCount == cfga['defaults']['throttle_fires_per_mins'][0]
@@ -201,6 +203,23 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert rez['rawUi']['defaults']['summary_notifier'] == '["foo","bar" ]'
     assert gad.topConfig['defaults']['summary_notifier'] == ['foo','bar']
 
+    # done_notifier
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'done_notifier': False} }})
+    assert re.search('non-string value', rez['error'])
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'done_notifier': 'false'} }})
+    assert rez['rawUi']['defaults']['done_notifier'] == 'false'
+    assert hass_storage['alert2.storage']['data']['config']['defaults']['done_notifier'] == 'false'
+    assert gad.topConfig['defaults']['done_notifier'] == False
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'done_notifier': 'ick'} }})
+    assert rez['rawUi']['defaults']['done_notifier'] == 'ick'
+    assert isinstance(gad.topConfig['defaults']['done_notifier'], template_helper.Template)
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'done_notifier': '[foo,bar ]'} }})
+    assert rez['rawUi']['defaults']['done_notifier'] == '[foo,bar ]'
+    assert gad.topConfig['defaults']['done_notifier'] == ['foo','bar']
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'done_notifier': '["foo","bar" ]'} }})
+    assert rez['rawUi']['defaults']['done_notifier'] == '["foo","bar" ]'
+    assert gad.topConfig['defaults']['done_notifier'] == ['foo','bar']
+
     # annotate_messages
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'annotate_messages': 'FAlse'} }})
     assert rez['rawUi']['defaults']['annotate_messages'] == 'FAlse'
@@ -272,6 +291,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     uiCfg = { 'defaults' : {
         'notifier' : 'n2',
         'summary_notifier' : 'sn2',
+        'done_notifier' : 'dn2',
         'reminder_frequency_mins': '[4]',
         'throttle_fires_per_mins': '[1,3]',
         'priority': 'high',
@@ -297,6 +317,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
         'defaults' : {
             'notifier' : 'n',                 # yaml comes through
             #'summary_notifier' : 'sn',   underderlying default comes through
+            #'done_notifier'    : 'dn',   underderlying default comes through
             #'reminder_frequency_mins': [3], UI overrides base
             'throttle_fires_per_mins': [1,2]  # UI overrides yaml
             # 'priority' - underlying default comes through
@@ -330,6 +351,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     # and check all the defaults
     assert t1._notifier_list_template.template == cfga['defaults']['notifier']
     assert t1._summary_notifier == False
+    assert t1._done_notifier == True
     assert t1.reminder_frequency_mins == [4] # uiCfg['defaults']['reminder_frequency_mins']
     assert t1.movingSum.maxCount == 5 # uiCfg['defaults']['throttle_fires_per_mins'][0]
     assert t1.movingSum.intervalSecs == 60*6 # uiCfg['defaults']['throttle_fires_per_mins'][1]*60
@@ -340,14 +362,14 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     _LOGGER.warning(rez)
     assert rez == {'rawYaml': {'defaults': {'reminder_frequency_mins': [60], 'notifier': 'n',
                                             'supersede_debounce_secs': 0.5,
-                                            'summary_notifier': False, 'annotate_messages': True,
+                                            'summary_notifier': False, 'done_notifier': True, 'annotate_messages': True,
                                             'throttle_fires_per_mins': [1, 2], 'priority': 'low' },
                                'tracked': [{'domain': 'alert2', 'name': 'global_exception', 'throttle_fires_per_mins': [20, 60]}],
                                'skip_internal_errors': False, 'notifier_startup_grace_secs': 4,
                                'defer_startup_notifications': True},
                    'raw': {'defaults': {'reminder_frequency_mins': [4], 'notifier': 'n',
                                         'supersede_debounce_secs': '6',
-                                        'summary_notifier': False, 'annotate_messages': True,
+                                        'summary_notifier': False, 'done_notifier': True, 'annotate_messages': True,
                                         'throttle_fires_per_mins': [5, 6], 'priority': 'low' },
                            'tracked': [{'domain': 'alert2', 'name': 'global_exception', 'throttle_fires_per_mins': [20, 60]}],
                            'skip_internal_errors': 'true', 'notifier_startup_grace_secs': '7',
@@ -400,6 +422,26 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'summary_notifier', 'txt': 'false' })
     assert rez == { 'rez': False }
     rez = await tpost("/api/alert2/renderValue", {'name': 'summary_notifier', 'txt': 'on' })
+    assert rez == { 'rez': True }
+
+    # done_notifier
+    rez = await tpost("/api/alert2/renderValue", {'name': 'done_notifier', 'txt': 'foo' })
+    assert rez == { 'rez': ['foo'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'done_notifier', 'txt': '"foo"' })
+    assert rez == { 'rez': ['foo'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'done_notifier', 'txt': '{{ "a"+"b"}}' })
+    assert rez == { 'rez': ['ab'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'done_notifier', 'txt': '{{ ["a"+"b", "c"] }}' })
+    assert rez == { 'rez': ['ab', 'c'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'done_notifier', 'txt': '\'{{ "a"+"b"}}\'' })
+    assert rez == { 'rez': ['ab'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'done_notifier', 'txt': '[aa,bb]' })
+    assert rez == { 'rez': ['aa','bb'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'done_notifier', 'txt': '["aa",bb]' })
+    assert rez == { 'rez': ['aa','bb'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'done_notifier', 'txt': 'false' })
+    assert rez == { 'rez': False }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'done_notifier', 'txt': 'on' })
     assert rez == { 'rez': True }
 
     # annotate_messages
@@ -1263,6 +1305,7 @@ async def test_display_msg2(hass, service_calls, hass_storage, caplog):
                   { 'domain': 'd', 'name': 'n5', 'condition':'sensor.b', 'notifier': 'null' },
                   { 'domain': 'd', 'name': 'n3', 'condition':'sensor.a', 'notifier': 'null', 'summary_notifier': 'yes' },
                   { 'domain': 'd', 'name': 'n4', 'condition':'sensor.a', 'summary_notifier': 'null' },
+                  { 'domain': 'd', 'name': 'n6', 'condition':'off', 'done_notifier':'no' },
               ]
              }
     hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
@@ -1288,6 +1331,9 @@ async def test_display_msg2(hass, service_calls, hass_storage, caplog):
     assert hass.states.get('alert2.d_n5').state == 'on'
     assert 'Activity alert2.d_n5 turned on' in caplog.text
     assert 'd_n5: turned on' in caplog.text
+    assert n4._summary_notifier == []
+    assert n4._done_notifier == True
+    assert gad.alerts['d']['n6']._done_notifier == False
 
     await setAndWait(hass, 'sensor.a', 'on')
     #await asyncio.sleep(0.05)
@@ -1407,7 +1453,7 @@ async def test_event(hass, service_calls, hass_client, hass_storage):
     service_calls.popNotifyEmpty('persistent_notification', 'Alert2 d_n1')
 
 async def test_uicfg(hass, service_calls, hass_storage):
-    # Check null values for display_msg and notifier and summary_notifier
+    # Check null values for display_msg
     cfg = { 'alert2': { } }
     uiCfg = { 'defaults' : { },
               'alerts': [
