@@ -495,7 +495,7 @@ class Alert2Data:
         baseTopConfig = {
             'defaults': {
                 'reminder_frequency_mins': [60], 'notifier': 'persistent_notification',
-                'summary_notifier': False, 'annotate_messages': True,
+                'summary_notifier': False, 'done_notifier': True, 'annotate_messages': True,
                 'throttle_fires_per_mins': None,
                 'priority': 'low',
                 'supersede_debounce_secs': 0.5,

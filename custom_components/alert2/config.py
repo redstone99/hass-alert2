@@ -202,6 +202,7 @@ DEFAULTS_SCHEMA = vol.Schema({
     vol.Optional('notifier'): vol.Any(cv.template, jstringList),
     # Can be truthy or template or list of notifiers
     vol.Optional('summary_notifier'): vol.Any(cv.boolean, cv.template, jstringList),
+    vol.Optional('done_notifier'): vol.Any(cv.boolean, cv.template, jstringList),
     vol.Optional('annotate_messages'): cv.boolean,
     vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
     vol.Optional('throttle_fires_per_mins'): vol.Any(
@@ -214,6 +215,7 @@ DEFAULTS_SCHEMA = vol.Schema({
 SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({
     vol.Optional('notifier'): vol.Any(cv.template, jstringList),
     vol.Optional('summary_notifier'): vol.Any(cv.boolean, cv.template, jstringList),
+    vol.Optional('done_notifier'): vol.Any(cv.boolean, cv.template, jstringList),
     vol.Optional('friendly_name'): cv.template,
     vol.Optional('title'): cv.template,
     vol.Optional('target'): cv.template,
@@ -264,7 +266,6 @@ SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Optional('reminder_message'): cv.template,
     vol.Optional('done_message'): cv.template,
     vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
-    vol.Optional('delay_on_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
     vol.Optional('early_start'): cv.boolean,
     vol.Optional('supersede_debounce_secs'): vol.All(vol.Coerce(float), vol.Range(min=0)),
 })
@@ -279,13 +280,15 @@ GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('generator'): jtemplate,
     vol.Required('generator_name'): jstringName,
     vol.Optional('supersedes'): SUPERSEDES_GEN,
+    vol.Optional('delay_on_secs'): cv.template,
     # Overrides 'priority'
     vol.Optional('priority'): cv.template,
 })
 NO_GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): jDomain,
     vol.Required('name'): jstringName,
-    vol.Optional('supersedes'): vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT ]))
+    vol.Optional('supersedes'): vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT ])),
+    vol.Optional('delay_on_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
 })
 
 # If alert is a generator, then 'name' is a template, otherwise 'name' is a string

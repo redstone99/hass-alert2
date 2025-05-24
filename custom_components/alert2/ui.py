@@ -101,7 +101,8 @@ class SaveDefaultsView(HomeAssistantView):
 # Throws HomeAssistantError
 # converts raw input txt string to val as if it were coming from YAML, so ready for validation
 def prepStrConfigField(fname, tval, doReport=True):
-    if fname in [ 'notifier', 'summary_notifier', 'reminder_frequency_mins', 'throttle_fires_per_mins',
+    if fname in [ 'notifier', 'summary_notifier', 'done_notifier', 'reminder_frequency_mins',
+                  'throttle_fires_per_mins',
                   'data', 'generator', 'defer_startup_notifications' ]:
         if template_helper.is_template_string(tval):
             return tval
@@ -173,7 +174,7 @@ class RenderValueView(HomeAssistantView):
             return {'list': aList[:kMaxToReturn], 'len':len(aList), 'firstElemVars': fvars }
             
         try:
-            if name in ['notifier','summary_notifier']:
+            if name in ['notifier','summary_notifier', 'done_notifier']:
                 tval = DEFAULTS_SCHEMA({ name: ttxt })[name]
                 ttype = 'notifier_list'
                 if isinstance(tval, bool):
@@ -274,8 +275,14 @@ class RenderValueView(HomeAssistantView):
                 tval = THRESHOLD_SCHEMA(obj)[subname]
                 simple = True
             elif name in ['delay_on_secs']:
-                tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME({ name: ttxt })[name]
-                simple = True
+                if extraVars:
+                    obj = { 'domain': 'foo', 'name': 'bar', 'generator':'f2', 'generator_name': 'f3' }
+                    obj[name] = ttxt
+                    tval = GENERATOR_SCHEMA(obj)[name]
+                    ttype = 'float'
+                else:
+                    tval = NO_GENERATOR_SCHEMA({ 'domain':'foo','name':'bar', name: ttxt })[name]
+                    simple = True
             elif name in ['generator']:
                 obj = { 'domain': 'foo', 'name': 'bar', 'generator_name': 'ick', name: ttxt }
                 tval = GENERATOR_SCHEMA(obj)[name]

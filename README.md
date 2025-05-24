@@ -71,7 +71,9 @@ Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-ale
 
     [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=redstone99&repository=hass-alert2&category=integration)
 
-    or visit the HACS pane and add `https://github.com/redstone99/hass-alert2.git` as a custom repository of type  `Integration` by following [these instructions](https://hacs.xyz/docs/faq/custom_repositories/).
+    or visit the HACS pane, type **Alert2** in the search field, expand "New" or "Available for download" if necessary, and click on **Alert2** to get to the details page.
+
+    If, for some reason, Alert2 does not show up as a HACS search result, you can add Alert2 manually by adding `https://github.com/redstone99/hass-alert2.git` as a custom repository of type `Integration` by following [these instructions](https://hacs.xyz/docs/faq/custom_repositories/).
 
 1. The UI should now show the Alert2 doc page in HACS. Click "Download" button (bottom right of screen) to download the Alert2 integration.
 
@@ -216,7 +218,7 @@ The text of each notification by default includes some basic context information
 
 #### Notifiers
 
-You can specify which notifiers are used for alerting via the `notifier` and `summary_notifier` config options. They may be a single notifier, a list of notifiers, a template resolving to a list of notifiers, or the name of an entity whose state is a list of notifiers. See [Notifier Config](#notifier-config) section, below.
+You can specify which notifiers are used for alerting via the `notifier`, `done_notifier`, and `summary_notifier` config options. They may be a single notifier, a list of notifiers, a template resolving to a list of notifiers, or the name of an entity whose state is a list of notifiers. See [Notifier Config](#notifier-config) section, below.
 
 During HA startup, HA initializes notifiers independently of the rest of HA.  So notifiers may not be ready even when HA declares that it has fully started.  Alert2 will automatically defer notifications during startup if a notifier does not yet exist. `notifier_startup_grace_secs` controls the length of the startup grace period.
 
@@ -286,6 +288,7 @@ The `defaults:` subsection specifies optional default values for parameters comm
 | `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. Minimum is 0.01 min. |
 | `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers, an entity name whose state is a list of notifiers, a template that evaluates to either, or "null" to indicate no notification. See [Notifier Config](#notifier-config) section below for possibilities here.  |
 | `summary_notifier` | bool or template | True to send summaries (see [Notifiers](#notifiers) section for detail) using the same notifier as other notifications.  False to not send summaries.  Or can be a template similar to `notifier` parameter to specify notifier to use for summaries. Default is `false`. |
+| `done_notifier` | bool or template | Controls notifier used to notify when a condition alert stops firing. True to use the `notifier` setting.  False or null to not send done notifications.  Or can be a template similar to `notifier` parameter to specify notifier to use for done notificaitons. Default is `true`. |
 | `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notification, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
 | `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on a list of two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, "[10, 60]" means you'll receive no more than 10 notifications of the alert firing every hour.<br><br>Default is no throttling. You can set `summary_notifier` to be notified when throttling ends (by default you won't be). |
 | `priority` | string | Can be "low", "medium", or "high". Affects display of alert in the Alert2 UI Overview card.  Active alerts are sorted by priority and medium and high-priority alerts have a badge colored orange and red, respectively. May be template when used with generators. Default is "low" |
@@ -331,7 +334,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `trigger_off` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Alert turns off when the trigger triggers, if also any `condition_off` specified is truthy. |
 | `manual_on` | boolean | optional | Enables the service call `alert2.manual_on` to turn the alert on. |
 | `manual_off` | boolean | optional | Enables the service call `alert2.manual_off` to turn the alert off. |
-| `delay_on_secs` | float | optional | Specifies number of seconds that any `condition` must be true and any threshold specified must be exceeded before the alert starts firing. Similar in motivation to the `skip_first` option in the old Alert integration. |
+| `delay_on_secs` | float | optional | Specifies number of seconds that any `condition` must be true and any threshold specified must be exceeded before the alert starts firing. Similar in motivation to the `skip_first` option in the old Alert integration.<br>Can be a template when used with [generator patterns](#generator-patterns). |
 | `message` | template | optional | Template string evaluated when the alert fires. For event-based alerts, it can reference the `trigger` variable (see example below). Defaults to simple alert state change message like "... turned on".  <br><br>Any message specified here will be prepended with context information including the alert domain and name.  Set `annotate_messages` to false to disable that behavior (eg if you want to send a notification command to the companion app mobile_app platform). |
 | `done_message` | template | optional |Template string evaluated when an alert turns off. Defaults to simple alert state change message like "... turned off after x minutes".<br><br>Any message specified here will be prepended with context information including the alert domain and name.  Set `annotate_messages` to false to disable that behavior (eg if you want to send a notification command like "clear_notification" to the companion app mobile_app platform).
 | `reminder_message` | template | optional |Template string evaluated each time a reminder notification will be sent. Variable `on_secs` contains float seconds alert has been on.  Variable `on_time_str` contains time alert has been on as a string.  `reminder_message` defaults to:<br>`  on for {{ on_time_str }}`<br><br>Any message specified here will be prepended with alert domain and name unless `annotate_messages` is false.
@@ -343,6 +346,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `reminder_frequency_mins` | float | optional | Override the default `reminder_frequency_mins`|
 | `notifier` | template | optional | Override the default `notifier`. See [Notifier Config](#notifier-config) section below for examples. |
 | `summary_notifier` | template | optional | Override the default `summary_notifier`. See [Notifier Config](#notifier-config) section below for examples. |
+| `done_notifier` | template | optional | Override the default `done_notifier`. See [Notifier Config](#notifier-config) section below for examples. |
 | `supersedes` | List | optional | A list of domain+name pairs of alerts that this alert supersedes. Notifications will be skipped for superseded alerts while this alert is firing.  Applies transitively. May use templates when used with generators. See [Supersedes](#supersedes) section below for examples. |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `priority` | string | optional | Override the default value of `priority` |
@@ -736,6 +740,22 @@ alert2:
 ````
 
 The above creates three alerts, alerting on progressively lower free disk space.  Each alert has a higher priority than the previous alert and each alert supersedes the alert before it.
+
+An alternative way of expressing the above generator is to collect variables together in the generator itself. So it could instead be written as:
+````yaml
+alert2:
+     alerts:
+       - domain: test
+         name: "low_disk_{{ freeGb }}"
+         condition: "{{ states('sensor.disk_free_gb')|float < freeGb }}"
+         supersedes: "{{ genPrevDomainName }}"
+         generator:
+           - { freeGb: 20, pri: low }
+           - { freeGb: 10, pri: medium }
+           - { freeGb: 1,  pri: high }
+         priority: "{{ pri }}"
+         generator_name: g1
+````
 
 #### `entity_regex` 
 

@@ -498,6 +498,10 @@ def processSupersedes(cfgElem, svars):
                 return (f'Supersedes name template returned err {err}', None)
             newSupersedes.append(newdn)
         return (None, newSupersedes)
+    elif cfgElem is None:
+        return (None, None)
+    else:
+        return (f'Supersedes variable has bad value: "{cfgElem}"', None)
         
 class AlertGenerator(AlertCommon, SensorEntity):
     _attr_device_class = SensorDeviceClass.DATA_SIZE #'problem'
@@ -638,6 +642,13 @@ class AlertGenerator(AlertCommon, SensorEntity):
                         report(DOMAIN, 'error', f'{self.name} priority template returned err {err}')
                         sawError = True
                         break
+                if 'delay_on_secs' in self.config:
+                    try:
+                        acfg['delay_on_secs'] = self.config['delay_on_secs'].async_render(variables=svars, parse_result=False)
+                    except TemplateError as err:
+                        report(DOMAIN, 'error', f'{self.name} delay_on_secs template returned err {err}')
+                        sawError = True
+                        break
                 #if 'friendly_name' in self.config:
                 #    try:
                 #        friendlyNameStr = self.config['friendly_name'].async_render(
@@ -756,6 +767,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         # config stuff
         self._notifier_list_template = getField('notifier', config, defaultCfg)
         self._summary_notifier = getField('summary_notifier', config, defaultCfg)
+        self._done_notifier = getField('done_notifier', config, defaultCfg)
         self._priority = getField('priority', config, defaultCfg)
         self._condition_template = config['condition'] if 'condition' in config else None
         self._message_template = config['message'] if 'message' in config else None
@@ -790,6 +802,8 @@ class AlertBase(AlertCommon, RestoreEntity):
             self._notifier_list_template.hass = hass
         if isinstance(self._summary_notifier, template_helper.Template):
             self._summary_notifier.hass = hass
+        if isinstance(self._done_notifier, template_helper.Template):
+            self._done_notifier.hass = hass
         self.annotate_messages = getField('annotate_messages', config, defaultCfg)
         throttle_fires_per_mins = getField('throttle_fires_per_mins', config, defaultCfg)
         self.movingSum = None
@@ -1022,6 +1036,15 @@ class AlertBase(AlertCommon, RestoreEntity):
             else:
                 sourceTemplate = 'summary_notifier'
                 notifier_template = self._summary_notifier
+        elif reason == NotificationReason.StopFiring:
+            if self._done_notifier is True:
+                pass
+            elif self._done_notifier is False:
+                report(DOMAIN, 'error', f'{gAssertMsg} getNotifiers called wtih done_notifier=False')
+            else:
+                sourceTemplate = 'done_notifier'
+                notifier_template = self._done_notifier
+
 
         (notifiers, errors, debugInfo) = notifierTemplateToList(self.hass, self.extraVariables, notifier_template,
                                                                 sourceTemplate)
@@ -1203,7 +1226,8 @@ class AlertBase(AlertCommon, RestoreEntity):
 
         doNotify = remaining_secs == 0
         skipSummary = (reason in [ NotificationReason.Summary ]) and self._summary_notifier is False
-        if skip_notify or skipSummary:
+        skipDone    = (reason in [ NotificationReason.StopFiring ]) and self._done_notifier is False
+        if skip_notify or skipSummary or skipDone:
             doNotify = False
         #isSuperseded = self.alertData.isSupersededByOn(self.alDomain, self.alName)
         if isSuperseded:
@@ -1239,10 +1263,10 @@ class AlertBase(AlertCommon, RestoreEntity):
         elif max_limit_remaining_secs == 0 and self.notified_max_on:
             self.notified_max_on = False
             msg += ' [Throttling ending]'
-            if not doNotify and remaining_reason not in [ NOTIFICATIONS_DISABLED, 'snoozed' ] and not skipSummary:
+            if not doNotify and remaining_reason not in [ NOTIFICATIONS_DISABLED, 'snoozed' ] and not skipSummary and not skipDone:
                 report(DOMAIN, 'error', f'{gAssertMsg} {self.name}: saw throttling stop, but not notifying, seems impossible. {remaining_secs}, {remaining_reason}')
 
-        if (doNotify or skipSummary) and self.fires_since_last_notify > 0:
+        if (doNotify or skipSummary or skipDone) and self.fires_since_last_notify > 0:
             secs_since_last = (now - last_fired_time).total_seconds()
             msg += f' (fired {self.fires_since_last_notify}x - most recently {agoStr(secs_since_last)} ago)'
             self.fires_since_last_notify = 0
@@ -1314,6 +1338,8 @@ class AlertBase(AlertCommon, RestoreEntity):
                 tillmsg = f' (already acked)'
             elif skipSummary:
                 tillmsg = f' (skipping summaries)'
+            elif skipDone:
+                tillmsg = f' (skipping firing done notifications)'
             elif isSuperseded:
                 tillmsg = f' (superseded by alert d={isSuperseded[0]} n={isSuperseded[1]})'
             else:
