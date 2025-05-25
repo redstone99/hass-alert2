@@ -288,7 +288,7 @@ NO_GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): jDomain,
     vol.Required('name'): jstringName,
     vol.Optional('supersedes'): vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT ])),
-    vol.Optional('delay_on_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.1)),
+    vol.Optional('delay_on_secs'): vol.All(vol.Coerce(float), vol.Range(min=0)),
 })
 
 # If alert is a generator, then 'name' is a template, otherwise 'name' is a string
