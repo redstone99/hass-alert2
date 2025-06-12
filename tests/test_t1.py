@@ -2741,6 +2741,9 @@ async def test_onoff_cond(hass, service_calls, caplog):
         { 'domain': 'test', 'name': 't8', 'trigger_on': [{'platform':'state','entity_id':'sensor.8ton'}], 'manual_on': True, 'trigger_off': [{'platform':'state','entity_id':'sensor.8toff'}] },
         { 'domain': 'test', 'name': 't9', 'trigger_on': [{'platform':'state','entity_id':'sensor.9ton'}], 'manual_off': True },
         { 'domain': 'test', 'name': 't10', 'trigger_on': [{'trigger':'state','entity_id':'sensor.10ton','to':'on'}], 'condition_off': 'sensor.10toff' },
+        # triggers don't allow templates in state platform, so doesn't work easily with generators
+        #{ 'domain': 'test', 'name': '{{genElem}}', 'trigger_on': [{'platform':'state','entity_id':'sensor.foo_{{genElem}}'}], 'manual_off': True, 'generator_name':'g1', 'generator': 't11' },
+        { 'domain': 'test', 'name': '{{genElem}}', 'trigger_on': [{'trigger':'template','value_template': '{{ states("sensor.foo_"+genElem) }}'}], 'manual_off': True, 'generator_name':'g2', 'generator': 't12' },
         # test delay_on_secs
     ]}}
     hass.states.async_set("sensor.3on", 'off')
@@ -2751,6 +2754,8 @@ async def test_onoff_cond(hass, service_calls, caplog):
     hass.states.async_set("sensor.6off", 'off')
     hass.states.async_set("sensor.10ton", 'on')
     hass.states.async_set("sensor.10toff", 'off')
+    hass.states.async_set("sensor.foo_t11", 'off')
+    hass.states.async_set("sensor.foo_t12", 'off')
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -2881,6 +2886,7 @@ async def test_onoff_cond(hass, service_calls, caplog):
     # manual off is not enabled
     await hass.services.async_call('alert2', 'manual_off', {'entity_id':'alert2.test_t8'})
     await hass.async_block_till_done()
+    assert 'manual_off called but alert alert2.test_t8 does not have manual_off enabled' in caplog.text
     assert hass.states.get('alert2.test_t8').state == 'on'
     await setAndWait(hass, "sensor.8toff", '1')
     service_calls.popNotifyEmpty('persistent_notification', 'test_t8: turned off')
@@ -2907,6 +2913,34 @@ async def test_onoff_cond(hass, service_calls, caplog):
     await asyncio.sleep(0.05)
     assert hass.states.get('alert2.test_t10').state == 'off'
     assert service_calls.isEmpty()
+
+    if False:
+        # t11 tests
+        await setAndWait(hass, "sensor.foo_t11", 'on')
+        service_calls.popNotifyEmpty('persistent_notification', 'test_t11: turned on')
+        assert hass.states.get('alert2.test_t11').state == 'on'
+        await setAndWait(hass, "sensor.foo_t11", 'off')
+        await asyncio.sleep(0.05)
+        assert hass.states.get('alert2.test_t10').state == 'on'
+        assert service_calls.isEmpty()
+        await hass.services.async_call('alert2', 'manual_off', {'entity_id':'alert2.test_t11'})
+        await hass.async_block_till_done()
+        service_calls.popNotifyEmpty('persistent_notification', 'test_t11: turned off')
+        assert hass.states.get('alert2.test_t11').state == 'off'
+    
+    # t12 tests
+    assert hass.states.get('alert2.test_t12').state == 'off'
+    await setAndWait(hass, "sensor.foo_t12", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t12: turned on')
+    assert hass.states.get('alert2.test_t12').state == 'on'
+    await setAndWait(hass, "sensor.foo_t12", 'off')
+    await asyncio.sleep(0.05)
+    assert hass.states.get('alert2.test_t12').state == 'on'
+    assert service_calls.isEmpty()
+    await hass.services.async_call('alert2', 'manual_off', {'entity_id':'alert2.test_t12'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t12: turned off')
+    assert hass.states.get('alert2.test_t12').state == 'off'
     
 async def test_empty(hass, service_calls):
     cfg = { 'alert2' : {  'alerts' : [
@@ -3327,6 +3361,38 @@ async def test_priority(hass, service_calls):
     assert gad.alerts['test']['t6']._priority == 'medium'
     assert gad.alerts['test']['t7']._priority == 'high'
 
+async def test_icon(hass, service_calls, monkeypatch):
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        { 'domain': 'test', 'name': 't1', 'condition': 'off' },
+        { 'domain': 'test', 'name': 't2', 'condition': 'off', 'icon': 'a:b' },
+    ], } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    gad = hass.data[DOMAIN]
+    assert list(gad.alerts['test'].keys()) == [ 't1', 't2' ]
+    assert gad.alerts['test']['t1']._icon == 'mdi:alert'
+    assert gad.alerts['test']['t2']._icon == 'a:b'
+
+    cfg = { 'alert2' : { 'defaults': { 'icon': 'c:d' }, 'alerts' : [
+        { 'domain': 'test', 'name': 't1', 'condition': 'off' },
+        { 'domain': 'test', 'name': 't2', 'condition': 'off', 'icon': 'a:b' },
+    ], } }
+    async def fake_cfg(thass):
+        return cfg
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
+    assert service_calls.isEmpty()
+    assert list(gad.alerts['test'].keys()) == [ 't1', 't2' ]
+    assert gad.alerts['test']['t1']._icon == 'c:d'
+    assert gad.alerts['test']['t2']._icon == 'a:b'
+
+    
 
 async def test_delay_on_secs(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [

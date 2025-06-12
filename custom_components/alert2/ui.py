@@ -114,7 +114,7 @@ def prepStrConfigField(fname, tval, doReport=True):
         return parse_yaml(tval)
     elif fname in [ 'trigger', 'trigger_on', 'trigger_off' ]:
         return parse_yaml(tval)
-    elif fname in [ 'annotate_messages', 'manual_off', 'manual_on', 'priority', 'friendly_name',
+    elif fname in [ 'annotate_messages', 'manual_off', 'manual_on', 'priority', 'icon', 'friendly_name',
                     'title', 'target', 'domain', 'name', 'message', 'done_message',
                     'reminder_message',
                     'condition', 'condition_on', 'condition_off', 'early_start', 'supersede_debounce_secs',
@@ -180,7 +180,7 @@ class RenderValueView(HomeAssistantView):
                 if isinstance(tval, bool):
                     simple = True
             elif name in ['annotate_messages', 'reminder_frequency_mins', 'throttle_fires_per_mins',
-                          'supersede_debounce_secs']:
+                          'supersede_debounce_secs', 'icon']:
                 tval = DEFAULTS_SCHEMA({ name: ttxt })[name]
                 simple = True
             elif name in ['supersedes']:

@@ -210,6 +210,7 @@ DEFAULTS_SCHEMA = vol.Schema({
                       vol.ExactSequence([vol.Range(min=1.),vol.Range(min=0.01)]))),
     vol.Optional('priority'): vol.Any('low', 'medium', 'high', msg='must be one of "low", "medium" or "high"'),
     vol.Optional('supersede_debounce_secs'): vol.All(vol.Coerce(float), vol.Range(min=0)),
+    vol.Optional('icon'): cv.icon,
 })
 
 SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({
@@ -226,6 +227,7 @@ SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({
     vol.Optional('annotate_messages'): cv.boolean,
     vol.Optional('display_msg'): vol.Any(cv.template, None),
     vol.Optional('priority'): vol.Any('low', 'medium', 'high'),
+    vol.Optional('icon'): cv.icon,
 })
 
 DOMAIN_NAME_DICT = {

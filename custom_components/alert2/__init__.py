@@ -499,6 +499,7 @@ class Alert2Data:
                 'throttle_fires_per_mins': None,
                 'priority': 'low',
                 'supersede_debounce_secs': 0.5,
+                'icon': 'mdi:alert'
             },
             # Optional defaults for internal alerts
             'tracked': [
@@ -776,13 +777,17 @@ class Alert2Data:
                 newEnt = self.declareEventInt(aCfg)
             else:
                 aCfg = SINGLE_ALERT_SCHEMA_CONDITION(obj)
+                if 'trigger_on' in aCfg:
+                    aCfg['trigger_on'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger_on'])
+                if 'trigger_off' in aCfg:
+                    aCfg['trigger_off'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger_off'])
                 if checkForUpdate:
                     return None
                 if 'generator' in aCfg:
                     newEnt = self.declareGenerator(aCfg, rawConfig=obj)
                 else:
                     newEnt = self.declareCondition(aCfg, genVars)
-        except vol.Invalid as v:
+        except (vol.Invalid, HomeAssistantError) as v:
             errMsg = f'alerts section of config: {v}. Relevant section: {obj}'
             if doReport:
                 report(DOMAIN, 'error', errMsg)

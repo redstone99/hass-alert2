@@ -223,7 +223,12 @@ class TriggerCond:
         this = None
         if state := self.hass.states.get(self.parentEnt.entity_id):
             this = state.as_dict()
+        else:
+            # We delay startWatching until hass.states has the new entity, so the above get() should never fail
+            report(DOMAIN, 'error', f'{gAssertMsg}: state not set for entity {self.parentEnt.entity_id}')
         variables = {"this": this}
+        if self.extraVariables:
+            variables.update(self.extraVariables)
         self.detach_trigger = await async_initialize_triggers(
             self.hass,
             self.triggerConf,
@@ -447,13 +452,34 @@ class AlertCommon(Entity):
         # self.alDomain and self.alName defined by children
 
     async def addedToHassDone(self):
-        self.hass.bus.async_fire(EVENT_ALERT2_CREATE, { 'entity_id': self.entity_id,
-                                                         'domain': self.alDomain,
-                                                         'name': self.alName })
-        if self.earlyStart or self.alertData.haStarted:
-            await self.startWatching()
-        else:
-            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.startWatchingEv)
+        # calling async_add_entities eventuallyl calls
+        #    homeassistant/helpers/entity.py::Entity::add_to_platform_finish
+        # which calls async_added_to_hass BEFORE calling async_write_ha_state :(
+        # this means right now, the new entity does not yet have an entry in hass.states.
+        # That entry is written by async_write_ha_state.
+        # So we need to yield and let the state writing happen before we declare we've really
+        # added the new entity to hass
+        async def waitForAdd():
+            # I think just creating this task and us getting scheduled should be enough of a chance
+            # for the state update to happen
+            if not self.hass.states.get(self.entity_id):
+                # Somehow we need more time
+                count = 5
+                while count > 0:
+                    await asyncio.sleep(0.1)
+                    if self.hass.states.get(self.entity_id):
+                        break
+                    count -= 1
+                if count == 0:
+                    report(DOMAIN, 'error', f'{gAssertMsg} Entity {self.entity_id} has not appeared in hass.states after waiting 0.5 s')
+            self.hass.bus.async_fire(EVENT_ALERT2_CREATE, { 'entity_id': self.entity_id,
+                                                             'domain': self.alDomain,
+                                                             'name': self.alName })
+            if self.earlyStart or self.alertData.haStarted:
+                await self.startWatching()
+            else:
+                self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.startWatchingEv)
+        create_task(self.hass, DOMAIN, waitForAdd())
     async def startWatchingEv(self, event): # async so we run in event loop
         await self.startWatching()
 
@@ -775,6 +801,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         self._target_template = config['target'] if 'target' in config else None
         self._data = config['data'] if 'data' in config else None
         self._display_msg_template = config['display_msg'] if 'display_msg' in config else None
+        self._icon = getField('icon', config, defaultCfg)
         if genVars is not None:
             self.extraVariables = genVars
         else:
@@ -897,7 +924,7 @@ class AlertBase(AlertCommon, RestoreEntity):
     @property
     def extra_state_attributes(self):
         baseDict = {
-            'icon': 'mdi:alert',
+            'icon': self._icon, #'mdi:alert',
             'custom_ui_more_info' : 'more-info-alert2',
             "custom_ui_state_card": 'state-card-alert2',
             'last_notified_time': self.last_notified_time,
@@ -1494,7 +1521,7 @@ class ConditionAlert(AlertBase):
         if self._threshold_value_template is not None:
             templs.append({'fieldName': 'value', 'type': Tracker.Type.Float, 'template': self._threshold_value_template })
         self.condValTracker = Tracker(self, 'condition-value', hass, alertData, templs, self.cond_val_update, self.extraVariables)
-
+        
         self.onTracker = None
         if 'trigger_on' in config:
             self.onTracker = TriggerCond(self, 'trigger_on', hass, alertData, self.trigger_on, self.extraVariables,

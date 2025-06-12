@@ -284,6 +284,17 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'priority': 'foo'} }})
     assert re.search('must be one of', rez['error'])
 
+    # icon
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'icon': ''} }})
+    #   pick up the default val
+    assert rez['raw']['defaults']['icon'] == 'mdi:alert'
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'icon': 'a:b'} }})
+    assert rez['rawUi']['defaults']['icon'] == 'a:b'
+    assert hass_storage['alert2.storage']['data']['config']['defaults']['icon'] == 'a:b'
+    assert rez['raw']['defaults']['icon'] == 'a:b'
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'icon': 'xxx'} }})
+    assert re.search('prefix:name', rez['error'])
+
 
     
     ########################
@@ -295,6 +306,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
         'reminder_frequency_mins': '[4]',
         'throttle_fires_per_mins': '[1,3]',
         'priority': 'high',
+        'icon': 'c:d',
     },
               'skip_internal_errors': 'true',
               'notifier_startup_grace_secs': '5',
@@ -321,6 +333,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
             #'reminder_frequency_mins': [3], UI overrides base
             'throttle_fires_per_mins': [1,2]  # UI overrides yaml
             # 'priority' - underlying default comes through
+            # 'icon' - underlying default comes through
             # supersede_debounce_secs: overridden
         },
         'alerts': [
@@ -356,6 +369,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     assert t1.movingSum.maxCount == 5 # uiCfg['defaults']['throttle_fires_per_mins'][0]
     assert t1.movingSum.intervalSecs == 60*6 # uiCfg['defaults']['throttle_fires_per_mins'][1]*60
     assert t1._priority == 'low'
+    assert t1._icon == 'mdi:alert'
     
     # Check how defaults are sent to UI
     rez = await tpost("/api/alert2/loadTopConfig", {})
@@ -363,14 +377,14 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     assert rez == {'rawYaml': {'defaults': {'reminder_frequency_mins': [60], 'notifier': 'n',
                                             'supersede_debounce_secs': 0.5,
                                             'summary_notifier': False, 'done_notifier': True, 'annotate_messages': True,
-                                            'throttle_fires_per_mins': [1, 2], 'priority': 'low' },
+                                            'throttle_fires_per_mins': [1, 2], 'priority': 'low', 'icon':'mdi:alert' },
                                'tracked': [{'domain': 'alert2', 'name': 'global_exception', 'throttle_fires_per_mins': [20, 60]}],
                                'skip_internal_errors': False, 'notifier_startup_grace_secs': 4,
                                'defer_startup_notifications': True},
                    'raw': {'defaults': {'reminder_frequency_mins': [4], 'notifier': 'n',
                                         'supersede_debounce_secs': '6',
                                         'summary_notifier': False, 'done_notifier': True, 'annotate_messages': True,
-                                        'throttle_fires_per_mins': [5, 6], 'priority': 'low' },
+                                        'throttle_fires_per_mins': [5, 6], 'priority': 'low', 'icon':'mdi:alert' },
                            'tracked': [{'domain': 'alert2', 'name': 'global_exception', 'throttle_fires_per_mins': [20, 60]}],
                            'skip_internal_errors': 'true', 'notifier_startup_grace_secs': '7',
                            'defer_startup_notifications': True},
@@ -486,6 +500,12 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert rez == { 'rez': 'medium' }
     rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': 'foo' })
     assert re.search('must be one of', rez['error'])
+    
+    # icon
+    rez = await tpost("/api/alert2/renderValue", {'name': 'icon', 'txt': 'a:b' })
+    assert rez == { 'rez': 'a:b' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'icon', 'txt': 'foo' })
+    assert re.search('prefix:name', rez['error'])
     
     # friendly_name
     rez = await tpost("/api/alert2/renderValue", {'name': 'friendly_name', 'txt': 'joe  ' })
@@ -729,20 +749,6 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert rez == { 'rez': 11 }
     rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': '{{ foo }}', 'extraVars': { 'foo': 12} })
     assert rez == { 'rez': 12 }
-
-
-    # priority
-    rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': 'low' })
-    assert rez == { 'rez': 'low' }
-    rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': '{{ foo }}' })
-    assert re.search('must be one of', rez['error'])
-    rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': '{{ foo }}', 'extraVars': { 'foo': 'medium' } })
-    assert rez == { 'rez': 'medium' }
-    rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': 'foo' })
-    assert re.search('must be one of', rez['error'])
-
-
-
     
     # generator_name
     rez = await tpost("/api/alert2/renderValue", {'name': 'generator_name', 'txt': 'foo' })
