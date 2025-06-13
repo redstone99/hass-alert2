@@ -293,6 +293,7 @@ The `defaults:` subsection specifies optional default values for parameters comm
 | `throttle_fires_per_mins` | [int, float] | Limit notifications of alert firings based on a list of two numbers [X, Y]. If the alert has fired and notified more than X times in the last Y minutes, then throttling turns on and no further notifications occur until the rate drops below the threshold. For example, "[10, 60]" means you'll receive no more than 10 notifications of the alert firing every hour.<br><br>Default is no throttling. You can set `summary_notifier` to be notified when throttling ends (by default you won't be). |
 | `priority` | string | Can be "low", "medium", or "high". Affects display of alert in the Alert2 UI Overview card.  Active alerts are sorted by priority and medium and high-priority alerts have a badge colored orange and red, respectively. May be template when used with generators. Default is "low" |
 | `supersede_debounce_secs` | float | Suppress notifications of an alert if any superseding alert has fired within this many seconds of now. The purpose of this setting is to reduce extraneous notifications due to races between two alerts both turning on or off at almost the same time. Defaults to 0.5 seconds.  Can be any value >= 0. |
+| `icon` | string | Icon to display next to alert name in UI. Must be of form `prefix:name`. Defaults to `mdi:alert`. |
 
 Example:
 
@@ -302,6 +303,7 @@ Example:
          notifier: telegram
          annotate_messages: true
          throttle_fires_per_mins: [ 10, 60 ]
+         icon: mdi:alert-rhombus
 
 Note `reminder_frequency_mins` or `throttle_fires_per_mins` may be specified as a list using a YAML flow sequence or on separate lines. The following two are identical in YAML:
 
@@ -351,6 +353,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `priority` | string | optional | Override the default value of `priority` |
 | `supersede_debounce_secs` | float | optional | Override the default value of `supersede_debounce_secs` |
+| `icon` | string | optional | Override the default value of `icon` |
 | `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts. Not available for [generator patterns](#generator-patterns).  |
 | `generator` | template | optional | If specified, this alert is a [generator pattern](#generator-patterns). |
 | `generator_name` | string | optional | Each generator creates a sensor entity with the name `sensor.alert2generator_[generator_name]`. See [generator patterns](#generator-patterns). |
@@ -691,6 +694,19 @@ Last implementation detail:  templates actually render to strings. So "{{ [ 1, 2
 
 Really last implementation detail: any templates specified for `domain` or `name` are evaluated only when the generator creates a new alert - i.e. so you can't change the domain/name of an alert on the fly (though you can change `friendly_name`).
 
+#### Generators and triggers
+
+Generator variables (eg `genElem`) will be available only to trigger fields that accept templates. For example, if you want to use `trigger_on` and specify a triggering entity as `genEntityId`, you can't use `trigger: state` because the `entity_id` field doesn't accept a template value. Instead you'd need to say:
+
+````
+  - domain: test
+    name: my_alert
+    generator: ...
+    trigger_on:
+      - trigger: template
+        value_template: "{{ states(genEntityId) }}"
+````
+
 ### Reference
 
 #### `generator` 
@@ -878,6 +894,22 @@ Alert2 will fire events on the hass bus as follows:
 | `alert2_alert_on` | <pre>entity_id<br>domain<br>name</pre> | Fires when a condition alert turns on (starts firing). |
 | `alert2_alert_off` | <pre>entity_id<br>domain<br>name</pre> | Fires when an event alert turns off (stops firing). |
 
+Example of triggering an automation based on an condition alert turning on or off:
+
+````
+automation:
+  - trigger:
+       platform: event
+       event_type: alert2_alert_on
+    action:
+       ...
+
+  - trigger:
+       platform: event
+       event_type: alert2_alert_off
+    action:
+       ...
+````
 
 ## Python alerting
 
