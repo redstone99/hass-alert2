@@ -894,7 +894,7 @@ Alert2 will fire events on the hass bus as follows:
 | `alert2_alert_on` | <pre>entity_id<br>domain<br>name</pre> | Fires when a condition alert turns on (starts firing). |
 | `alert2_alert_off` | <pre>entity_id<br>domain<br>name</pre> | Fires when an event alert turns off (stops firing). |
 
-Example of triggering an automation based on an condition alert turning on or off:
+Example of triggering an automation based on a condition alert turning on or off:
 
 ````
 automation:
