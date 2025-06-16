@@ -18,6 +18,7 @@ from homeassistant.components import http
 from aiohttp.web import middleware
 from homeassistant import config as conf_util
 #import homeassistant.auth as hauth
+from homeassistant.components import history
 from homeassistant.components.http.const import KEY_AUTHENTICATED
 from homeassistant.components.http import HomeAssistantView
 import homeassistant.components.websocket_api.auth as wsauth
@@ -26,9 +27,13 @@ import voluptuous as vol
 from aiohttp import web
 from typing import Any
 
+#from tests.components.recorder.common import (
+#    async_wait_recording_done,
+#)
+
 done = asyncio.Condition()
 
-class TestView(HomeAssistantView):
+class JTestView(HomeAssistantView):
     def __init__(self, hass, hass_storage, monkeypatch):
         self.hass = hass
         self.hass_storage = hass_storage
@@ -71,7 +76,8 @@ class TestView(HomeAssistantView):
         return self.json({})
 
 
-async def test_server(hass, hass_storage, monkeypatch, hass_access_token):
+async def test_server(recorder_mock, enable_custom_integrations, hass, hass_storage, monkeypatch, hass_access_token):
+    _LOGGER.warning('fuck..........')
     cfg = {'alert2': {},
            http.DOMAIN: {http.CONF_SERVER_PORT: 50005}
            }
@@ -84,11 +90,19 @@ async def test_server(hass, hass_storage, monkeypatch, hass_access_token):
     monkeypatch.setattr(wsauth.AuthPhase, 'async_handle', fake_handle)
 
     assert await async_setup_component(hass, DOMAIN, cfg)
+    history_config = history.CONFIG_SCHEMA(
+        { history.DOMAIN: {
+        } } )
+    assert await async_setup_component(hass, history.DOMAIN, history_config)
     await async_setup_component(
         hass,
         http.DOMAIN,
         cfg )
     assert await async_setup_component(hass, "websocket_api", {})
+
+    #hass.states.async_set('alert2.d_nn', 'off')
+    #await async_wait_recording_done(hass)
+
     #        {http.DOMAIN: {http.CONF_SERVER_PORT: 50005}},  )
     cfg = { 'alert2': {} }
     assert await async_setup_component(hass, DOMAIN, cfg)
@@ -102,7 +116,7 @@ async def test_server(hass, hass_storage, monkeypatch, hass_access_token):
         request[KEY_AUTHENTICATED] = True
         return await handler(request)
     hass.http.app.middlewares.append(auth_middleware)
-    hass.http.register_view(TestView(hass, hass_storage, monkeypatch))
+    hass.http.register_view(JTestView(hass, hass_storage, monkeypatch))
     await hass.async_start()
     async with done:
         await done.wait()

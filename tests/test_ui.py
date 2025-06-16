@@ -28,6 +28,16 @@ import homeassistant.util.dt as dt
 a2Ui.SAVE_DELAY = 0
 alert2.gGcDelaySecs = 0.1
 
+# Make sure at end of each test there are no extra notifications we haven't processed
+@pytest.fixture(autouse=True)
+async def auto_check_empty_calls(hass, service_calls):
+    yield
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+@pytest.fixture(autouse=True)
+def auto_enable_custom_integrations(enable_custom_integrations):
+    yield
+    
 async def setAndWait(hass, eid, state): 
     hass.states.async_set(eid, state)
     await asyncio.sleep(0.05)

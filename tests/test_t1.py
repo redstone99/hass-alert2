@@ -35,6 +35,18 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 alert2.gGcDelaySecs = 0.1
 
+# TODO - move these fixtures into a class that is reused between this t1 and ui tests.
+#
+# Make sure at end of each test there are no extra notifications we haven't processed
+@pytest.fixture(autouse=True)
+async def auto_check_empty_calls(hass, service_calls):
+    yield
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+@pytest.fixture(autouse=True)
+def auto_enable_custom_integrations(enable_custom_integrations):
+    yield
+    
 async def test_cfg1(hass):
     assert await async_setup_component(hass, DOMAIN, { 'alert2': {} })
     await hass.async_block_till_done()

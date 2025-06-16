@@ -71,17 +71,7 @@ def auto_patch_service_call(enable_custom_integrations, hass, monkeypatch):
     yield cc
     # Can put fixture teardown code here
 
-@pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(enable_custom_integrations):
-    yield
 
-# Make sure at end of each test there are no extra notifications we haven't processed
-@pytest.fixture(autouse=True)
-async def auto_check_empty_calls(hass, service_calls):
-    yield
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    
 # work-around to unblock access to listen on port 8123.
 from pytest_socket import enable_socket, disable_socket, socket_allow_hosts
 @pytest.hookimpl(trylast=True)
