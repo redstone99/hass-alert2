@@ -2204,6 +2204,9 @@ async def test_generator6(hass, service_calls):
           'name': '{% if states("sensor.ick") == "on" and genElem == "foo2" %}{{blowup()}}{% else %}{{ genElem }}{% endif %}',
           'generator_name': 'g16', 'generator': '{{ states("sensor.g") }}',
           'condition': 'off' },
+        # Test that generator throw error if generates duplicate domain/name pairs
+        { 'domain': 'test', 'name': 'dupname', 'condition': 'off',
+          'generator': [ 'a1', 'a2' ], 'generator_name': 'g16a' }
         ]}}
     hass.states.async_set("sensor.a", 'off')
     hass.states.async_set("sensor.g", '[ "foo2", "foo3" ]')
@@ -2211,10 +2214,11 @@ async def test_generator6(hass, service_calls):
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
-    assert service_calls.isEmpty()
+    service_calls.popNotifyEmpty('persistent_notification', 'duplicate entity id test_dupname')
+    #assert service_calls.isEmpty()
     
     gad = hass.data[DOMAIN]
-    assert len(gad.generators) == 2
+    assert len(gad.generators) == 3
     g15 = gad.generators['g15']
     assert g15.state == 1
     foo1 = gad.alerts['test']['foo1']
