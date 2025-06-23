@@ -17,11 +17,11 @@ class CallCollector:
         self.hass = hass
     def recCall(self, domain, service, service_data):
         self.allCalls.append((domain, service, service_data))
-    def popNotifySearch(self, service, search, rMsg, useRegex=True):
+    def popNotifySearch(self, service, search, rMsg, useRegex=True, extraFields=None):
         assert len(self.allCalls) > 0
         idx = next((i for i, x in enumerate(self.allCalls) if x[1] == service and search in x[2]['message']), -1)
         assert idx >= 0
-        self.doTest(service, rMsg, idx, useRegex)
+        self.doTest(service, rMsg, idx, useRegex, extraFields=extraFields)
     def popNotifyEmpty(self, service, rMsg, extraFields=None):
         self.popNotify(service, rMsg, extraFields=extraFields)
         assert self.isEmpty()

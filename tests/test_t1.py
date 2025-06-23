@@ -3672,3 +3672,28 @@ async def test_done_notifier(hass, service_calls):
 
     await setAndWait(hass, "sensor.a", 'off')
     service_calls.popNotifyEmpty('foo', 't2: turned off')
+
+async def test_data(hass, service_calls):
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2' : { 'alerts': [
+        { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a', 'data': { 'd1': 7, 'd2': '{{ reason + "xx" }}' } },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'condition': 'sensor.a', 'data': { 'd1': 6, 'd2': '{{ genElem+reason }}' }, 'generator': 't2', 'generator_name': 'g1' },
+        ], 'tracked' : [
+            { 'domain': 'test', 'name': 't3', 'data': { 'd1': '{{ reason + "xy" }}', 'd2': 99 } },
+        ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifySearch('persistent_notification', 't1', 'turned on', extraFields={ 'data': { 'd1': 7, 'd2': 'Firexx'}})
+    service_calls.popNotifyEmpty('persistent_notification', 't2: turned on', extraFields={ 'data': { 'd1': 6, 'd2': 't2Fire'}})
+    
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'t3', 'message': 'foo'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t3.*foo', extraFields={ 'data': { 'd1': 'Firexy', 'd2':99 }})
+
+    await setAndWait(hass, "sensor.a", 'off')
+    service_calls.popNotifySearch('persistent_notification', 't1', 'turned off', extraFields={ 'data': { 'd1': 7, 'd2': 'StopFiringxx'}})
+    service_calls.popNotifyEmpty('persistent_notification', 't2: turned off', extraFields={ 'data': { 'd1': 6, 'd2': 't2StopFiring'}})
