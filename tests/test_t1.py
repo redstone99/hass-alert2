@@ -3697,3 +3697,18 @@ async def test_data(hass, service_calls):
     await setAndWait(hass, "sensor.a", 'off')
     service_calls.popNotifySearch('persistent_notification', 't1', 'turned off', extraFields={ 'data': { 'd1': 7, 'd2': 'StopFiringxx'}})
     service_calls.popNotifyEmpty('persistent_notification', 't2: turned off', extraFields={ 'data': { 'd1': 6, 'd2': 't2StopFiring'}})
+
+async def test_event_init(hass, service_calls):
+    # verifying state of event alert that has never fired. Exploring:
+    # https://github.com/redstone99/hass-alert2/issues/16#issuecomment-2999078803
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2': { 'alerts': [
+        { 'domain': 'd', 'name': 't1', 'friendly_name': 'tt1', 'trigger': [ { 'platform': 'state', 'entity_id': [ 'sensor.a' ], 'to': 'off' } ], 'condition': 'true' },
+        { 'domain': 'd', 'name': 't2', 'friendly_name': 'tt2', 'trigger': [ { 'platform': 'state', 'entity_id': [ 'sensor.a' ], 'to': 'off' } ] },
+    ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.d_t1').state == ''
+    assert hass.states.get('alert2.d_t2').state == ''
