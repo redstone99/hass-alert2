@@ -40,11 +40,13 @@ from .config import ( literalIllegalChar )
 
 _LOGGER = logging.getLogger(__name__)
 
+# If change NotificationReason, be sure to update expandDataDict
 class NotificationReason(Enum):
     Fire = 1
     ReminderOn = 2
     StopFiring = 3
     Summary = 4
+    # SnoozeEnded does not result in notification, for internal use
     SnoozeEnded = 5
 class ThresholdExeeded(Enum):
     Init = 1
@@ -572,10 +574,13 @@ class AlertGenerator(AlertCommon, SensorEntity):
         
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
-        self.tracker.shutdown()
+        await self.shutdown()
         for ent in self.nameEntityMap.values():
             await self.alertData.undeclareAlert(ent.alDomain, ent.alName, removeFromRegistry=self._purgeRegistry) # destroys ent
         self.nameEntityMap = {}
+    async def shutdown(self):
+        self.tracker.shutdown()
+        self.tracker = None
 
     async def async_update(self):
         await super().async_update()
@@ -611,6 +616,10 @@ class AlertGenerator(AlertCommon, SensorEntity):
                 sawError = True
                 break
             entName = entNameFromDN(domainStr, nameStr)
+            if entName in currNames:
+                report(DOMAIN, 'error', f'{self.name} is requesting creation of duplicate entity id {entName}. Aborting')
+                sawError = True
+                break
             currNames.add(entName)
             prevDomainName = { 'domain': domainStr, 'name': nameStr }
             hassState = self.hass.states.get(f'alert2.{entName}')
@@ -862,9 +871,15 @@ class AlertBase(AlertCommon, RestoreEntity):
             
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
+        # AlertBase is never instantiated directly, it is only subclassed.
+        # The subclass will call shutdown(), which will call the super().shutdown (i.e., us)
+        # await self.shutdown()
+        
+    async def shutdown(self):
         if self.friendlyNameTracker:
             self.friendlyNameTracker.shutdown()
-        self._attr_available = False
+            self.friendlyNameTracker = None
+        #self._attr_available = False
         if self.future_notification_info is not None:
             cancel_task(DOMAIN, self.future_notification_info['task'])
             self.future_notification_info = None
@@ -1107,7 +1122,32 @@ class AlertBase(AlertCommon, RestoreEntity):
             else:
                 report(DOMAIN, 'error', f'For {self.name}: {errStr} while notifying with message={args["message"]} ')
         return (notifier_list, defer_notifier_list)
-        
+
+    # assumed self._data is not None
+    def expandDataDict(self, reason: NotificationReason):
+        keys = self._data.keys()
+        newDict = {}
+        variables = {'notify_reason': reason.name}
+        if self.extraVariables:
+            variables.update(self.extraVariables)
+        for akey in keys:
+            if isinstance(self._data[akey], template_helper.Template):
+                try:
+                    valStr = self._data[akey].async_render(variables=variables, parse_result=False)
+                except TemplateError as err:
+                    report(DOMAIN, 'error', f'{self.name} data template render failed for field "{akey}": {err}')
+                    continue
+                try:
+                    tval = ast.literal_eval(valStr)
+                except Exception as err:  # literal_eval can throw various kinds of exceptions
+                    report(DOMAIN, 'error', f'{self.name} data template literal eval failed for field "{akey}" rendered to string "{valStr}" which during eval thew error: {err}')
+                    continue
+                newDict[akey] = tval
+            else:
+                newDict[akey] = self._data[akey]
+        return newDict
+
+    
     # Return False if disabled
     #        float seconds remaining till can notify otherwise. 0 if can do immediately
     # returns tuple:
@@ -1313,7 +1353,7 @@ class AlertBase(AlertCommon, RestoreEntity):
                 # message field in components/notify/const.py:NOTIFY_SERVICE_SCHEMA is a template and will be rendered
                 args = {'message': jinja2Escape(tmsg) }
             if self._data is not None:
-                args['data'] = self._data
+                args['data'] = self.expandDataDict(reason)
             if self._target_template is not None:
                 try:
                     args['target'] = self._target_template.async_render(variables=self.extraVariables, parse_result=False)
@@ -1420,8 +1460,13 @@ class EventAlert(AlertBase):
         
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
+        await self.shutdown()
+        
+    async def shutdown(self):
+        await super().shutdown()
         if self.triggerCond:
             self.triggerCond.shutdown()
+            self.triggerCond = None
             
     async def triggered(self, variables):
         msg = ''
@@ -1597,15 +1642,22 @@ class ConditionAlert(AlertBase):
     
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
+        await self.shutdown()
+        
+    async def shutdown(self):
+        await super().shutdown()
         if self.cond_true_task:
             cancel_task(DOMAIN, self.cond_true_task)
             self.cond_true_task = None
             self.cond_true_time = None
         self.condValTracker.shutdown()
+        self.condValTracker = None
         if self.onTracker:
             self.onTracker.shutdown()
+            self.onTracker = None
         if self.offTracker:
             self.offTracker.shutdown()
+            self.offTracker = None
         
     async def async_added_to_hass(self) -> None:
         """Restore state and register callbacks."""
@@ -1835,7 +1887,7 @@ class ConditionAlert(AlertBase):
         # Now we have a condition_bool|None and a thresh_val|None
         # Figure out new state
         #
-        self._attr_available = True
+        #self._attr_available = True
         if self._threshold_value_template is None:
             if self._condition_template is None:
                 # Config valudation should prevent this

@@ -655,6 +655,20 @@ class Alert2Data:
             
         await self.processConfig()
 
+    async def shutdown_alerts(self):
+        for aName in list(self.generators.keys()):
+            await self.generators[aName].shutdown()
+        # then event alerts
+        for domain in list(self.tracked.keys()):
+            names = list(self.tracked[domain].keys())
+            for name in names:
+                await self.tracked[domain][name].shutdown()
+        # then condition alerts
+        for domain in list(self.alerts.keys()):
+            names = list(self.alerts[domain].keys())
+            for name in names:
+                await self.alerts[domain][name].shutdown()
+    
     async def unload_alerts(self):
         for aName in list(self.generators.keys()):
             await self.undeclareAlert(self.generators[aName].alDomain, self.generators[aName].alName)
@@ -684,6 +698,9 @@ class Alert2Data:
         # some supersede others.
         
         # First unload all entities. Start with generators since they'll remove condition alerts
+        #
+        # TODO - I think unload will generate an unavailable entity state.
+        # would be nice to reload without doing that.
         await self.unload_alerts()
         _LOGGER.info('Lifecycle reload first removed all Alert2 alerts before reloading')
         
@@ -942,7 +959,7 @@ class Alert2Data:
     #    self._hass.loop.call_soon_threadsafe(self.shutdown)
     async def shutdown(self, event):
         set_shutting_down(True)
-        await self.unload_alerts()
+        await self.shutdown_alerts()
         if self.uiMgr:
             self.uiMgr.shutdown()
         for atask in global_tasks:

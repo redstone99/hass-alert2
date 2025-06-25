@@ -197,7 +197,19 @@ def jDomain(afield):
     if dd == GENERATOR_DOMAIN:
         raise vol.Invalid(f'"{GENERATOR_DOMAIN}" is a reserved domain')
     return dd
-    
+
+def jDictTemplate(adict):
+    if not isinstance(adict, dict):
+        raise vol.Invalid(f'"data" field must be a dict')
+    newDict = {}
+    keys = adict.keys()
+    for akey in keys:
+        if isinstance(adict[akey], str) and template_helper.is_template_string(adict[akey]):
+            newDict[akey] = cv.template(adict[akey])
+        else:
+            newDict[akey] = adict[akey]
+    return newDict
+
 DEFAULTS_SCHEMA = vol.Schema({
     vol.Optional('notifier'): vol.Any(cv.template, jstringList),
     # Can be truthy or template or list of notifiers
@@ -220,7 +232,7 @@ SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({
     vol.Optional('friendly_name'): cv.template,
     vol.Optional('title'): cv.template,
     vol.Optional('target'): cv.template,
-    vol.Optional('data'): dict,
+    vol.Optional('data'): jDictTemplate,
     vol.Optional('throttle_fires_per_mins'): vol.Schema(vol.All(vol.ExactSequence([int, vol.Coerce(float)]),
                                                                  # 0.001 hours is 3.6 seconds
                                                                  vol.ExactSequence([vol.Range(min=1.),vol.Range(min=0.01)]))),
