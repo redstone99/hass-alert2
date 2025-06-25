@@ -553,7 +553,7 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{ a: b, c: "d" }' })
     assert rez == { 'rez': { 'a': 'b', 'c': 'd' } }
     rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '"{ e:f}"' })
-    assert re.search('expected dict', rez['error'])
+    assert re.search('must be a dict', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{}' })
     assert rez == { 'rez': {} }
 

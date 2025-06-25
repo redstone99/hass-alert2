@@ -2129,7 +2129,8 @@ async def test_generator5(hass, service_calls):
           'condition': '{{ states("sensor.z_"+genGroups[0]) }}' },  # e.g. sensor.z_foo1
         # No group
         { 'domain': 'test', 'name': '{{ genGroups[0] }}b', 'generator_name': 'g13',
-          'generator': "{{ states|entity_regex('sensor..*_bar')|list }}",
+          # the "1" in the regex is so we only gen one element to avoid duplicate alert name error
+          'generator': "{{ states|entity_regex('sensor..*1_bar')|list }}",
           'condition': 'off' },
         { 'domain': 'test', 'name': '{{ genGroups[0] }}c', 'generator_name': 'g14',
           'generator': "{{ states|entity_regex('sensor.(.*)_bar')|list }}",
