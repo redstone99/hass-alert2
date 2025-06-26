@@ -3680,7 +3680,9 @@ async def test_data(hass, service_calls):
         { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a',
           'data': { 'd1': 7, 'd2': '{% if notify_reason=="Fire" %}99{%else%}30{%endif%}',
                     'd3': '"{% if notify_reason=="Fire" %}abc{%else%}def{%endif%}"', 'd4': 'foo-bar',
-                    'd5': '{% if notify_reason=="Fire" %}True{%else%}False{%endif%}' } },
+                    'd5': '{% if notify_reason=="Fire" %}True{%else%}False{%endif%}',
+                    'd6': '{% if notify_reason=="Fire" %}[ { "action": "foo", "title": "bar" } ]{%else%}[]{%endif%}',
+                   } },
         { 'domain': 'test', 'name': '{{ genElem }}', 'condition': 'sensor.a', 'data': { 'd1': 6, 'd2': '"{{ genElem+notify_reason }}"' }, 'generator': 't2', 'generator_name': 'g1' },
         ], 'tracked' : [
             { 'domain': 'test', 'name': 't3', 'data': { 'd1': '"{{ notify_reason }}xy"', 'd2': 99 } },
@@ -3693,7 +3695,7 @@ async def test_data(hass, service_calls):
     await setAndWait(hass, "sensor.a", 'on')
     service_calls.popNotifySearch('persistent_notification', 't1', 'turned on',
                                   extraFields={ 'data': { 'd1': 7, 'd2': 99, 'd3':'abc', 'd4':'foo-bar',
-                                                          'd5': True }})
+                                                          'd5': True, 'd6': [ { 'action': 'foo', 'title': 'bar'} ] }})
     service_calls.popNotifyEmpty('persistent_notification', 't2: turned on', extraFields={ 'data': { 'd1': 6, 'd2': 't2Fire'}})
     
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t3', 'message': 'foo'})
@@ -3703,5 +3705,5 @@ async def test_data(hass, service_calls):
     await setAndWait(hass, "sensor.a", 'off')
     service_calls.popNotifySearch('persistent_notification', 't1', 'turned off',
                                   extraFields={ 'data': { 'd1': 7, 'd2': 30, 'd3':'def', 'd4':'foo-bar',
-                                                          'd5': False }})
+                                                          'd5': False, 'd6': [] }})
     service_calls.popNotifyEmpty('persistent_notification', 't2: turned off', extraFields={ 'data': { 'd1': 6, 'd2': 't2StopFiring'}})

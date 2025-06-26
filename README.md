@@ -519,9 +519,14 @@ Example:
           title: "test title"
           data:
             group: motion-alarms
+            # Integer data field
             timeout: "{% if notify_reason == 'Fire' %} 600 {% else %} 20 {% endif %}"
+            # String data field
             channel: "{% if notify_reason == 'Fire' %} 'channel-a' {% else %} 'channel-b' {% endif %}"
+            # Boolean data field
             sticky: "{% if notify_reason == 'Fire' %} True {% else %} False {% endif %}"
+            # Array of dict data field
+            actions: "{% if notify_reason=='Fire' %} [{ 'action': 'foo', 'title': 'bar' }] {% else %} [] {% endif %}",
 
 #### Notifier config
 
