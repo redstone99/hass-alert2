@@ -497,7 +497,7 @@ To reduce spurious notifications due to races between two hierarchically-related
 
 Alerts may pass additional data to the notifier via the `data` field. This is convenient for notification platforms such as [`mobile_app`](https://companion.home-assistant.io/docs/notifications/notifications-basic/). `data` must be a dictionary.  Values may be template strings, in which case they are eval'd. This means that string results must be quoted. See example below.
 
-Template strings in `data` fields can access a variable, `reason`, containing the reason for the notification.  `reason` may take the following string values:
+Template strings in `data` fields can access a variable, `notify_reason`, containing the reason for the notification.  `notify_reason` may take the following string values:
 
 | Value | Description |
 |---|---|
