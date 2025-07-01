@@ -25,7 +25,6 @@ cp ha-test.old/configuration.yaml ha-test
 
 Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supports alerting and sending notifications based on conditions and events. It's a retake on the original [Alert](https://www.home-assistant.io/integrations/alert/) integration.
 
-
 ## Table of Contents
 
 - [New features](#new-features)
@@ -39,6 +38,8 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - [Python alerting](#python-alerting)
 - [Contributing](#contributing)
 
+
+See also the companion guide, [Alert2 Recipes](Recipes.md), for additional examples to help you get started.
 
 ## New features
 
@@ -252,10 +253,10 @@ We recommend that your config specify at least the following parameters:
 ```yaml
 alert2:
   defaults:
-    notifier: foo # notifier name to use for most alerts
-    summary_notifier: foo # notifier to use for summaries (e.g. when throttling ends)
     throttle_fires_per_mins: [ 10, 60 ] # throttle notifications for any alert that fires
                                         # more than 10x in 60 minutes
+    notifier: foo # notifier name to use for most alerts
+    summary_notifier: foo # notifier to use for summaries (e.g. when throttling ends)
 ```
 
 Configuration may be reloaded on the fly by going to "Developer tools" -> "YAML" and clicking on "Alert2".  That deletes all alert2 alert entities and generators and then recreates them.  You can change defaults as well.  Reloading does not affect the startup-related config parameters `notifier_startup_grace_secs` and `defer_startup_notifications`.
