@@ -56,8 +56,34 @@ You can also specify the alert condition using a template:
 Example alerting if a door is open too long. The alert starts firing only once the door has been open for 10 minutes:
 
 ```yaml
-    - domain: frontdoor
+    - domain: front_door
       name: open too long
       condition:  binary_sensor.front_door_open
       delay_on_secs: 600
+```
+
+Extending above example to notify via HA companion mobile app, with notification that disappears when alert turns off.  In the following, we turn off `annotate_messages` so that the magic "clear_notification" is sent verbatim when the alert turns off.
+
+```yaml
+    - domain: front_door
+      name: open too long
+      condition:  binary_sensor.front_door_open
+      delay_on_secs: 600
+      annotate_messages: false
+      # Since annotate_messages is false, "message" needs to specify what the notification is for
+      message: front_door open too long
+      done_message: clear_notification
+      data:
+        tag: "front_door-open-too-long"
+```
+
+Or suppose you had multiple doors and you wanted to alert if any of them are open too long.  Using generators:
+
+```yaml
+    - domain: "{{ genElem }}"
+      name: open too long
+      condition:  "{{ states('binary_sensor.' + genElem + '_open') }}"
+      delay_on_secs: 600
+      generator_name: g1
+      generator: [ front_door, side_door, garage_door ]
 ```
