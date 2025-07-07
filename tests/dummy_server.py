@@ -1,7 +1,10 @@
 #
 # must set JTEST_JS_DIR when running to be root of hass-alert2-ui
 #
-
+# For instructions on how to run, see
+#    https://github.com/redstone99/hass-alert2#testing
+#
+#
 import asyncio
 import logging
 import sys

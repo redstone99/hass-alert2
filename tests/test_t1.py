@@ -1,7 +1,6 @@
 #
-# venv/bin/pip install --upgrade -r requirements.txt -r requirements_test.txt
-#
-# JTESTDIR=/home/redstone/home-monitoring/homeassistant  venv/bin/pytest --show-capture=no
+# For instructions on how to run, see
+#    https://github.com/redstone99/hass-alert2#testing
 #
 #from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
@@ -3707,3 +3706,18 @@ async def test_data(hass, service_calls):
                                   extraFields={ 'data': { 'd1': 7, 'd2': 30, 'd3':'def', 'd4':'foo-bar',
                                                           'd5': False, 'd6': [] }})
     service_calls.popNotifyEmpty('persistent_notification', 't2: turned off', extraFields={ 'data': { 'd1': 6, 'd2': 't2StopFiring'}})
+
+async def test_nested_generator(hass, service_calls):
+    cfg = { 'alert2' : { 'alerts': [
+        { 'domain': 'test', 'name': '{{ genA }}__{{ genB }}', 'condition': 'off','generator_name': 'g1',
+          'generator': ' [{% for a in [ 3, 4 ] %}{% for b in [7, 8 ] %}{"genA":{{a}},"genB":{{b}}},{% endfor %}{% endfor %}]',  },
+        ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+    assert list(gad.alerts['test'].keys()) == [ '3__7','3__8','4__7','4__8' ]
+
+    # Hrm, writing the supersedes so it only applies to genA or genB would be messy
+    # eg. want to alert on printer ink being low, across different ink colors

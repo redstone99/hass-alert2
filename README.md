@@ -977,3 +977,24 @@ If an unhandled exception occurs, alert2 will fire an alert: `alert2.mydomain_un
 We welcome ideas for improving Alert2 or help implementing any of the great ideas people have suggested so far. A number of great ideas have arisen on the main [development thread](https://community.home-assistant.io/t/alert2-a-new-alerting-component) as well as on [Github issues](https://github.com/redstone99/hass-alert2/issues).
 
 Feel free to jump in on any of the threads!
+
+### Testing
+
+To run the tests:
+
+    cd [ hass-alert2 directory ]
+    python3 -m venv venv
+    venv/bin/pip install --upgrade -r requirements.txt -r requirements_test.txt
+    venv/bin/pytest
+
+
+You can run each test individually and/or load the alert2 source code from a different directory.
+If your custom_components directory is in /myha/custom_components, you'd say:
+
+    JTESTDIR=/myha venv/bin/pytest --show-capture=no tests/test_t1.py
+    JTESTDIR=/myha venv/bin/pytest --show-capture=no tests/test_ui.py
+
+
+To run the tests in hass-alert2-ui, you'll need to run the dummy server. It listens on port 50005. If you're alert2-ui repo is in /tmp/hass-alert2-ui, you'd run the dummy server like:
+
+    JTEST_JS_DIR=/tmp/hass-alert2-ui  venv/bin/pytest tests/dummy_server.py

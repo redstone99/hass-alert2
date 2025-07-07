@@ -1,5 +1,6 @@
 #
-# JTESTDIR=/home/redstone/home-monitoring/homeassistant  venv/bin/pytest --show-capture=no
+# For instructions on how to run, see
+#    https://github.com/redstone99/hass-alert2#testing
 #
 #from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
