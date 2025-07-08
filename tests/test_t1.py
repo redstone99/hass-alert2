@@ -1064,6 +1064,14 @@ async def test_event(hass, service_calls):
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t22: foo')
 
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'t22', 'data':"yuck"})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'alert2_error.*Malformed.*non-dict')
+
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'t22', 'data': { 'a': 7 }})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t22', extraFields={ 'data': { 'a':7}})
+
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t23', 'message': 'foo'})
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'friendlyt23: foo')
@@ -1084,6 +1092,16 @@ async def test_event(hass, service_calls):
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'test_t26.*foo', extraFields={ 'data': { 'd1': 'data-d1' }})
     
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'t26', 'data': {'d2': 3}})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t26',
+                                 extraFields={ 'data': { 'd1': 'data-d1', 'd2': 3 }})
+
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'t26', 'data': {'d1': 3}})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t26',
+                                 extraFields={ 'data': { 'd1': 3 }})
+
 async def test_event2(hass, service_calls):
     # Check throttling
     cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True }, 'tracked' : [
@@ -2495,6 +2513,10 @@ async def test_declare_event(hass, service_calls, monkeypatch):
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t88: foo')
     
+    alert2.report('test', 't88', 'foo', data={'d': 8})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t88: foo', extraFields={'data': {'d': 8}})
+
     # Try a reload, should preserve the declareEventMulti
     gad = hass.data[DOMAIN]
     assert gad.tracked['test']['t88']
