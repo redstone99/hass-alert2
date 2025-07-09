@@ -1545,7 +1545,8 @@ async def test_grace7(hass, service_calls):
 
 async def test_snooze(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True}, 'alerts' : [
-        { 'domain': 'test', 'name': 't53c', 'condition': 'sensor.a', 'reminder_frequency_mins': 0.01 },
+        { 'domain': 'test', 'name': 't53c1', 'condition': 'sensor.a', 'reminder_frequency_mins': 0.01 },
+        { 'domain': 'test', 'name': 't53c2', 'condition': 'sensor.a', 'reminder_frequency_mins': 0.01 },
         { 'domain': 'test', 'name': 't53a', 'condition': 'sensor.a', 'reminder_frequency_mins': 0.01, 'summary_notifier': False },
         { 'domain': 'test', 'name': 't53b', 'condition': 'sensor.a', 'reminder_frequency_mins': 0.01, 'summary_notifier': 'foo' },
         { 'domain': 'test', 'name': 't53d', 'condition': 'sensor.d', 'reminder_frequency_mins': 0.01 },
@@ -1564,76 +1565,97 @@ async def test_snooze(hass, service_calls):
     hass.services.async_register('notify','foo', mock_service_foo)
     gad = hass.data[DOMAIN]
 
-    t53c = gad.alerts['test']['t53c']
-    assert t53c.notification_control == a2Entities.NOTIFICATIONS_ENABLED
-    assert t53c.extra_state_attributes['is_acked'] == False
+    t53c1 = gad.alerts['test']['t53c1']
+    assert t53c1.notification_control == a2Entities.NOTIFICATIONS_ENABLED
+    assert t53c1.extra_state_attributes['is_acked'] == False
+    t53c2 = gad.alerts['test']['t53c2']
+    assert t53c2.notification_control == a2Entities.NOTIFICATIONS_ENABLED
+    assert t53c2.extra_state_attributes['is_acked'] == False
     
     # Snoozed so no notification
     now = rawdt.datetime.now(rawdt.timezone.utc)
     await hass.services.async_call('alert2','notification_control',
-        {'entity_id': 'alert2.test_t53c', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
+        {'entity_id': 'alert2.test_t53c1', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
+    await hass.services.async_call('alert2','notification_control',
+        {'entity_id': 'alert2.test_t53c2', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1),
+         'snooze_with_ack': False})
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t53a', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t53b', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.async_block_till_done()
-    assert t53c.extra_state_attributes['is_acked'] == False
-    assert isinstance(t53c.notification_control, rawdt.datetime)
+    assert t53c1.extra_state_attributes['is_acked'] == False
+    assert isinstance(t53c1.notification_control, rawdt.datetime)
     await setAndWait(hass, 'sensor.a', 'on')
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    assert t53c.extra_state_attributes['is_acked'] == False
+    assert t53c1.extra_state_attributes['is_acked'] == False
     
     # snooze expires, get reminder notification summary
     await asyncio.sleep(2)
-    assert t53c.notification_control == a2Entities.NOTIFICATIONS_ENABLED
-    service_calls.popNotifySearch('persistent_notification', 't53c', 't53c.*on for.*fired 1x')
+    assert t53c1.notification_control == a2Entities.NOTIFICATIONS_ENABLED
+    service_calls.popNotifySearch('persistent_notification', 't53c1', 't53c1: on for.*fired 1x')
+    service_calls.popNotifySearch('persistent_notification', 't53c2', 't53c2: on for.*fired 1x')
     service_calls.popNotifySearch('persistent_notification', 't53a', 't53a.*on for.*fired 1x')
     service_calls.popNotifyEmpty('persistent_notification', 't53b.*on for.*fired 1x')
     # Should still get reminders after snooze expires
     await asyncio.sleep(2)
-    service_calls.popNotifySearch('persistent_notification', 't53c', 't53c: on for')
+    service_calls.popNotifySearch('persistent_notification', 't53c1', 't53c1: on for')
+    service_calls.popNotifySearch('persistent_notification', 't53c2', 't53c2: on for')
     service_calls.popNotifySearch('persistent_notification', 't53a', 't53a: on for')
     service_calls.popNotifyEmpty('persistent_notification', 't53b: on for')
     # Set snooze again and turn off. No snooze summary (cuz acked?)
     now = rawdt.datetime.now(rawdt.timezone.utc)
     await hass.services.async_call('alert2','notification_control',
-        {'entity_id': 'alert2.test_t53c', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
+        {'entity_id': 'alert2.test_t53c1', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
+    await hass.services.async_call('alert2','notification_control',
+        {'entity_id': 'alert2.test_t53c2', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1),
+         'snooze_with_ack': False })
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t53a', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t53b', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.async_block_till_done()
     # No reminders cuz snooze is implicit ack
-    assert t53c.extra_state_attributes['is_acked'] == True
+    assert t53c1.extra_state_attributes['is_acked'] == True
+    assert t53c2.extra_state_attributes['is_acked'] == False
     await asyncio.sleep(2)
+    service_calls.popNotifyEmpty('persistent_notification', 't53c2: on for')
     assert service_calls.isEmpty()
     await setAndWait(hass, 'sensor.a', 'off')
     await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 't53c2: turned off')
     assert service_calls.isEmpty()
-    assert t53c.extra_state_attributes['is_acked'] == True
+    assert t53c1.extra_state_attributes['is_acked'] == True
+    assert t53c2.extra_state_attributes['is_acked'] == False
     
     # Snoozed so no notification
     now = rawdt.datetime.now(rawdt.timezone.utc)
     await hass.services.async_call('alert2','notification_control',
-        {'entity_id': 'alert2.test_t53c', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
+        {'entity_id': 'alert2.test_t53c1', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
+    await hass.services.async_call('alert2','notification_control',
+        {'entity_id': 'alert2.test_t53c2', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1),
+         'snooze_with_ack': False })
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t53a', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t53b', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    assert t53c.extra_state_attributes['is_acked'] == True
+    assert t53c1.extra_state_attributes['is_acked'] == True
+    assert t53c2.extra_state_attributes['is_acked'] == False
     await setAndWait(hass, 'sensor.a', 'on')
     await hass.async_block_till_done()
-    assert t53c.extra_state_attributes['is_acked'] == False
+    assert t53c1.extra_state_attributes['is_acked'] == False
+    assert t53c2.extra_state_attributes['is_acked'] == False
     assert service_calls.isEmpty()
     await setAndWait(hass, 'sensor.a', 'off')
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     # snooze expires, get summary notification
     await asyncio.sleep(2)
-    service_calls.popNotifySearch('persistent_notification', 't53c', 't53c: .*fired 1x')
+    service_calls.popNotifySearch('persistent_notification', 't53c1', 't53c1: .*fired 1x')
+    service_calls.popNotifySearch('persistent_notification', 't53c2', 't53c2: .*fired 1x')
     service_calls.popNotifyEmpty('foo', 't53b: .*fired 1x')
 
     # Try events
