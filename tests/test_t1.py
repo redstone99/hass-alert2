@@ -1056,9 +1056,12 @@ async def test_event(hass, service_calls):
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'alert2_error.*malformed')
 
+    assert hass.states.get('alert2.test_t22').state == 'has never fired'
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t22'})
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t22')
+    # State should now be a timestamp
+    assert re.match('[0-9]{4}-[0-9]{2}-', hass.states.get('alert2.test_t22').state)
 
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t22', 'message': 'foo'})
     await hass.async_block_till_done()
