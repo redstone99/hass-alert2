@@ -87,3 +87,19 @@ Or suppose you had multiple doors and you wanted to alert if any of them are ope
       generator_name: g1
       generator: [ front_door, side_door, garage_door ]
 ```
+
+## More advanced alerts
+
+Here's an example using the separate on/off conditions.  Suppose you want to alert when laundry needs to be emptied from the washer or dryer.  You have a power sensor measuring the power used by the washer and dryer, and both the washer and dryer have a door sensor.  You might set up the alert to turn on when the power usage spikes, and then turn off once either of the doors is opened.  That might look like:
+
+```yaml
+    - domain: laundry
+      name: done
+      condition_on:  "{{ states('sensor.laundry_room_power_watts')|float > 200 }}"
+      trigger_off:
+        - trigger: state
+          entity_id:
+            - binary_sensor.door_washer_open
+            - binary_sensor.door_dryer_open
+          to: "on"
+```

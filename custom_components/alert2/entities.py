@@ -175,6 +175,29 @@ def getField(fieldName, config, defaultCfg):
         raise vol.Invalid(f'Alert {config["domain"]},{config["name"]} config or defaults must specify {fieldName}')
     return val
 
+# returns (err, newDict)
+def expandDataDict(adict, reason: NotificationReason, extraVariables):
+    keys = adict.keys()
+    newDict = {}
+    variables = {'notify_reason': reason.name}
+    if extraVariables:
+        variables.update(extraVariables)
+    for akey in keys:
+        if isinstance(adict[akey], template_helper.Template):
+            try:
+                valStr = adict[akey].async_render(variables=variables, parse_result=False)
+            except TemplateError as err:
+                return (f'render failed for field "{akey}": {err}', None)
+            try:
+                tval = ast.literal_eval(valStr)
+            except Exception as err:  # literal_eval can throw various kinds of exceptions
+                return (f'literal eval failed for field "{akey}" rendered to string "{valStr}" which during eval thew error: {err}', None)
+            newDict[akey] = tval
+        else:
+            newDict[akey] = adict[akey]
+    return (None, newDict)
+
+
 def agoStr(secondsAgo):
     if secondsAgo < 1.5*60:
         astr = f'{round(secondsAgo)} s'
@@ -1145,31 +1168,6 @@ class AlertBase(AlertCommon, RestoreEntity):
             else:
                 report(DOMAIN, 'error', f'For {self.name}: {errStr} while notifying with message={args["message"]} ')
         return (notifier_list, defer_notifier_list)
-
-    # assumed self._data is not None
-    def expandDataDict(self, reason: NotificationReason):
-        keys = self._data.keys()
-        newDict = {}
-        variables = {'notify_reason': reason.name}
-        if self.extraVariables:
-            variables.update(self.extraVariables)
-        for akey in keys:
-            if isinstance(self._data[akey], template_helper.Template):
-                try:
-                    valStr = self._data[akey].async_render(variables=variables, parse_result=False)
-                except TemplateError as err:
-                    report(DOMAIN, 'error', f'{self.name} data template render failed for field "{akey}": {err}')
-                    continue
-                try:
-                    tval = ast.literal_eval(valStr)
-                except Exception as err:  # literal_eval can throw various kinds of exceptions
-                    report(DOMAIN, 'error', f'{self.name} data template literal eval failed for field "{akey}" rendered to string "{valStr}" which during eval thew error: {err}')
-                    continue
-                newDict[akey] = tval
-            else:
-                newDict[akey] = self._data[akey]
-        return newDict
-
     
     # Return False if disabled
     #        float seconds remaining till can notify otherwise. 0 if can do immediately
@@ -1376,7 +1374,11 @@ class AlertBase(AlertCommon, RestoreEntity):
                 # message field in components/notify/const.py:NOTIFY_SERVICE_SCHEMA is a template and will be rendered
                 args = {'message': jinja2Escape(tmsg) }
             if self._data is not None:
-                args['data'] = self.expandDataDict(reason)
+                (err, nDict) = expandDataDict(self._data, reason, self.extraVariables)
+                if err:
+                    report(DOMAIN, 'error', f'{self.name} data template {err}')
+                else:
+                    args['data'] = nDict
             if extra_data is not None:
                 args['data'] = (args['data'] if 'data' in args else {}) | extra_data
             if self._target_template is not None:

@@ -47,7 +47,7 @@ notification_control:
               value: "off"
     snooze_until:
       name: Snooze until
-      description: Notifications will only be sent for alerts that fire after this time.  Should only be set if Notifications is set to "Snooze". Format can be "2000-01-20 04:23:00". Time is local time.
+      description: Notifications will only be sent for alerts that fire after this time.  Should only be set if Notifications is set to "Enable". Format can be "2000-01-20 04:23:00". Time is local time.
       required: false
       selector:
         text:

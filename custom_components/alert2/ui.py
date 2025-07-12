@@ -31,7 +31,7 @@ from .config import ( TOP_LEVEL_SCHEMA, DEFAULTS_SCHEMA, SINGLE_TRACKED_SCHEMA_P
                       GENERATOR_SCHEMA, NO_GENERATOR_SCHEMA, SUPERSEDES_GEN )
 from .util import (     GENERATOR_DOMAIN )
 from .entities import (notifierTemplateToList, renderResultToList, generatorElemToVars, AlertGenerator, Tracker,
-                       processSupersedes)
+                       processSupersedes, getField, expandDataDict, NotificationReason)
 from homeassistant.components.websocket_api import (decorators, async_register_command)
 _LOGGER = logging.getLogger(__name__)
 
@@ -215,7 +215,7 @@ class RenderValueView(HomeAssistantView):
                     ttype = 'string'
             elif name in ['data']:
                 tval = SINGLE_TRACKED_SCHEMA_PRE_NAME({ name: ttxt})[name]
-                simple = True
+                ttype = 'data-dict'
             elif name in ['priority']:
                 if extraVars:
                     obj = { 'domain': 'foo', 'name': 'bar', 'generator':'f2', 'generator_name': 'f3' }
@@ -349,6 +349,13 @@ class RenderValueView(HomeAssistantView):
                 except Exception as ex:  # literal_eval can throw various kinds of exceptions
                     return self.json({ 'error': f'eval of template failed: "{aresult}" produced {ex}'})
                     
+        elif ttype in [ 'data-dict' ]:
+            # data may contain multiple templates. Also, it needs to merge in defaults
+            defaults = self.uiMgr._alertData.topConfig # from
+            mergedVal = getField(name, { 'domain':'foo', 'name':'bar', name: tval }, defaults)
+            (err, result) = expandDataDict(mergedVal, NotificationReason.Fire, extraVars)
+            if err:
+                return self.json({ 'error': f'data template {err}'})
         else:
             msg = f'{gAssertMsg} validate unknown ttype={ttype} for name={name}'
             report(DOMAIN, 'error', msg)
