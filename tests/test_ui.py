@@ -69,6 +69,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
             'throttle_fires_per_mins': [1,2],
             'priority': 'medium',
             'supersede_debounce_secs': 4,
+            'data': { 'a': 1 },
         },
         'alerts': [
             { 'domain': 'test', 'name': 't1', 'condition': 'off' }
@@ -92,6 +93,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert t1._supersede_debounce_secs == cfga['defaults']['supersede_debounce_secs']
     assert t1.movingSum.maxCount == cfga['defaults']['throttle_fires_per_mins'][0]
     assert t1.movingSum.intervalSecs == cfga['defaults']['throttle_fires_per_mins'][1]*60
+    assert t1._data == cfga['defaults']['data']
 
     # Get defaults.   No UI changes so far
     resp = await client.post("/api/alert2/loadTopConfig", json={})
@@ -306,6 +308,17 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'icon': 'xxx'} }})
     assert re.search('prefix:name', rez['error'])
 
+    # data
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'data': "{ 'b': 2 }" } }})
+    #   pick up the default val
+    assert rez['raw']['defaults']['data'] == {'a': 1, 'b': 2}
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'data': "{ 'a': 3 }" }}})
+    assert rez['rawUi']['defaults']['data'] == "{ 'a': 3 }"
+    assert hass_storage['alert2.storage']['data']['config']['defaults']['data'] == "{ 'a': 3 }"
+    assert rez['raw']['defaults']['data'] == {"a": 3}
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'data': 'xxx'} }})
+    assert re.search('must be a dict', rez['error'])
+
 
     
     ########################
@@ -318,6 +331,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
         'throttle_fires_per_mins': '[1,3]',
         'priority': 'high',
         'icon': 'c:d',
+        'data': '{"a":7}',
     },
               'skip_internal_errors': 'true',
               'notifier_startup_grace_secs': '5',
@@ -358,6 +372,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     uiCfg = { 'defaults' : { 'reminder_frequency_mins': '[4]',
                               'throttle_fires_per_mins': '[5,6]',
                              'supersede_debounce_secs': '6',
+                             'data': "{'a': 3}",
                              },
                'skip_internal_errors': 'true',
                'notifier_startup_grace_secs': '7',
@@ -381,6 +396,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     assert t1.movingSum.intervalSecs == 60*6 # uiCfg['defaults']['throttle_fires_per_mins'][1]*60
     assert t1._priority == 'low'
     assert t1._icon == 'mdi:alert'
+    assert t1._data == {'a': 3}
     
     # Check how defaults are sent to UI
     rez = await tpost("/api/alert2/loadTopConfig", {})
@@ -395,15 +411,84 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
                    'raw': {'defaults': {'reminder_frequency_mins': [4], 'notifier': 'n',
                                         'supersede_debounce_secs': '6',
                                         'summary_notifier': False, 'done_notifier': True, 'annotate_messages': True,
-                                        'throttle_fires_per_mins': [5, 6], 'priority': 'low', 'icon':'mdi:alert' },
+                                        'throttle_fires_per_mins': [5, 6], 'priority': 'low', 'icon':'mdi:alert',
+                                        'data': {'a': 3} },
                            'tracked': [{'domain': 'alert2', 'name': 'global_exception', 'throttle_fires_per_mins': [20, 60]}],
                            'skip_internal_errors': 'true', 'notifier_startup_grace_secs': '7',
-                           'defer_startup_notifications': True},
+                           'defer_startup_notifications': True },
                    'rawUi': {'defaults': {'reminder_frequency_mins': '[4]',
                                           'supersede_debounce_secs': '6',
-                                          'throttle_fires_per_mins': '[5,6]'},
+                                          'throttle_fires_per_mins': '[5,6]',
+                                          'data': "{'a': 3}"},
                              'skip_internal_errors': 'true', 'notifier_startup_grace_secs': '7'}}
 
+
+async def test_defaults3(hass, service_calls, hass_storage, hass_client, monkeypatch):
+    # Test data inheritance
+    #
+    cfg = { 'alert2' : {
+        'defaults' : { 'data': {'a': 3} },
+        'alerts': [
+            { 'domain': 'test', 'name': 't1', 'condition': 'off', 'data': { 'c': 5 } },
+            { 'domain': 'test', 'name': 't2', 'condition': 'off', 'data': { 'b': 5 } },
+            { 'domain': 'test', 'name': 't3', 'condition': 'off', 'data': { 'a': 5 } },
+            { 'domain': 'test', 'name': 't4', 'condition': 'off' },
+            { 'domain': 'test', 'name': 't5', 'condition': 'off', 'data': { 'a': 5, 'b': 6 } },
+            { 'domain': 'test', 'name': 't6', 'condition': 'off', 'data': { 'a': 5, 'b': 6, 'c': 7 } },
+        ] } }
+    uiCfg = { 'defaults' : { 'data': "{'b': 4}" }  }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    assert gad.alerts['test']['t1']._data == { 'a': 3, 'b': 4, 'c': 5 }
+    assert gad.alerts['test']['t2']._data == { 'a': 3, 'b': 5 }
+    assert gad.alerts['test']['t3']._data == { 'a': 5, 'b': 4 }
+    assert gad.alerts['test']['t4']._data == { 'a': 3, 'b': 4 }
+    assert gad.alerts['test']['t5']._data == { 'a': 5, 'b': 6 }
+    assert gad.alerts['test']['t6']._data == { 'a': 5, 'b': 6, 'c': 7 }
+
+    cfg = { 'alert2' : {
+        'defaults' : { 'data': {'a': 8} },
+        'alerts': [
+            { 'domain': 'test', 'name': 't7', 'condition': 'off' },
+            { 'domain': 'test', 'name': 't8', 'condition': 'off', 'data': { 'a': 10 } },
+            { 'domain': 'test', 'name': 't9', 'condition': 'off', 'data': { 'b': 11 } },
+        ] } }
+    uiCfg = { 'defaults' : { 'data': "{'a': 9 }" }  }
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': uiCfg })
+    assert rez['raw']
+    async def fake_cfg(thass):
+        return cfg
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+    assert gad.alerts['test']['t7']._data == { 'a': 9 }
+    assert gad.alerts['test']['t8']._data == { 'a': 10 }
+    assert gad.alerts['test']['t9']._data == { 'a': 9, 'b': 11 }
+
+    cfg = { 'alert2' : {
+        'defaults' : { },
+        'alerts': [
+            { 'domain': 'test', 'name': 't10', 'condition': 'off' },
+            { 'domain': 'test', 'name': 't11', 'condition': 'off', 'data': { 'a': '{{ 33 }}' } },
+        ] } }
+    uiCfg = { 'defaults' : { 'data': "{'a': 12 }" }  }
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': uiCfg })
+    assert rez['raw']
+    async def fake_cfg(thass):
+        return cfg
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+    assert gad.alerts['test']['t10']._data == { 'a': 12 }
+    assert set(gad.alerts['test']['t11']._data.keys()) == set(['a'])
+    assert gad.alerts['test']['t11']._data['a'].template == '{{ 33 }}'
     
 async def test_render_v(hass, service_calls, hass_client, hass_storage):
     cfg = { 'alert2': {} }
