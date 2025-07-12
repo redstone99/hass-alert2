@@ -659,9 +659,9 @@ class UiMgr:
                 return {'error': msg}
         elif (not newEnt.alDomain in self._alertData.alerts or not newEnt.alName in self._alertData.alerts[newEnt.alDomain]) and \
              (not newEnt.alDomain in self._alertData.tracked or not newEnt.alName in self._alertData.tracked[newEnt.alDomain]):
-            msg = f'{gAssertMsg}: UI alert {newEnt.entity_id} not in alerts or tracked category'
-            report(DOMAIN, 'error', msg)
-            return {'error': msg}
+            errMsg = f'{gAssertMsg}: UI alert {newEnt.entity_id} not in alerts or tracked category'
+            report(DOMAIN, 'error', errMsg)
+            return {'error': errMsg}
         self.entities.append(newEnt)
         if not 'alerts' in self.data['config']:
             self.data['config']['alerts'] = []
@@ -703,10 +703,12 @@ class UiMgr:
 
         entIndex = next((i for i, item in enumerate(self.entities) if item.alDomain == domain and item.alName == name), -1)
         if entIndex == -1:
-            return { 'error': f'can not find existing UI-created alert in self.entities with domain={domain} and name={name}' }
+            return { 'error': f'can not find existing UI-created alert with domain={domain} and name={name}' }
         dataIndex = self.getDataIndex(domain, name)
         if dataIndex == -1:
-            return { 'error': f'can not find existing UI-created alert with domain={domain} and name={name}' }
+            errMsg = f'{gAssertMsg} updateAlert: domain={domain} and name={name} in self.entities but not in self.data config'
+            _LOGGER.error(errMsg)
+            return { 'error': errMsg }
 
         # Validate alert before call undeclareAlert so hopefully won't end up returning an error
         # and no alert left over
@@ -719,8 +721,9 @@ class UiMgr:
             return { 'error': f'data check failed: {v}' }
         rez = await self._alertData.undeclareAlert(domain, name, doReport=False)
         if rez is not None:
-            report(DOMAIN, 'error', f'{gAssertMsg} updateAlert: domain={domain} name={name} found in UI, but undeclareAlert failed')
-            return {'error': 'Can\'t update alert that does not exist' }
+            errMsg = f'{gAssertMsg} updateAlert: domain={domain} name={name} found in UI, but undeclareAlert failed'
+            _LOGGER.error(errMsg)
+            return {'error': errMsg }
         newEnt = await self._alertData.declareAlert(preppedConfig, doReport=False)
 
         # When updating a generator, we may be changing the set of alerts generated.
@@ -749,15 +752,18 @@ class UiMgr:
             
         entIndex = next((i for i, item in enumerate(self.entities) if item.alDomain == domain and item.alName == name), -1)
         if entIndex == -1:
-            return { 'error': f'can not find existing UI-created alert in self.entities with domain={domain} and name={name}' }
+            return { 'error': f'can not find existing UI-created alert with domain={domain} and name={name}' }
         dataIndex = self.getDataIndex(domain, name)
         if dataIndex == -1:
-            return { 'error': f'can not find existing UI-created alert with domain={domain} and name={name}' }
+            errMsg = f'{gAssertMsg} deleteAlert: domain={domain} and name={name} in self.entities but not in self.data config'
+            _LOGGER.error(errMsg)
+            return { 'error': errMsg }
 
         rez = await self._alertData.undeclareAlert(domain, name, doReport=False, removeFromRegistry=True)
         if rez is not None:
-            report(DOMAIN, 'error', f'{gAssertMsg} deleteAlert: domain={domain} name={name} found in UI, but undeclareAlert failed')
-            return {'error': rez}
+            errMsg = f'{gAssertMsg} deleteAlert: domain={domain} name={name} found in UI, but undeclareAlert failed'
+            _LOGGER.error(errMsg)
+            return {'error': errMsg}
        
         _LOGGER.info(f'Lifecycle deleted alert {self.entities[entIndex].entity_id} via UI')
         del self.entities[entIndex]

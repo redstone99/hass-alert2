@@ -20,22 +20,25 @@ shutting_down = False
 #
 # report() - report that an event alert has fired.
 # 
-def report(domain: str, name: str, message: str | None = None, isException: bool = False, escapeHtml: bool = True) -> None:
-    data = { 'domain' : domain, 'name' : name }
+def report(domain: str, name: str, message: str | None = None, isException: bool = False, escapeHtml: bool = True,
+           data: dict = None) -> None:
+    evdata = { 'domain' : domain, 'name' : name }
     if message is not None:
         if escapeHtml:
             message = message.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        data['message'] = message
+        evdata['message'] = message
+    if data is not None:
+        evdata['data'] = data
     if isException:
-        _LOGGER.exception(f'Exception reported: {data}')
-        #    _LOGGER.exception(f'Exception reported: {data}', exc_info=isException)
+        _LOGGER.exception(f'Exception reported: {evdata}')
+        #    _LOGGER.exception(f'Exception reported: {evdata}', exc_info=isException)
     else:
         #import traceback
         #_LOGGER.warning(f' err reported from: {"".join(traceback.format_stack())}')
         if domain == DOMAIN and name == 'warning':
-            _LOGGER.warning(f'Warning reported: {data}')
+            _LOGGER.warning(f'Warning reported: {evdata}')
         else:
-            _LOGGER.error(f'Err reported: {data}')
+            _LOGGER.error(f'Err reported: {evdata}')
     #_LOGGER.warning(f'  report() called from: {"".join(traceback.format_stack())}')
     if shutting_down:
         _LOGGER.warning(f'   Not notifying or further processing alert because HA is shutting donw')
@@ -43,7 +46,7 @@ def report(domain: str, name: str, message: str | None = None, isException: bool
         
     ghass = global_hass
     if ghass and ghass.loop.is_running():
-        ghass.loop.call_soon_threadsafe(lambda: ghass.bus.async_fire(EVENT_TYPE, data))
+        ghass.loop.call_soon_threadsafe(lambda: ghass.bus.async_fire(EVENT_TYPE, evdata))
     else:
         _LOGGER.error('report() called before Alert2 has initialized. reporting skipped.')
 

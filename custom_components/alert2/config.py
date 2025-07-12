@@ -223,6 +223,7 @@ DEFAULTS_SCHEMA = vol.Schema({
     vol.Optional('priority'): vol.Any('low', 'medium', 'high', msg='must be one of "low", "medium" or "high"'),
     vol.Optional('supersede_debounce_secs'): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional('icon'): cv.icon,
+    vol.Optional('data'): jDictTemplate,
 })
 
 SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({

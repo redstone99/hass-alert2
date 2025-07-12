@@ -101,6 +101,7 @@ async def declareEventMulti(arr):
 NOTIFICATION_CONTROL_SCHEMA = {
     vol.Required("enable"): cv.boolean, #vol.Any(STATE_ON, STATE_OFF, NOTIFICATION_SNOOZE),  ( from homeassistant.const )
     vol.Optional("snooze_until"): cv.datetime,
+    vol.Optional("ack_at_snooze_start"): cv.boolean,
 }
 EMPTY_SCHEMA = {}
 
@@ -371,10 +372,11 @@ class SupersedeNotifyMgr:
             # isWaiting is now false, so recalculate any reminder times
             alert.reminder_check(now)
                 
-    def processNotify(self, alert, now, msg, reason: NotificationReason, last_fired_time, skip_notify, debounce_secs):
+    def processNotify(self, alert, now, msg, reason: NotificationReason, last_fired_time, skip_notify, debounce_secs,
+                      extra_data):
         supersedesSet = self.alert2Data.supersedeMgr.supersedesSet(alert.alDomain, alert.alName)
         thisPair = (alert.alDomain, alert.alName)
-        pcall = partial(alert._notify_post_debounce, msg, reason, last_fired_time, skip_notify=skip_notify)
+        pcall = partial(alert._notify_post_debounce, msg, reason, last_fired_time, extra_data, skip_notify=skip_notify)
         
         # Update recentOffAlerts
         if reason == NotificationReason.Fire:
@@ -443,6 +445,16 @@ class SupersedeNotifyMgr:
                     return
         self.addNotification(thisPair, pcall)
 
+def updateConfigDict(currConfig, newConfig):
+    currHasData = 'data' in currConfig
+    if 'data' in currConfig and 'data' in newConfig:
+        newData = currConfig['data'].copy()
+        newData.update(newConfig['data'])
+        currConfig.update(newConfig)
+        currConfig['data'] = newData
+    else:
+        currConfig.update(newConfig)
+        
 class Alert2Data:
     def __init__(self, hass, config):
         # Call set_shutting_down mostly for unittests which create sequentially multiple Alert2Data
@@ -472,7 +484,8 @@ class Alert2Data:
         if cfg is None:
             return None
         if 'defaults' in cfg:
-            tmpUiConfig['defaults'].update(cfg['defaults'])
+            #tmpUiConfig['defaults'].update(cfg['defaults'])
+            updateConfigDict(tmpUiConfig['defaults'], cfg['defaults'])
         if 'skip_internal_errors' in cfg:
             tmpUiConfig['skip_internal_errors'] = cfg['skip_internal_errors']
         if 'notifier_startup_grace_secs' in cfg:
@@ -522,7 +535,8 @@ class Alert2Data:
         #
         tmpYamlConfig = copy.deepcopy(baseTopConfig)
         if 'defaults' in self._rawYamlConfig:
-            tmpYamlConfig['defaults'].update(self._rawYamlConfig['defaults'])
+            #tmpYamlConfig['defaults'].update(self._rawYamlConfig['defaults'])
+            updateConfigDict(tmpYamlConfig['defaults'], self._rawYamlConfig['defaults'])
         if 'skip_internal_errors' in self._rawYamlConfig:
             tmpYamlConfig['skip_internal_errors'] = self._rawYamlConfig['skip_internal_errors']
         if 'notifier_startup_grace_secs' in self._rawYamlConfig:
@@ -829,7 +843,8 @@ class Alert2Data:
             report(DOMAIN, 'error', newEnt)
             return None
         return newEnt
-    
+
+    # Returns err if alert does not exist
     async def undeclareAlert(self, domain, name, doReport=True, removeFromRegistry=False):
         #_LOGGER.info(f'undeclareAlert for {domain} {name}')
         ent = None
@@ -1083,19 +1098,19 @@ class Alert2Data:
         return await self.handle_report_int(call.data, 'service-call')
     async def handle_event_report(self, ev: Event):
         return await self.handle_report_int(ev.data, 'hass-event')
-    async def handle_report_int(self, data, tmsg):
+    async def handle_report_int(self, evdata, tmsg):
         self._hass.verify_event_loop_thread(f'checking in handle_report_int for {tmsg}')
 
-        # Grrr, have to manually validate data because voluptuous mutates a dict while validating and
-        # the data passed with a service call is immutable.
-        if not 'domain' in data or not isinstance(data['domain'], str):
-            report(DOMAIN, 'error', f'malformed call {tmsg} missing/non-string "domain" {data}')
+        # Grrr, have to manually validate evdata because voluptuous mutates a dict while validating and
+        # the evdata passed with a service call is immutable.
+        if not 'domain' in evdata or not isinstance(evdata['domain'], str):
+            report(DOMAIN, 'error', f'malformed call {tmsg} missing/non-string "domain" {evdata}')
             return
-        if not 'name' in data or not isinstance(data['name'], str):
-            report(DOMAIN, 'error', f'malformed call {tmsg} missing/non-string "name" {data}')
+        if not 'name' in evdata or not isinstance(evdata['name'], str):
+            report(DOMAIN, 'error', f'malformed call {tmsg} missing/non-string "name" {evdata}')
             return
-        domain = data['domain']
-        name = data['name']
+        domain = evdata['domain']
+        name = evdata['name']
         if self.topConfig['skip_internal_errors']:
             if domain == DOMAIN and name in ['error', 'warning', 'global_exception']:
                 # The internal error was logged back up in report(), so no need to log again
@@ -1113,13 +1128,18 @@ class Alert2Data:
             alertObj = self.tracked[domain][name]
 
         message = ''
-        if 'message' in data:
-            if not isinstance(data['message'], str):
-                report(DOMAIN, 'error', f'Malformed call {tmsg} non-string "message" {data}')
+        if 'message' in evdata:
+            if not isinstance(evdata['message'], str):
+                report(DOMAIN, 'error', f'Malformed call {tmsg} non-string "message" {evdata}')
                 return
-            message = data['message']
-
-        await alertObj.record_event(message)
+            message = evdata['message']
+        data = None
+        if 'data' in evdata:
+            if not isinstance(evdata['data'], dict):
+                report(DOMAIN, 'error', f'Malformed call {tmsg} non-dict "data" {evdata}')
+                return
+            data = evdata['data']
+        await alertObj.record_event(message, extra_data=data)
         # TODO - I'm not sure this line does anythign, and probably is wrong.
         self.inHandler = False
 

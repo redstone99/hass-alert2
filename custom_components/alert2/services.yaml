@@ -20,6 +20,11 @@ report:
       description: Extra text to include in the alert message
       selector:
         text:
+    data:
+      name: Data
+      description: Dictionary of data to be passed to notifiers. Overrides fields of any dict specified when alert was declared.
+      selector:
+        object:
 
 notification_control:
   name: Notification Control
@@ -46,6 +51,13 @@ notification_control:
       required: false
       selector:
         text:
+    ack_at_snooze_start:
+      name: Ack at snooze start
+      description: If true, initiating a snooze will also do a one-time ack.  Defaults to true.
+      required: false
+      default: true
+      selector:
+        boolean:
 
 ack:
   name: Ack

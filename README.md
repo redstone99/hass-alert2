@@ -295,6 +295,7 @@ The `defaults:` subsection specifies optional default values for parameters comm
 | `priority` | string | Can be "low", "medium", or "high". Affects display of alert in the Alert2 UI Overview card.  Active alerts are sorted by priority and medium and high-priority alerts have a badge colored orange and red, respectively. May be template when used with generators. Default is "low" |
 | `supersede_debounce_secs` | float | Suppress notifications of an alert if any superseding alert has fired within this many seconds of now. The purpose of this setting is to reduce extraneous notifications due to races between two alerts both turning on or off at almost the same time. Defaults to 0.5 seconds.  Can be any value >= 0. |
 | `icon` | string | Icon to display next to alert name in UI. Must be of form `prefix:name`. Defaults to `mdi:alert`. |
+| `data` | dict | Dictionary passed as the "data" parameter to the notify service call. Dict fields may be template strings. Templates can access `notify_reason` variable containing reason for notification. `data` may be overriden on a key-by-key basis. See doc in [Common alert features](#common-alert-features-1)  |
 
 Example:
 
@@ -342,7 +343,7 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `done_message` | template | optional |Template string evaluated when an alert turns off. Defaults to simple alert state change message like "... turned off after x minutes".<br><br>Any message specified here will be prepended with context information including the alert domain and name.  Set `annotate_messages` to false to disable that behavior (eg if you want to send a notification command like "clear_notification" to the companion app mobile_app platform).
 | `reminder_message` | template | optional |Template string evaluated each time a reminder notification will be sent. Variable `on_secs` contains float seconds alert has been on.  Variable `on_time_str` contains time alert has been on as a string.  `reminder_message` defaults to:<br>`  on for {{ on_time_str }}`<br><br>Any message specified here will be prepended with alert domain and name unless `annotate_messages` is false.
 | `display_msg` | template | optional | Message to display in the Alert2 UI overview card below the alert line.  Appears while the alert is visible in the card. If not specified or specified as "null", no message is shown. |
-| `data` | dict | optional | Optional dictionary passed as the "data" parameter to the notify service call. Dict fields may be template strings. Templates can access `notify_reason` variable containing reason for notification. See doc in [Common alert features](#common-alert-features-1)  |
+| `data` | dict | optional | Override, on a key-by-key basis, any default `data` dict specified. See doc in [Common alert features](#common-alert-features-1)  |
 | `target` | template | optional | Passed as the "target" parameter to the notify service call |
 | `title` | template | optional | Passed as the "title" parameter to the notify service call |
 | `annotate_messages` | bool | optional | Override the default value of `annotate_messages`.  |
@@ -528,6 +529,21 @@ Example:
             sticky: "{% if notify_reason == 'Fire' %} True {% else %} False {% endif %}"
             # Array of dict data field
             actions: "{% if notify_reason=='Fire' %} [{ 'action': 'foo', 'title': 'bar' }] {% else %} [] {% endif %}",
+
+
+The `data` dict may be specified in multiple locations.  These are merged together to produce the final `data` dict passed to notifiers. The merge order is 1) `defaults` section of your YAML config, 2) "Defaults" in the UI "Alert Manager" card, 3) individual alert definition.  So the individual alert definition has the highest precedence.  The merge is done on a key-by-key basis.
+
+For example, the following will result in a dict `{ a: 2, b: 3 }` being sent to notifiers:
+
+    alert2:
+      defaults:
+        data: { a: 1 }
+      alerts:
+        - domain: test
+          name: foo
+          data: { a: 2, b: 3 }
+
+
 
 #### Notifier config
 
@@ -876,6 +892,8 @@ You may see old alert entities persist briefly with a state of "unavailable", pa
 Alert2 defines a few new service calls.
 
 `alert2.report` notifies the system that an event-based alert has fired. It takes two parameters, the "domain" and "name" of the alert that fired.  You can also pass an optional `message` argument specifying a template for a message to include with the firing notification. That domain/name should be declared in either the `tracked` or `alerts` section of your config (described above).  `alert2.report` overrides any `condition` and `trigger` specified in the event alert declaration.
+
+You may also pass a `data` dictionary. This is merged with any default dictionary configured.
 
 An example of using alert2.report in the action section of an automation:
 

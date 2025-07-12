@@ -642,7 +642,14 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert re.search('must be a dict', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{}' })
     assert rez == { 'rez': {} }
-
+    uiCfg = { 'defaults' : { 'data': "{'a': 12 }" }  }
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': uiCfg })
+    assert rez['raw']
+    rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{"b":13}' })
+    assert rez == { 'rez': { 'a': 12, 'b': 13 } }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{"a":14}' })
+    assert rez == { 'rez': { 'a': 14 } }
+    
     # display_msg
     rez = await tpost("/api/alert2/renderValue", {'name': 'display_msg', 'txt': 'joe  ' })
     assert rez == { 'rez': 'joe' }

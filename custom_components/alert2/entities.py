@@ -144,16 +144,36 @@ class MovingSum:
         return secsToWait
 
 def getField(fieldName, config, defaultCfg):
-    if fieldName in config:
-        return config[fieldName]
+    foundVal = False
+    
+    if fieldName in defaultCfg['defaults']:
+        val = defaultCfg['defaults'][fieldName]
+        foundVal = True
+
+    # I think the purpose of this is to support the default values in baseTopConfig for alert2 global_exception
     if config['domain'] == DOMAIN:
         for atracked in defaultCfg['tracked']:
             if atracked['name'] == config['name'] and fieldName in atracked:
-                return atracked[fieldName]
-    if fieldName in defaultCfg['defaults']:
-        return defaultCfg['defaults'][fieldName]
-    else:
+                if fieldName == 'data' and foundVal:
+                    val = val.copy()
+                    val.update(atracked[fieldName])
+                else:
+                    val = atracked[fieldName]
+                foundVal = True
+    
+    if fieldName in config:
+        if fieldName == 'data' and foundVal:
+            val = val.copy()
+            val.update(config[fieldName])
+        else:
+            val = config[fieldName]
+        foundVal = True
+
+    if not foundVal:
+        if fieldName == 'data':
+            return None
         raise vol.Invalid(f'Alert {config["domain"]},{config["name"]} config or defaults must specify {fieldName}')
+    return val
 
 def agoStr(secondsAgo):
     if secondsAgo < 1.5*60:
@@ -808,7 +828,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         self._message_template = config['message'] if 'message' in config else None
         self._title_template = config['title'] if 'title' in config else None
         self._target_template = config['target'] if 'target' in config else None
-        self._data = config['data'] if 'data' in config else None
+        self._data = getField('data', config, defaultCfg)
         self._display_msg_template = config['display_msg'] if 'display_msg' in config else None
         self._icon = getField('icon', config, defaultCfg)
         if genVars is not None:
@@ -969,9 +989,10 @@ class AlertBase(AlertCommon, RestoreEntity):
         assert False, "not implemented"
 
     async def async_notification_control(
-        self, enable: bool, snooze_until: rawdt.datetime | None = None
+            self, enable: bool, snooze_until: rawdt.datetime | None = None, ack_at_snooze_start: bool = True
     ) -> None:
         _LOGGER.info(f'Activity {self.entity_id} got async_notification_control with enable={enable} and snooze_until={snooze_until}')
+        do_ack = True
         if enable:
             if snooze_until:
                 if snooze_until.tzinfo is None or snooze_until.tzinfo.utcoffset(snooze_until) is None:
@@ -979,13 +1000,15 @@ class AlertBase(AlertCommon, RestoreEntity):
                 # javascript in the browser converts the local time generated to UTC when sending on the wire.
                 # convert back to local time.
                 new_snooze = dt.as_local(snooze_until)
+                do_ack = ack_at_snooze_start
             else:
                 new_snooze = NOTIFICATIONS_ENABLED
         else:
             new_snooze = NOTIFICATIONS_DISABLED
         self.notification_control = new_snooze
         now = dt.now()
-        self.ack_int(now)
+        if do_ack:
+            self.ack_int(now)
         self.async_write_ha_state()
         self.reminder_check(now)
     
@@ -1249,7 +1272,7 @@ class AlertBase(AlertCommon, RestoreEntity):
     #    max disengaged with alert off (max stopped. filtered 3 firings, mostly recently x min ago, which turned off x min ago
     #    max disengaged with alert on  (max stopped. filtered 3 firings, mostly recently x min ago, (still on)
     #
-    def _notify_pre_debounce(self, now, reason: NotificationReason, message, skip_notify=False):
+    def _notify_pre_debounce(self, now, reason: NotificationReason, message, skip_notify=False, extra_data=None):
         msg = ''
         if reason == NotificationReason.Summary:
             msg += 'Summary: '
@@ -1277,9 +1300,9 @@ class AlertBase(AlertCommon, RestoreEntity):
             self.last_fired_time = now
 
         alertData = self.hass.data[DOMAIN]
-        alertData.supersedeNotifyMgr.processNotify(self, now, msg, reason, last_fired_time, skip_notify, debounce_secs=self._supersede_debounce_secs)
-            
-    def _notify_post_debounce(self, msg, reason: NotificationReason, last_fired_time, now, *, skip_notify, isSuperseded):
+        alertData.supersedeNotifyMgr.processNotify(self, now, msg, reason, last_fired_time, skip_notify, debounce_secs=self._supersede_debounce_secs, extra_data=extra_data)
+        
+    def _notify_post_debounce(self, msg, reason: NotificationReason, last_fired_time, extra_data, now, *, skip_notify, isSuperseded):
         assert isinstance(msg, str)
         assert isinstance(reason, NotificationReason)
         # Call can_notify_now before reportFire so that if reportFire crosses max threshold, we
@@ -1354,6 +1377,8 @@ class AlertBase(AlertCommon, RestoreEntity):
                 args = {'message': jinja2Escape(tmsg) }
             if self._data is not None:
                 args['data'] = self.expandDataDict(reason)
+            if extra_data is not None:
+                args['data'] = (args['data'] if 'data' in args else {}) | extra_data
             if self._target_template is not None:
                 try:
                     args['target'] = self._target_template.async_render(variables=self.extraVariables, parse_result=False)
@@ -1441,7 +1466,7 @@ class EventAlert(AlertBase):
     @property
     def state(self) -> str:
         if not self.last_fired_time:
-            return ""
+            return "has never fired"
         return self.last_fired_time.isoformat()
     def more_state_attributes(self):
         return {
@@ -1478,11 +1503,11 @@ class EventAlert(AlertBase):
                 return
         await self.record_event(msg)
         
-    async def record_event(self, message: str):
+    async def record_event(self, message: str, extra_data: dict = None):
         now = dt.now()
         _LOGGER.warning(f'Activity {self.entity_id} fired')
         msg = message
-        self._notify_pre_debounce(now, NotificationReason.Fire, message)
+        self._notify_pre_debounce(now, NotificationReason.Fire, message, extra_data=extra_data)
         self.reminder_check(now) # To schedule reminder - the only reminder I think that could be needed is if throttled, a notificaiton that throttling has turned off
         self.async_write_ha_state()
         self.hass.bus.async_fire(EVENT_ALERT2_FIRE, { 'entity_id': self.entity_id,

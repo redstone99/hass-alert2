@@ -1581,7 +1581,7 @@ async def test_snooze(hass, service_calls):
         {'entity_id': 'alert2.test_t53c1', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t53c2', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1),
-         'snooze_with_ack': False})
+         'ack_at_snooze_start': False})
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t53a', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.services.async_call('alert2','notification_control',
@@ -1613,7 +1613,7 @@ async def test_snooze(hass, service_calls):
         {'entity_id': 'alert2.test_t53c1', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t53c2', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1),
-         'snooze_with_ack': False })
+         'ack_at_snooze_start': False })
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t53a', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.services.async_call('alert2','notification_control',
@@ -1638,7 +1638,7 @@ async def test_snooze(hass, service_calls):
         {'entity_id': 'alert2.test_t53c1', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t53c2', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1),
-         'snooze_with_ack': False })
+         'ack_at_snooze_start': False })
     await hass.services.async_call('alert2','notification_control',
         {'entity_id': 'alert2.test_t53a', 'enable': True, 'snooze_until': now + rawdt.timedelta(seconds=1) })
     await hass.services.async_call('alert2','notification_control',
