@@ -560,6 +560,18 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'annotate_messages', 'txt': '{{ true }}' })
     assert re.search('invalid boolean value', rez['error'])
 
+    # ack_required
+    rez = await tpost("/api/alert2/renderValue", {'name': 'ack_required', 'txt': 'yes' })
+    assert rez == { 'rez': True }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'ack_required', 'txt': '{{ true }}' })
+    assert re.search('invalid boolean value', rez['error'])
+
+    # ack_reminders_only
+    rez = await tpost("/api/alert2/renderValue", {'name': 'ack_reminders_only', 'txt': 'yes' })
+    assert rez == { 'rez': True }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'ack_reminders_only', 'txt': '{{ true }}' })
+    assert re.search('invalid boolean value', rez['error'])
+
     # reminder_frequency_mins
     rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_frequency_mins', 'txt': '3' })
     assert rez == { 'rez': [3] }
@@ -710,6 +722,16 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_message', 'txt': '{{ "joe"+"ggg" }}' })
     assert rez == { 'rez': 'joeggg' }
     rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_message', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
+    assert rez == { 'rez': 'joeyay' }
+    
+    # ack_reminder_message
+    rez = await tpost("/api/alert2/renderValue", {'name': 'ack_reminder_message', 'txt': 'foo' })
+    assert rez == { 'rez': 'foo' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'ack_reminder_message', 'txt': 'foo{' })
+    assert rez == { 'rez': 'foo{' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'ack_reminder_message', 'txt': '{{ "joe"+"ggg" }}' })
+    assert rez == { 'rez': 'joeggg' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'ack_reminder_message', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
     assert rez == { 'rez': 'joeyay' }
     
     # trigger
