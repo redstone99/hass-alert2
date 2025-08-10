@@ -519,7 +519,9 @@ Template strings in `data` fields can access a variable, `notify_reason`, contai
 | `ReminderToAck` | Reminder that an alert has not yet been acked. |
 | `Summary` | Summary of alert activity after notifications have been limited, either due to being snoozed or throttled. |
 
-Example:
+Template strings in `data` fields can also access the variables `alert_entity_id`, `alert_domain` and `alert_name`. This should make it easier on iOS companion app to implement an "Ack" button in notifications and pass through the alert entity id to the event handler.
+
+`data` field examples:
 
     alert2:
       alerts:

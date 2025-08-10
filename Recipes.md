@@ -77,7 +77,19 @@ Extending above example to notify via HA companion mobile app, with notification
         tag: "front_door-open-too-long"
 ```
 
-Or suppose you had multiple doors and you wanted to alert if any of them are open too long.  Using generators:
+And if you wanted to support a companion app action to ack an alert via the notification on iOS, you can pass the alert2 entity id to the event handler you set up via something like:
+
+````yaml
+    - domain: ....
+      ...
+      data:
+        actions:
+          - action: "alert2.development2 ack"
+            title: Ack
+        my_entity_id: "'{{ alert_entity_id }}'"
+```` 
+
+Continuing with the door example, suppose you had multiple doors and you wanted to alert if any of them are open too long.  Using generators:
 
 ```yaml
     - domain: "{{ genElem }}"
