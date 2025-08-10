@@ -1,6 +1,7 @@
 import ast
 import asyncio
 import logging
+import types
 from aiohttp import web
 from typing import Any
 import voluptuous as vol
@@ -114,9 +115,9 @@ def prepStrConfigField(fname, tval, doReport=True):
         return parse_yaml(tval)
     elif fname in [ 'trigger', 'trigger_on', 'trigger_off' ]:
         return parse_yaml(tval)
-    elif fname in [ 'annotate_messages', 'manual_off', 'manual_on', 'priority', 'icon', 'friendly_name',
+    elif fname in [ 'annotate_messages', 'ack_required', 'manual_off', 'manual_on', 'priority', 'icon', 'friendly_name',
                     'title', 'target', 'domain', 'name', 'message', 'done_message',
-                    'reminder_message',
+                    'reminder_message', 'ack_reminder_message', 'ack_reminders_only',
                     'condition', 'condition_on', 'condition_off', 'early_start', 'supersede_debounce_secs',
                     # We have entries for both "threshold." prefixed values
                     # as well as the values without prefix.
@@ -204,7 +205,7 @@ class RenderValueView(HomeAssistantView):
             elif name in ['friendly_name', 'title', 'target']:
                 tval = SINGLE_TRACKED_SCHEMA_PRE_NAME({ name: ttxt })[name]
                 ttype = 'string'
-            elif name in ['message', 'done_message', 'reminder_message' ]:
+            elif name in ['message', 'done_message', 'reminder_message', 'ack_reminder_message' ]:
                 tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME({ name: ttxt})[name]
                 ttype = 'string'
             elif name in ['display_msg' ]:
@@ -260,7 +261,7 @@ class RenderValueView(HomeAssistantView):
                 obj = { 'domain': 'foo', 'name': 'bar', 'trigger': dummyTriggerDict, name: ttxt }
                 tval = SINGLE_ALERT_SCHEMA_EVENT(obj)[name]
                 simple = True
-            elif name in ['manual_on', 'manual_off']:
+            elif name in ['manual_on', 'manual_off', 'ack_required', 'ack_reminders_only']:
                 obj = { name: ttxt }
                 tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME(obj)[name]
                 simple = True
@@ -353,7 +354,8 @@ class RenderValueView(HomeAssistantView):
             # data may contain multiple templates. Also, it needs to merge in defaults
             defaults = self.uiMgr._alertData.topConfig # from
             mergedVal = getField(name, { 'domain':'foo', 'name':'bar', name: tval }, defaults)
-            (err, result) = expandDataDict(mergedVal, NotificationReason.Fire, extraVars)
+            (err, result) = expandDataDict(mergedVal, NotificationReason.Fire,
+                                           types.SimpleNamespace(extraVariables=extraVars, entity_id='fake_entity_id', alDomain='dom', alName='nam'))
             if err:
                 return self.json({ 'error': f'data template {err}'})
         else:

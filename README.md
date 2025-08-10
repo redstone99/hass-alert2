@@ -172,13 +172,13 @@ Each alert can specify a priority. Priority affects how the alert is displayed i
 
 ### Notifications
 
-Notifications are sent when an event alert fires, when a condition alert starts or stops firing, and periodically as a reminder that a condition alert is still firing.  You can optionally request that notifications be sent at the end of periods when notifications where snoozed or throttled if there was any alert activity in the interval. This is via the `summary_notifier` config option.  We recommend setting `summary_notifier` to be notified when e.g., throttling ends.
+Notifications are sent when an event alert fires, when a condition alert starts or stops firing, and periodically as a reminder that a condition alert is still firing.  You can optionally, via `acq_required`, request reminders until an alert is acked.  You can optionally request that notifications be sent at the end of periods when notifications where snoozed or throttled if there was any alert activity in the interval. This is via the `summary_notifier` config option.  We recommend setting `summary_notifier` to be notified when e.g., throttling ends.
 
-Each notification by default includes some basic context information (detailed below).  An alert can also specify a template `message` to be sent  each time the alert fires. That message is sent out with notifications and also is viewable in the front-end UI.  Condition alerts can also specify a `done_message` to be sent when the alert stops firing, and a `reminder_message` to customize reminder notifications.
+Each notification by default includes some basic context information (detailed below).  An alert can also specify a template `message` to be sent  each time the alert fires. That message is sent out with notifications and also is viewable in the front-end UI.  Condition alerts can also specify a `done_message` to be sent when the alert stops firing, a `reminder_message` to customize reminder notifications, and if using `ack_required` an `ack_reminder_message` to customize the reminder that an alert has not yet been acked.
 
 There are a few mechanisms available for controlling when and whether notifications are sent.
 
-* `reminder_frequency_mins` - this config parameter specifies how often reminders are sent while an alert continues to fire. May be a list of values (similar to the `repeat` option in the old Alert integration).
+* `reminder_frequency_mins` - this config parameter specifies how often reminders are sent while an alert continues to fire. May be a list of values (similar to the `repeat` option in the old Alert integration).  May be set for condition alerts, or event alerts that have `ack_required` set.
 
 * `throttle_fires_per_mins` - this config parameter throttles notifications for an alert that fires frequently. It affects all notifications for the alert.
 
@@ -191,7 +191,7 @@ There are a few mechanisms available for controlling when and whether notificati
 
 #### Notification text
 
-The text of each notification by default includes some basic context information that varies based on the type of notification. That information may be augmented with the `message`, `done_message`, or `reminder_message` options.  Notification text looks like:
+The text of each notification by default includes some basic context information that varies based on the type of notification. That information may be augmented with the `message`, `done_message`, `reminder_message`, or `ack_reminder_message` options.  Notification text looks like:
 
 * Event alert fires: `message` text prepended with name (or `friendly_name`) of alert.
 
@@ -216,6 +216,13 @@ The text of each notification by default includes some basic context information
 * Throttling ends for event or condition alert that specified `throttle_fires_per_mins` and `summary_notifier` was specified.  Message includes information on what happened while the alert was throttled:
 
         [Throttling ends] Summary: Alert2 kitchen_door_open: fired 10x (most recently 15m ago): turned off 19s ago after being on for 3m
+
+* A reminder that the event or condition alert has not yet been acked.  Sent if `ack_required` is set and, if it's a condition alert, it is no longer firing (If it's still firing then you'll get normal reminder notifications). This can be customized via `ack_reminder_message`. Alert name omitted if `annotate_messages` is false.
+
+        Alert2 kitchen_door_open: not acked yet
+
+
+
 
 #### Notifiers
 
@@ -286,7 +293,7 @@ The `defaults:` subsection specifies optional default values for parameters comm
 
 | Key | Type | Description |
 |---|---|---|
-| `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. Minimum is 0.01 min. |
+| `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. Minimum is 0.01 min.<br>Also used to control ack reminders for event or condition alerts that have `ack_required` set. |
 | `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers, an entity name whose state is a list of notifiers, a template that evaluates to either, or "null" to indicate no notification. See [Notifier Config](#notifier-config) section below for possibilities here.  |
 | `summary_notifier` | bool or template | True to send summaries (see [Notifiers](#notifiers) section for detail) using the same notifier as other notifications.  False to not send summaries.  Or can be a template similar to `notifier` parameter to specify notifier to use for summaries. Default is `false`. |
 | `done_notifier` | bool or template | Controls notifier used to notify when a condition alert stops firing. True to use the `notifier` setting.  False or null to not send done notifications.  Or can be a template similar to `notifier` parameter to specify notifier to use for done notificaitons. Default is `true`. |
@@ -342,11 +349,14 @@ The `alerts:` subsection contains a list of condition-based and event-based aler
 | `message` | template | optional | Template string evaluated when the alert fires. For event-based alerts, it can reference the `trigger` variable (see example below). Defaults to simple alert state change message like "... turned on".  <br><br>Any message specified here will be prepended with context information including the alert domain and name.  Set `annotate_messages` to false to disable that behavior (eg if you want to send a notification command to the companion app mobile_app platform). |
 | `done_message` | template | optional |Template string evaluated when an alert turns off. Defaults to simple alert state change message like "... turned off after x minutes".<br><br>Any message specified here will be prepended with context information including the alert domain and name.  Set `annotate_messages` to false to disable that behavior (eg if you want to send a notification command like "clear_notification" to the companion app mobile_app platform).
 | `reminder_message` | template | optional |Template string evaluated each time a reminder notification will be sent. Variable `on_secs` contains float seconds alert has been on.  Variable `on_time_str` contains time alert has been on as a string.  `reminder_message` defaults to:<br>`  on for {{ on_time_str }}`<br><br>Any message specified here will be prepended with alert domain and name unless `annotate_messages` is false.
+| `ack_reminder_message` | template | optional |Template string evaluated each time a reminder notification will be sent that an alert has not been acked. Used only is `ack_required` is set. `ack_reminder_message` defaults to:<br>`  not acked yet`<br><br>Any message specified here will be prepended with alert domain and name unless `annotate_messages` is false.
 | `display_msg` | template | optional | Message to display in the Alert2 UI overview card below the alert line.  Appears while the alert is visible in the card. If not specified or specified as "null", no message is shown. |
 | `data` | dict | optional | Override, on a key-by-key basis, any default `data` dict specified. See doc in [Common alert features](#common-alert-features-1)  |
 | `target` | template | optional | Passed as the "target" parameter to the notify service call |
 | `title` | template | optional | Passed as the "title" parameter to the notify service call |
 | `annotate_messages` | bool | optional | Override the default value of `annotate_messages`.  |
+| `ack_required` | bool | optional | If set to truthy, reminder notifications will be sent until an alert has been acked.  Reminders sent for events alert and condition alerts that have stopped firing. Default is false. |
+| `ack_reminders_only` | bool | optional | If set to truthy, an acked condition alert will still send a notification when the alert stops firing. Default is false. |
 | `reminder_frequency_mins` | float | optional | Override the default `reminder_frequency_mins`|
 | `notifier` | template | optional | Override the default `notifier`. See [Notifier Config](#notifier-config) section below for examples. |
 | `summary_notifier` | template | optional | Override the default `summary_notifier`. See [Notifier Config](#notifier-config) section below for examples. |
@@ -497,7 +507,7 @@ To reduce spurious notifications due to races between two hierarchically-related
 
 #### Common alert features
 
-Alerts may pass additional data to the notifier via the `data` field. This is convenient for notification platforms such as [`mobile_app`](https://companion.home-assistant.io/docs/notifications/notifications-basic/). `data` must be a dictionary.  Values may be template strings, in which case they are eval'd. This means that string results must be quoted. Other types such as numbers and boolean True/False do not need quotes. See example below.
+Alerts may pass additional data to the notifier via the `data` field. This is convenient for notification platforms such as [`mobile_app`](https://companion.home-assistant.io/docs/notifications/notifications-basic/). `data` must be a dictionary.  Values may be template strings, in which case they are eval'd. This means that string results must have extra quotes around them. Other types such as numbers and boolean True/False do not need quotes. See examples below.
 
 Template strings in `data` fields can access a variable, `notify_reason`, containing the reason for the notification.  `notify_reason` may take the following string values:
 
@@ -506,6 +516,7 @@ Template strings in `data` fields can access a variable, `notify_reason`, contai
 |`Fire` | A condition alert has started firing or an event alert fired. |
 | `ReminderOn` | Reminder that a condition alert is still firing. |
 | `StopFiring` | A condition alert has stopped firing. |
+| `ReminderToAck` | Reminder that an alert has not yet been acked. |
 | `Summary` | Summary of alert activity after notifications have been limited, either due to being snoozed or throttled. |
 
 Example:
@@ -521,12 +532,17 @@ Example:
           title: "test title"
           data:
             group: motion-alarms
+            
             # Integer data field
             timeout: "{% if notify_reason == 'Fire' %} 600 {% else %} 20 {% endif %}"
-            # String data field
+            
+            # String data field - NOTE extra quotes needed
             channel: "{% if notify_reason == 'Fire' %} 'channel-a' {% else %} 'channel-b' {% endif %}"
+            channel: "'{{ states('some entity id') }}'"
+            
             # Boolean data field
             sticky: "{% if notify_reason == 'Fire' %} True {% else %} False {% endif %}"
+            
             # Array of dict data field
             actions: "{% if notify_reason=='Fire' %} [{ 'action': 'foo', 'title': 'bar' }] {% else %} [] {% endif %}",
 
@@ -931,6 +947,8 @@ Alert2 will fire events on the hass bus as follows:
 | `alert2_alert_fire` | <pre>entity_id<br>domain<br>name</pre> | Fires when an event alert fires. |
 | `alert2_alert_on` | <pre>entity_id<br>domain<br>name</pre> | Fires when a condition alert turns on (starts firing). |
 | `alert2_alert_off` | <pre>entity_id<br>domain<br>name</pre> | Fires when an event alert turns off (stops firing). |
+| `alert2_alert_ack` | <pre>entity_id<br>domain<br>name</pre> | Fires when an alert is acked. |
+| `alert2_alert_unack` | <pre>entity_id<br>domain<br>name</pre> | Fires when an alert is unacked. |
 
 Example of triggering an automation based on a condition alert turning on or off:
 

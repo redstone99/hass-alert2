@@ -15,6 +15,8 @@ EVENT_ALERT2_DELETE  = 'alert2_delete'
 EVENT_ALERT2_FIRE = 'alert2_alert_fire'
 EVENT_ALERT2_ON = 'alert2_alert_on'
 EVENT_ALERT2_OFF = 'alert2_alert_off'
+EVENT_ALERT2_ACK = 'alert2_alert_ack'
+EVENT_ALERT2_UNACK = 'alert2_alert_unack'
 shutting_down = False
 
 #

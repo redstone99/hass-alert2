@@ -241,6 +241,9 @@ SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({
     vol.Optional('display_msg'): vol.Any(cv.template, None),
     vol.Optional('priority'): vol.Any('low', 'medium', 'high'),
     vol.Optional('icon'): cv.icon,
+    vol.Optional('ack_required'): cv.boolean,
+    vol.Optional('ack_reminder_message'): cv.template,
+    vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
 })
 
 DOMAIN_NAME_DICT = {
@@ -280,9 +283,9 @@ SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Optional('manual_on'): cv.boolean,
     vol.Optional('reminder_message'): cv.template,
     vol.Optional('done_message'): cv.template,
-    vol.Optional('reminder_frequency_mins'): vol.All(cv.ensure_list, [vol.Coerce(float)], [vol.Range(min=0.01)]),
     vol.Optional('early_start'): cv.boolean,
     vol.Optional('supersede_debounce_secs'): vol.All(vol.Coerce(float), vol.Range(min=0)),
+    vol.Optional('ack_reminders_only'): cv.boolean,
 })
 DOMAIN_NAME_DICT_GEN = {
     vol.Required('domain'): cv.template,
