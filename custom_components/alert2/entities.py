@@ -1153,7 +1153,7 @@ class AlertBase(AlertCommon, RestoreEntity):
                 msg += f'not acked yet [ack_reminder_message template error]'
         reason = NotificationReason.ReminderToAck
         self._notify_pre_debounce(now, reason, msg)
-        self.reminder_check(now)  # to set up next reminder (eg if alert is still on)
+        self.reminder_check(now)  # to set up next reminder to ack
         self.async_write_ha_state()
         
     # returns list of notifiers
