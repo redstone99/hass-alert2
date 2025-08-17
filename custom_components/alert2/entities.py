@@ -4,6 +4,7 @@ import datetime as rawdt
 from   enum import Enum
 import logging
 from   typing import Any
+from collections import defaultdict
 import re
 import voluptuous as vol
 import traceback
@@ -20,7 +21,7 @@ from   homeassistant.helpers import template as template_helper
 from   homeassistant.helpers.event import TrackTemplate, TrackTemplateResult, async_track_template_result
 from   homeassistant.helpers.trigger import async_initialize_triggers
 from   homeassistant.components.binary_sensor import BinarySensorDeviceClass
-from   homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from   homeassistant.components.sensor import SensorDeviceClass, SensorStateClass, SensorEntity
 import homeassistant.util.dt as dt
 
 from .util import (
@@ -370,7 +371,7 @@ class Tracker:
             self.trackerInfo = None
     def refresh(self):
         self.trackerInfo.async_refresh()
-            
+        
     def startWatching(self):
         trackers = []
         for x in self.cfgList:
@@ -528,6 +529,11 @@ class AlertCommon(Entity):
             self.hass.bus.async_fire(EVENT_ALERT2_CREATE, { 'entity_id': self.entity_id,
                                                              'domain': self.alDomain,
                                                              'name': self.alName })
+            try:
+                DomainCounters.get(self.hass).register_alert(self)
+            except Exception:
+                pass
+                
             if self.earlyStart or self.alertData.haStarted:
                 await self.startWatching()
             else:
@@ -537,6 +543,11 @@ class AlertCommon(Entity):
         await self.startWatching()
 
     async def async_will_remove_from_hass(self) -> None:
+        try:
+            DomainCounters.get(self.hass).unregister_alert(self)
+        except Exception:
+            pass
+            
         await super().async_will_remove_from_hass()
         self.hass.bus.async_fire(EVENT_ALERT2_DELETE, { 'entity_id': self.entity_id,
                                                          'domain': self.alDomain,
@@ -917,6 +928,8 @@ class AlertBase(AlertCommon, RestoreEntity):
         # enabled, disabled, or snooze unti time
         self.notification_control = NOTIFICATIONS_ENABLED
 
+        self.condition_state = None
+
         self.future_notification_info = None
     # This overrides helpers/entity.py:Entity version of this
     def _friendly_name_internal(self) -> str | None:
@@ -1017,6 +1030,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             'has_display_msg': (self._display_msg_template is not None),
             'priority': self._priority,
             'reminders_since_fire': self.reminders_since_fire,
+            'condition_on' : self.condition_state
         }
         baseDict.update(self.more_state_attributes())
         return baseDict
@@ -1525,7 +1539,7 @@ class EventAlert(AlertBase):
             hass: HomeAssistant,
             alertData,
             config: dict[str, Any],
-            defaultCfg: dict[str, any],
+            defaultCfg: dict[str, Any],
     ):
         super().__init__(hass, alertData, config, defaultCfg)
         self.detach_trigger = None
@@ -1691,10 +1705,15 @@ class ConditionAlert(AlertBase):
         if not isinstance(results[0], bool):
             report(DOMAIN, 'error', f'{gAssertMsg} cond_on_update get non-bool result {type(results[0])} and results={results}')
             return
+            
+        self.condition_state = results[0]
+        self.async_write_ha_state()
+        
         if results[0]:
             self.update_state_internal(True)
     async def trigger_off(self, variables):
-        self.update_state_internal(False)
+        if not self.condition_state:
+            self.update_state_internal(False)
     def cond_off_update(self, results):
         if len(results) != 1:
             report(DOMAIN, 'error', f'{gAssertMsg} cond_off_update get len={len(results)} and results={results}')
@@ -1702,9 +1721,9 @@ class ConditionAlert(AlertBase):
         if not isinstance(results[0], bool):
             report(DOMAIN, 'error', f'{gAssertMsg} cond_off_update get non-bool result {type(results[0])} and results={results}')
             return
-        if results[0]:
+        if results[0] and not self.condition_state:
             self.update_state_internal(False)
-        
+
     async def async_manual_on(self):
         if not self.manualOnEnabled:
             raise HomeAssistantError(f'manual_on called but alert {self.entity_id} does not have manual_on enabled')
@@ -1840,6 +1859,7 @@ class ConditionAlert(AlertBase):
         return self.update_state_internal2(state)
     def update_state_internal2(self, state:bool):
         now = dt.now()
+        prev_bool = (self.state == "on")
         if (self.state == "on") == state:
             # no change
             # TODO - for keeping track of extremum of offending values, may want to run some update checking code.
@@ -1896,6 +1916,10 @@ class ConditionAlert(AlertBase):
                 self.hass.bus.async_fire(EVENT_ALERT2_OFF, { 'entity_id': self.entity_id,
                                                              'domain': self.alDomain,
                                                              'name': self.alName })
+            try:
+                DomainCounters.get(self.hass).on_alert_state_change(self, prev_bool, bool(state))
+            except Exception:
+                pass
 
     # want invariant to be that it is ok to invoke notify_timer_cb a tiny bit early.
     def notify_timer_cb(self, now):
@@ -2002,3 +2026,135 @@ class ConditionAlert(AlertBase):
                 report(DOMAIN, 'error', f'{gAssertMsg} template for {self.name}: condition_bool is neither None or bool. Is {condition_bool} {type(condition_bool)}')
                 newState = False
         return self.update_state_internal(newState)
+
+# ---------- Helpers ----------
+_DOMAIN_COUNTER_PREFIX = "sensor.alert2_active_"
+
+def _normalize_domain_name(s: str) -> str:
+    s = (s or "default").strip().lower()
+    s = re.sub(r'[^0-9a-z]+', '_', s)
+    s = re.sub(r'_+', '_', s).strip('_')
+    return s or "default"
+
+# ---------- Sensor ----------
+class Alert2DomainCounter(SensorEntity):
+    _attr_should_poll = False
+    _attr_icon = "mdi:counter"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_has_entity_name = True
+
+    def __init__(self, hass, domain_raw: str):
+        super().__init__()
+        self.hass = hass
+        self._domain_raw = domain_raw
+        self._domain_norm = _normalize_domain_name(domain_raw)
+        disp = domain_raw.replace('_', ' ').title()
+        self._attr_name = f"Alert2 Active {disp}"
+        self._attr_unique_id = f"alert2_active_{self._domain_norm}"
+        self.entity_id = f"{_DOMAIN_COUNTER_PREFIX}{self._domain_norm}"
+        self._count = 0
+
+    @property
+    def native_value(self) -> int:
+        return self._count
+
+    def set_count(self, v: int) -> None:
+        v = int(v)
+        if v != self._count:
+            self._count = v
+            self.async_write_ha_state()
+
+# ---------- Manager ----------
+class DomainCounters:
+    _INST: dict[int, "DomainCounters"] = {}
+    
+    @classmethod
+    def get(cls, hass):
+        key = id(hass)
+        if key not in cls._INST:
+            cls._INST[key] = DomainCounters(hass)
+        return cls._INST[key]
+
+    @classmethod
+    def setup(cls, hass, async_add_entities):
+        mgr = cls.get(hass)
+        mgr._adder = async_add_entities
+        return mgr
+
+    
+    def __init__(self, hass):
+        self.hass = hass
+        self._adder = None
+        self._alerts_by_domain: dict[str, set] = {}
+        self._sensors: dict[str, Alert2DomainCounter] = {}
+        self._pending_add: list[Alert2DomainCounter] = []
+        self._add_scheduled = False
+
+    def register_alert(self, alert) -> None:
+        dom_raw = getattr(alert, "alDomain", None) or getattr(alert, "domain", None) or "default"
+        dom_norm = _normalize_domain_name(dom_raw)
+        self._alerts_by_domain.setdefault(dom_norm, set()).add(alert)
+        self._ensure_sensor(dom_norm, dom_raw)
+        self._recalc_domain(dom_norm)
+
+    def unregister_alert(self, alert) -> None:
+        dom_raw = getattr(alert, "alDomain", None) or getattr(alert, "domain", None) or "default"
+        dom_norm = _normalize_domain_name(dom_raw)
+        s = self._alerts_by_domain.get(dom_norm)
+        if s and alert in s:
+            s.remove(alert)
+            if not s:
+                self._remove_sensor(dom_norm)
+            else:
+                self._recalc_domain(dom_norm)
+
+    def _remove_sensor(self, dom_norm: str) -> None:
+        sensor = self._sensors.pop(dom_norm, None)
+        if sensor:
+            self.hass.async_create_task(sensor.async_remove())
+
+    def on_alert_state_change(self, alert, prev: bool, new: bool) -> None:
+        dom_raw = getattr(alert, "alDomain", None) or getattr(alert, "domain", None) or "default"
+        dom_norm = _normalize_domain_name(dom_raw)
+        if bool(prev) != bool(new):
+            self._recalc_domain(dom_norm)
+
+    def _ensure_sensor(self, dom_norm: str, domain_raw: str) -> None:
+        if dom_norm in self._sensors:
+            return
+        sensor = Alert2DomainCounter(self.hass, domain_raw)
+        self._sensors[dom_norm] = sensor
+        self._pending_add.append(sensor)
+        self._schedule_add_flush()
+
+    def _schedule_add_flush(self) -> None:
+        if self._add_scheduled:
+            return
+        self._add_scheduled = True
+
+        async def _flush():
+            try:
+                await asyncio.sleep(0)
+                if self._adder and self._pending_add:
+                    batch = self._pending_add[:]
+                    self._pending_add.clear()
+                    await self._adder(batch)
+            except Exception:
+                _LOGGER.exception("Failed to add domain counter sensors")
+            finally:
+                self._add_scheduled = False
+
+        self.hass.async_create_task(_flush())
+
+    def _recalc_domain(self, dom_norm: str) -> None:
+        alerts = self._alerts_by_domain.get(dom_norm, set())
+        cnt = 0
+        for a in tuple(alerts):
+            try:
+                if getattr(a, "state", None) == "on":
+                    cnt += 1
+            except Exception:
+                continue
+        s = self._sensors.get(dom_norm)
+        if s:
+            s.set_count(cnt)
