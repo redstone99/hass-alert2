@@ -23,6 +23,7 @@ from   homeassistant.helpers.trigger import async_initialize_triggers
 from   homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from   homeassistant.components.sensor import SensorDeviceClass, SensorStateClass, SensorEntity
 import homeassistant.util.dt as dt
+from homeassistant.helpers import entity_registry as er
 
 from .util import (
     create_task,
@@ -1916,6 +1917,7 @@ class ConditionAlert(AlertBase):
                 self.hass.bus.async_fire(EVENT_ALERT2_OFF, { 'entity_id': self.entity_id,
                                                              'domain': self.alDomain,
                                                              'name': self.alName })
+            
             try:
                 DomainCounters.get(self.hass).on_alert_state_change(self, prev_bool, bool(state))
             except Exception:
@@ -2028,8 +2030,6 @@ class ConditionAlert(AlertBase):
         return self.update_state_internal(newState)
 
 # ---------- Helpers ----------
-_DOMAIN_COUNTER_PREFIX = "sensor.alert2_active_"
-
 def _normalize_domain_name(s: str) -> str:
     s = (s or "default").strip().lower()
     s = re.sub(r'[^0-9a-z]+', '_', s)
@@ -2051,18 +2051,23 @@ class Alert2DomainCounter(SensorEntity):
         disp = domain_raw.replace('_', ' ').title()
         self._attr_name = f"Alert2 Active {disp}"
         self._attr_unique_id = f"alert2_active_{self._domain_norm}"
-        self.entity_id = f"{_DOMAIN_COUNTER_PREFIX}{self._domain_norm}"
         self._count = 0
+        self._is_added = False
 
     @property
     def native_value(self) -> int:
         return self._count
 
+    async def async_added_to_hass(self) -> None:
+        self._is_added = True
+        self.async_write_ha_state()
+
     def set_count(self, v: int) -> None:
         v = int(v)
         if v != self._count:
             self._count = v
-            self.async_write_ha_state()
+            if self._is_added:
+                self.async_write_ha_state()
 
 # ---------- Manager ----------
 class DomainCounters:
@@ -2094,8 +2099,9 @@ class DomainCounters:
         dom_raw = getattr(alert, "alDomain", None) or getattr(alert, "domain", None) or "default"
         dom_norm = _normalize_domain_name(dom_raw)
         self._alerts_by_domain.setdefault(dom_norm, set()).add(alert)
-        self._ensure_sensor(dom_norm, dom_raw)
-        self._recalc_domain(dom_norm)
+        created = self._ensure_sensor(dom_norm, dom_raw)
+        if not created:
+            self._recalc_domain(dom_norm)
 
     def unregister_alert(self, alert) -> None:
         dom_raw = getattr(alert, "alDomain", None) or getattr(alert, "domain", None) or "default"
@@ -2113,6 +2119,11 @@ class DomainCounters:
         if sensor:
             self.hass.async_create_task(sensor.async_remove())
 
+            ent_reg = er.async_get(self.hass)
+            entity_id = ent_reg.async_get_entity_id("sensor", "sensor", f"alert2_active_{dom_norm}")
+            if entity_id:
+                ent_reg.async_remove(entity_id)
+
     def on_alert_state_change(self, alert, prev: bool, new: bool) -> None:
         dom_raw = getattr(alert, "alDomain", None) or getattr(alert, "domain", None) or "default"
         dom_norm = _normalize_domain_name(dom_raw)
@@ -2121,11 +2132,12 @@ class DomainCounters:
 
     def _ensure_sensor(self, dom_norm: str, domain_raw: str) -> None:
         if dom_norm in self._sensors:
-            return
+            return False
         sensor = Alert2DomainCounter(self.hass, domain_raw)
         self._sensors[dom_norm] = sensor
         self._pending_add.append(sensor)
         self._schedule_add_flush()
+        return True
 
     def _schedule_add_flush(self) -> None:
         if self._add_scheduled:
@@ -2139,6 +2151,8 @@ class DomainCounters:
                     batch = self._pending_add[:]
                     self._pending_add.clear()
                     await self._adder(batch)
+                    for s in batch:
+                       self._recalc_domain(s._domain_norm)
             except Exception:
                 _LOGGER.exception("Failed to add domain counter sensors")
             finally:
