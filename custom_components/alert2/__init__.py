@@ -1117,7 +1117,7 @@ class Alert2Data:
                 return
         
         if not domain in self.tracked or not name in self.tracked[domain]:
-            errmsg = f'{tmsg} for domain={domain} name={name}'
+            errmsg = f'domain={domain} name={name} (from {tmsg})'
             report(DOMAIN, 'error', f'undeclared event {errmsg}. Creating event alert')
             alertObj = self.declareEvent(domain, name)
             if isinstance(alertObj, Entity):

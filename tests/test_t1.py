@@ -3874,6 +3874,37 @@ async def test_data(hass, service_calls):
     service_calls.popNotifySearch('persistent_notification', 't5', 'turned on')
     service_calls.popNotifySearch('persistent_notification', 't6', 'turned on')
     assert service_calls.isEmpty()
+
+async def test_data2(hass, service_calls):
+    cfg = { 'alert2' : { 'defaults': {
+        'data': {
+            'actions': "[{ action: '{{ 3+4 }}' }]"
+        }}, 'tracked': [ { 'domain': 'd', 'name': 't1' } ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await hass.services.async_call('alert2','report', {'domain':'d','name':'t1', 'message': 'foo'})
+    await hass.async_block_till_done()
+    service_calls.popNotifySearch('persistent_notification', 't1: foo', '')
+    service_calls.popNotifyEmpty('persistent_notification', 'd_t1 data template Error rendering data field "actions".*alert2_error itself had issue: alert2_error data template')
+
+async def test_data3(hass, service_calls):
+    cfg = { 'alert2' : { 'defaults': {
+        'data': {
+            'actions': "[{ 'action': 'foo_{{ 3+4 }}' }]"
+        }}, 'tracked': [ { 'domain': 'd', 'name': 't1' } ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await hass.services.async_call('alert2','report', {'domain':'d','name':'t1', 'message': 'ick'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'd_t1: ick', extraFields={ 'data': { 'actions': [{ 'action': 'foo_7' }] } })
+
+    
     
 async def test_nested_generator(hass, service_calls):
     cfg = { 'alert2' : { 'alerts': [
@@ -3889,3 +3920,4 @@ async def test_nested_generator(hass, service_calls):
 
     # Hrm, writing the supersedes so it only applies to genA or genB would be messy
     # eg. want to alert on printer ink being low, across different ink colors
+

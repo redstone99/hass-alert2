@@ -197,9 +197,9 @@ def expandDataDict(adict, reason: NotificationReason, ent):
                 tval = ast.literal_eval(valStr)
             except Exception as err:  # literal_eval can throw various kinds of exceptions
                 if re.match(r'\s*[\'"].*[\'"]\s*$', valStr):
-                    return (f'Error rendering data field "{akey}". Field rendered to string "{valStr}". Subsequent literal eval thew error: {err}', None)
+                    return (f'Error rendering data field "{akey}". Field rendered to string "{valStr}". Subsequent python literal eval thew error: {err}', None)
                 else:
-                    return (f'Error rendering data field "{akey}". Note - template strings in data fields need extra quotes around them. If you mean this field to produce a string, it appears to be missing extra surrounding quotes. Field rendered to string "{valStr}". Subsequent literal eval thew error: {err}', None)
+                    return (f'Error rendering data field "{akey}". Note - template strings in data fields need extra quotes around them. If you mean this field to produce a string, it appears to be missing extra surrounding quotes. Field rendered to string "{valStr}". Subsequent python literal eval thew error: {err}', None)
             newDict[akey] = tval
         else:
             newDict[akey] = adict[akey]
@@ -1149,8 +1149,8 @@ class AlertBase(AlertCommon, RestoreEntity):
             try:
                 msg += self._ack_reminder_message_template.async_render(variables=evars, parse_result=False)
             except TemplateError as err:
-                report(DOMAIN, 'error', f'{self.name} ack_reminder_message template: {err}')
                 msg += f'not acked yet [ack_reminder_message template error]'
+                msg += self.reportIfSafe(DOMAIN, 'error', f'{self.name} ack_reminder_message template: {err}')
         reason = NotificationReason.ReminderToAck
         self._notify_pre_debounce(now, reason, msg)
         self.reminder_check(now)  # to set up next reminder to ack
@@ -1365,6 +1365,16 @@ class AlertBase(AlertCommon, RestoreEntity):
             
         alertData = self.hass.data[DOMAIN]
         alertData.supersedeNotifyMgr.processNotify(self, now, msg, reason, last_fired_time, skip_notify, debounce_secs=self._supersede_debounce_secs, extra_data=extra_data)
+
+    # Purpose is to avoid infinite loop of alert2_error reporting an alert2_error when it has an internal issue
+    # I think all calls to report errors that can happen from alert2_error either are assertion failures or use reportIfSafe.
+    def reportIfSafe(self, domain, name, msg):
+        if self.alDomain == DOMAIN and self.alName == 'error':
+            _LOGGER.error(f'alert2.alert2_error itself had issue: {msg}')
+            return f'[ alert2_error itself had issue: {msg} ]'
+        else:
+            report(domain, name, msg)
+            return ''
         
     def _notify_post_debounce(self, msg, reason: NotificationReason, last_fired_time, extra_data, now, *, skip_notify, isSuperseded):
         assert isinstance(msg, str)
@@ -1405,7 +1415,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             self.notified_max_on = True
             msg += ' [Throttling started]'
             if not doNotify:
-                report(DOMAIN, 'error', f'{gAssertMsg} {self.name}: saw throttling start, but not notifying. Seems impossible. {max_limit_remaining_secs} ')
+                msg += self.reportIfSafe(DOMAIN, 'error', f'{gAssertMsg} {self.name}: saw throttling start, but not notifying. Seems impossible. {max_limit_remaining_secs} ')
         elif doNotify and max_limit_remaining_secs > 0 and self.notified_max_on:
             # doNotify means throttling turned off before call to _notify().
             # But it's now back on, which must be result of Fire.  In otherwords, throttling briefly turned off.
@@ -1418,7 +1428,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             self.notified_max_on = False
             msg += ' [Throttling ending]'
             if not doNotify and remaining_reason not in [ NOTIFICATIONS_DISABLED, 'snoozed' ] and not skipSummary and not skipDone:
-                report(DOMAIN, 'error', f'{gAssertMsg} {self.name}: saw throttling stop, but not notifying, seems impossible. {remaining_secs}, {remaining_reason}')
+                msg += self.reportIfSafe(DOMAIN, 'error', f'{gAssertMsg} {self.name}: saw throttling stop, but not notifying, seems impossible. {remaining_secs}, {remaining_reason}')
 
         if (doNotify or skipSummary or skipDone) and self.fires_since_last_notify > 0:
             secs_since_last = (now - last_fired_time).total_seconds()
@@ -1430,19 +1440,12 @@ class AlertBase(AlertCommon, RestoreEntity):
         self.last_tried_notify_time = now
         if doNotify:
             self.last_notified_time = now
-            
-            tmsg = msg
-            if len(tmsg) > 600:
-                tmsg = tmsg[:600] + '...'
-            if haConst.MAJOR_VERSION > 2024 or (haConst.MAJOR_VERSION == 2024 and haConst.MINOR_VERSION >= 10):
-                args = {'message': tmsg }
-            else:
-                # message field in components/notify/const.py:NOTIFY_SERVICE_SCHEMA is a template and will be rendered
-                args = {'message': jinja2Escape(tmsg) }
+
+            args = {}
             if self._data is not None:
                 (err, nDict) = expandDataDict(self._data, reason, self)
                 if err:
-                    report(DOMAIN, 'error', f'{self.name} data template {err}')
+                    msg += self.reportIfSafe(DOMAIN, 'error', f'{self.name} data template {err}')
                 else:
                     args['data'] = nDict
             if extra_data is not None:
@@ -1451,14 +1454,24 @@ class AlertBase(AlertCommon, RestoreEntity):
                 try:
                     args['target'] = self._target_template.async_render(variables=self.extraVariables, parse_result=False)
                 except TemplateError as err:
-                    report(DOMAIN, 'error', f'{self.name} Target template: {err}')
+                    msg += self.reportIfSafe(DOMAIN, 'error', f'{self.name} Target template: {err}')
                     # Continue and notify anyways
             if self._title_template is not None:
                 try:
                     args['title'] = self._title_template.async_render(variables=self.extraVariables, parse_result=False)
                 except TemplateError as err:
-                    report(DOMAIN, 'error', f'{self.name} Title template: {err}')
+                    msg += self.reportIfSafe(DOMAIN, 'error', f'{self.name} Title template: {err}')
                     # Continue and notify anyways
+            tmsg = msg
+            if len(tmsg) > 600:
+                tmsg = tmsg[:600] + '...'
+            if haConst.MAJOR_VERSION > 2024 or (haConst.MAJOR_VERSION == 2024 and haConst.MINOR_VERSION >= 10):
+                args['message'] = tmsg
+            else:
+                # message field in components/notify/const.py:NOTIFY_SERVICE_SCHEMA is a template and will be rendered
+                args['message'] = jinja2Escape(tmsg)
+
+                    
             (notifier_list, defer_notifier_list) = self.getNotifiers(args, reason)
             if len(notifier_list) > 0:
                 _LOGGER.warning(f'{self.entity_id} notifying {notifier_list}: {args["message"]}')
@@ -1503,7 +1516,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             elif isSuperseded:
                 tillmsg = f' (superseded by alert d={isSuperseded[0]} n={isSuperseded[1]})'
             else:
-                report(DOMAIN, 'error', f'{self.name} not notifying with 0 remaining_secs and no skip_notify set')
+                self.reportIfSafe(DOMAIN, 'error', f'{self.name} not notifying with 0 remaining_secs and no skip_notify set')
                 tillmsg = f' bad-logic-err'
             smsg = f'  {self.entity_id} skipping notify {tillmsg}: {msg}'
             _LOGGER.warning(smsg)
