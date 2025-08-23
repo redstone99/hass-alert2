@@ -324,53 +324,75 @@ Note `reminder_frequency_mins` or `throttle_fires_per_mins` may be specified as 
 
 ### Alerts
 
-The `alerts:` subsection contains a list of condition-based and event-based alert specifications. The full list of parameters for each alert are as follows:
+The `alerts:` subsection contains a list of condition-based and event-based alert specifications. Alert names are split into `domain` and `name`. The reason is partly for semantic clarity and also for future management features, like grouping alerts by domain.
+The full list of parameters for each alert are as follows:
 
+
+Entity name related fields:
 
 | Key | Type | Required | Description |
 |---|---|---|---|
 |`domain` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `domain` is typically the object causing the alert (e.g., garage door).<br>Can be a template when used with [generator patterns](#generator-patterns). |
 | `name` | string | required | part of the entity name of the alert. The entity name of an alert is `alert2.{domain}_{name}`. `name` is typically the particular fault occurring (e.g., open_too_long).<br>Can be a template when used with [generator patterns](#generator-patterns). |
 | `friendly_name` | template | optional | Name to display instead of the entity name. Surfaces in the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) overview card. Template tracks changes. |
+| `icon` | string | optional | Override the default value of `icon` |
+
+<br>Alert firing related fields:
+
+| Key | Type | Required | Description |
+|---|---|---|---|
 | `condition` | string | optional | Template string or entity name. Alert is firing if the template or entity state evaluates to truthy AND any optional `trigger` or `threshold` criteria are also satisfied.<br>May not be combined with `condition_on`, `trigger_on`,`manual_on` or the "*_off" equivalents. |
 | `trigger` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Indicates an event-based alert. Alert fires when the trigger does, if also any `condition` specified is truthy. |
-| `threshold:` | dict | optional | Subsection specifying a threshold criteria with hysteresis. Alert is firing if the threshold value exceeds bounds AND any `condition` specified is truthy. Not available for event-based alerts. |
-| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`value` | string | required | A template or entity name that evaluates to a float to be compared to threshold limits. |
-| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`hysteresis` | float | required | Compare `value` to limits using hysteresis. threshold is considered exceeded if value exceeds min/max, but does not reset until value increases past min+hysteresis or decreases past max-hysteresis. (see description below) |
-| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`maximum` | float | optional | Maximum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
-| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`minimum` | float | optional | Minimum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
 | `condition_on` | string | optional | Template string or entity name. Alert starts firing if the template or entity state switches to truthy AND any optional `trigger_on` criteria is also satisfied. This is edge-triggered - no change in alert state happens when `condition_on` becomes falsey. |
 | `condition_off` | string | optional | Template string or entity name. Alert stops firing if the template or entity state switches to truthy AND any optional `trigger_off` criteria is also satisfied. This is edge-triggered - no change in alert state happens when `condition_off` becomes falsey. |
 | `trigger_on` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Alert turns on when the trigger triggers, if also any `condition_on` specified is truthy. |
 | `trigger_off` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Alert turns off when the trigger triggers, if also any `condition_off` specified is truthy. |
 | `manual_on` | boolean | optional | Enables the service call `alert2.manual_on` to turn the alert on. |
 | `manual_off` | boolean | optional | Enables the service call `alert2.manual_off` to turn the alert off. |
+| `threshold:` | dict | optional | Subsection specifying a threshold criteria with hysteresis. Alert is firing if the threshold value exceeds bounds AND any `condition` specified is truthy. Not available for event-based alerts. |
+| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`value` | string | required | A template or entity name that evaluates to a float to be compared to threshold limits. |
+| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`hysteresis` | float | required | Compare `value` to limits using hysteresis. threshold is considered exceeded if value exceeds min/max, but does not reset until value increases past min+hysteresis or decreases past max-hysteresis. (see description below) |
+| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`maximum` | float | optional | Maximum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
+| --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`minimum` | float | optional | Minimum acceptable value for `value`. At least one of `maximum` and `minimum` must be specified. |
 | `delay_on_secs` | float | optional | Specifies number of seconds that any `condition` must be true and any threshold specified must be exceeded before the alert starts firing. Similar in motivation to the `skip_first` option in the old Alert integration. Default is 0. <br>Can be a template when used with [generator patterns](#generator-patterns). |
+| `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts. Not available for [generator patterns](#generator-patterns).  |
+
+<br>Notification-related fields:
+
+| Key | Type | Required | Description |
+|---|---|---|---|
 | `message` | template | optional | Template string evaluated when the alert fires. For event-based alerts, it can reference the `trigger` variable (see example below). Defaults to simple alert state change message like "... turned on".  <br><br>Any message specified here will be prepended with context information including the alert domain and name.  Set `annotate_messages` to false to disable that behavior (eg if you want to send a notification command to the companion app mobile_app platform). |
 | `done_message` | template | optional |Template string evaluated when an alert turns off. Defaults to simple alert state change message like "... turned off after x minutes".<br><br>Any message specified here will be prepended with context information including the alert domain and name.  Set `annotate_messages` to false to disable that behavior (eg if you want to send a notification command like "clear_notification" to the companion app mobile_app platform).
 | `reminder_message` | template | optional |Template string evaluated each time a reminder notification will be sent. Variable `on_secs` contains float seconds alert has been on.  Variable `on_time_str` contains time alert has been on as a string.  `reminder_message` defaults to:<br>`  on for {{ on_time_str }}`<br><br>Any message specified here will be prepended with alert domain and name unless `annotate_messages` is false.
 | `ack_reminder_message` | template | optional |Template string evaluated each time a reminder notification will be sent that an alert has not been acked. Used only is `ack_required` is set. `ack_reminder_message` defaults to:<br>`  not acked yet`<br><br>Any message specified here will be prepended with alert domain and name unless `annotate_messages` is false.
-| `display_msg` | template | optional | Message to display in the Alert2 UI overview card below the alert line.  Appears while the alert is visible in the card. If not specified or specified as "null", no message is shown. |
-| `data` | dict | optional | Override, on a key-by-key basis, any default `data` dict specified. See doc in [Common alert features](#common-alert-features-1)  |
-| `target` | template | optional | Passed as the "target" parameter to the notify service call |
-| `title` | template | optional | Passed as the "title" parameter to the notify service call |
-| `annotate_messages` | bool | optional | Override the default value of `annotate_messages`.  |
-| `ack_required` | bool | optional | If set to truthy, reminder notifications will be sent until an alert has been acked.  Reminders sent for events alert and condition alerts that have stopped firing. Default is false. |
-| `ack_reminders_only` | bool | optional | If set to truthy, an acked condition alert will still send a notification when the alert stops firing. Default is false. |
-| `reminder_frequency_mins` | float | optional | Override the default `reminder_frequency_mins`|
 | `notifier` | template | optional | Override the default `notifier`. See [Notifier Config](#notifier-config) section below for examples. |
 | `summary_notifier` | template | optional | Override the default `summary_notifier`. See [Notifier Config](#notifier-config) section below for examples. |
 | `done_notifier` | template | optional | Override the default `done_notifier`. See [Notifier Config](#notifier-config) section below for examples. |
-| `supersedes` | List | optional | A list of domain+name pairs of alerts that this alert supersedes. Notifications will be skipped for superseded alerts while this alert is firing.  Applies transitively. May use templates when used with generators. See [Supersedes](#supersedes) section below for examples. |
+| `reminder_frequency_mins` | float | optional | Override the default `reminder_frequency_mins`|
+| `annotate_messages` | bool | optional | Override the default value of `annotate_messages`.  |
+| `ack_required` | bool | optional | If set to truthy, reminder notifications will be sent until an alert has been acked.  Reminders sent for events alert and condition alerts that have stopped firing. Default is false. |
+| `ack_reminders_only` | bool | optional | If set to truthy, an acked condition alert will still send a notification when the alert stops firing. Default is false. |
+| `title` | template | optional | Passed as the "title" parameter to the notify service call |
+| `target` | template | optional | Passed as the "target" parameter to the notify service call |
+| `data` | dict | optional | Override, on a key-by-key basis, any default `data` dict specified. See doc in [Common alert features](#common-alert-features-1)  |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
-| `priority` | string | optional | Override the default value of `priority` |
-| `supersede_debounce_secs` | float | optional | Override the default value of `supersede_debounce_secs` |
-| `icon` | string | optional | Override the default value of `icon` |
-| `early_start` | bool | optional | By default, alert monitoring starts only once HA has fully started (i.e., after the HOMEASSISTANT_STARTED event). If `early_start` is true for an alert, then monitoring of that alert starts earlier, as soon as the alert2 component loads. Useful for catching problems before HA fully starts. Not available for [generator patterns](#generator-patterns).  |
+
+<br>Generator-related fields:
+
+| Key | Type | Required | Description |
+|---|---|---|---|
 | `generator` | template | optional | If specified, this alert is a [generator pattern](#generator-patterns). |
 | `generator_name` | string | optional | Each generator creates a sensor entity with the name `sensor.alert2generator_[generator_name]`. See [generator patterns](#generator-patterns). |
 
-Alert names are split into `domain` and `name`. The reason is partly for semantic clarity and also for future management features, like grouping alerts by domain.
+<br>Extra settings:
+ 
+| Key | Type | Required | Description |
+|---|---|---|---|
+| `priority` | string | optional | Override the default value of `priority` |
+| `display_msg` | template | optional | Message to display in the Alert2 UI overview card below the alert line.  Appears while the alert is visible in the card. If not specified or specified as "null", no message is shown. |
+| `supersedes` | List | optional | A list of domain+name pairs of alerts that this alert supersedes. Notifications will be skipped for superseded alerts while this alert is firing.  Applies transitively. May use templates when used with generators. See [Supersedes](#supersedes) section below for examples. |
+| `supersede_debounce_secs` | float | optional | Override the default value of `supersede_debounce_secs` |
+
 
 #### Event-based alert
 
