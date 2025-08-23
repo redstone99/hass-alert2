@@ -813,38 +813,41 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
 
     # threshold: hysteresis
     rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.hysteresis', 'txt': 'foo' })
-    assert re.search('expected float', rez['error'])
+    assert re.search('not a float', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.hysteresis', 'txt': '-3' })
-    assert re.search('be at least', rez['error'])
+    assert re.search('must be > 0', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.hysteresis', 'txt': '3' })
     assert rez == { 'rez': 3 }
     rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.hysteresis', 'txt': '"3"' })
-    assert re.search('expected float', rez['error'])
+    assert re.search('float template is neither', rez['error'])
     #assert rez == { 'rez': 3 }
     rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.hysteresis', 'txt': '{{ 5+6 }}' })
-    assert re.search('expected float', rez['error'])
+    assert rez == { 'rez': 11 }
+    #assert re.search('expected float', rez['error'])
 
     # threshold: minimum
     rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.minimum', 'txt': 'foo' })
-    assert re.search('expected float', rez['error'])
+    assert re.search('not a float', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.minimum', 'txt': '3' })
     assert rez == { 'rez': 3 }
     rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.minimum', 'txt': '"3"' })
-    assert re.search('expected float', rez['error'])
+    assert re.search('float template is neither', rez['error'])
     #assert rez == { 'rez': 3 }
     rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.minimum', 'txt': '{{ 5+6 }}' })
-    assert re.search('expected float', rez['error'])
+    assert rez == { 'rez': 11 }
+    #assert re.search('expected float', rez['error'])
 
     # threshold: maximum
     rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.maximum', 'txt': 'foo' })
-    assert re.search('expected float', rez['error'])
+    assert re.search('not a float', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.maximum', 'txt': '3' })
     assert rez == { 'rez': 3 }
     rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.maximum', 'txt': '"3"' })
-    assert re.search('expected float', rez['error'])
+    assert re.search('float template is neither', rez['error'])
     #assert rez == { 'rez': 3 }
     rez = await tpost("/api/alert2/renderValue", {'name': 'threshold.maximum', 'txt': '{{ 5+6 }}' })
-    assert re.search('expected float', rez['error'])
+    assert rez == { 'rez': 11 }
+    #assert re.search('expected float', rez['error'])
 
     # manual_off
     rez = await tpost("/api/alert2/renderValue", {'name': 'manual_off', 'txt': 'yes' })

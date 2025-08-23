@@ -83,6 +83,17 @@ def floatTemplate(afloat):
             # TODO - Not sure if strip() is necessary. Can yaml return extra whitespace?
             afloat = '{{ states("' + afloat.strip() + '") }}'
     return cv.template(afloat)
+
+def floatLitOrTemplate(minZero=False):
+    def validate(afloat):
+        try:
+            x = float(afloat)
+        except (ValueError) as ex:
+            return floatTemplate(afloat)
+        if minZero and x < 0:
+            raise vol.Invalid(f'float must be > 0, not {x}')
+        return x
+    return validate
     
 #def jtemplate(value: Any | None) -> JTemplate:
 def jtemplate(value) -> JTemplate:
@@ -198,17 +209,21 @@ def jDomain(afield):
         raise vol.Invalid(f'"{GENERATOR_DOMAIN}" is a reserved domain')
     return dd
 
+
+def jDictSingle(anElem):
+    if isinstance(anElem, str) and template_helper.is_template_string(anElem):
+        return cv.template(anElem)
+    elif isinstance(anElem, dict):
+        return { k : jDictSingle(v) for k,v in anElem.items() }
+    elif isinstance(anElem, list):
+        return [ jDictSingle(v) for v in anElem ]
+    else:
+        return anElem
+
 def jDictTemplate(adict):
     if not isinstance(adict, dict):
         raise vol.Invalid(f'"data" field must be a dict')
-    newDict = {}
-    keys = adict.keys()
-    for akey in keys:
-        if isinstance(adict[akey], str) and template_helper.is_template_string(adict[akey]):
-            newDict[akey] = cv.template(adict[akey])
-        else:
-            newDict[akey] = adict[akey]
-    return newDict
+    return jDictSingle(adict)
 
 DEFAULTS_SCHEMA = vol.Schema({
     vol.Optional('notifier'): vol.Any(cv.template, jstringList),
@@ -267,9 +282,10 @@ SINGLE_ALERT_SCHEMA_EVENT = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
 
 THRESHOLD_SCHEMA = vol.Schema({
     vol.Required('value'): floatTemplate,
-    vol.Required('hysteresis'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
-    vol.Optional('minimum'): vol.Coerce(float),
-    vol.Optional('maximum'): vol.Coerce(float),
+    # if hystersis is template, then min 0 is enforced in the Tracker as NonnegativeFloat
+    vol.Required('hysteresis'): floatLitOrTemplate(minZero=True),
+    vol.Optional('minimum'): floatLitOrTemplate(),
+    vol.Optional('maximum'): floatLitOrTemplate()
 })
 
 SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({

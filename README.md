@@ -529,7 +529,7 @@ To reduce spurious notifications due to races between two hierarchically-related
 
 #### Common alert features
 
-Alerts may pass additional data to the notifier via the `data` field. This is convenient for notification platforms such as [`mobile_app`](https://companion.home-assistant.io/docs/notifications/notifications-basic/). `data` must be a dictionary.  Values may be template strings, in which case they are eval'd. This means that string results must have extra quotes around them. Other types such as numbers and boolean True/False do not need quotes. See examples below.
+Alerts may pass additional data to the notifier via the `data` field. This is convenient for notification platforms such as [`mobile_app`](https://companion.home-assistant.io/docs/notifications/notifications-basic/). `data` must be a dictionary.  Values may be templates which product string values. Templates can occur in nested sub-dictionaries. See examples below.
 
 Template strings in `data` fields can access a variable, `notify_reason`, containing the reason for the notification.  `notify_reason` may take the following string values:
 
@@ -556,20 +556,18 @@ Template strings in `data` fields can also access the variables `alert_entity_id
           title: "test title"
           data:
             group: motion-alarms
+            timeout: 3
+            sticky: true
             
-            # Integer data field
-            timeout: "{% if notify_reason == 'Fire' %} 600 {% else %} 20 {% endif %}"
-            
-            # String data field - NOTE extra quotes needed
-            channel: "{% if notify_reason == 'Fire' %} 'channel-a' {% else %} 'channel-b' {% endif %}"
-            channel: "'{{ states('some entity id') }}'"
-            
-            # Boolean data field
-            sticky: "{% if notify_reason == 'Fire' %} True {% else %} False {% endif %}"
-            
-            # Array of dict data field
-            actions: "{% if notify_reason=='Fire' %} [{ 'action': 'foo', 'title': 'bar' }] {% else %} [] {% endif %}",
+            # String data field supports templates
+            channel: "{% if notify_reason == 'Fire' %}channel-a{% else %}channel-b{% endif %}"
+            channel: "{{ states('some entity id') }}"
+            source_entity_id: "{{ alert_entity_id }}"
 
+            # nested dicts and templates
+            actions:
+              - action: foo
+                title: "for-{{ notify_reason }}"
 
 The `data` dict may be specified in multiple locations.  These are merged together to produce the final `data` dict passed to notifiers. The merge order is 1) `defaults` section of your YAML config, 2) "Defaults" in the UI "Alert Manager" card, 3) individual alert definition.  So the individual alert definition has the highest precedence.  The merge is done on a key-by-key basis.
 

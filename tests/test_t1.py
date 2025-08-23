@@ -1045,6 +1045,110 @@ async def test_threshold2(hass, service_calls):
     service_calls.popNotifyEmpty('persistent_notification', 'test_t14d: turned off')
     assert hass.states.get('alert2.test_t14d').state == 'off'
 
+    
+async def test_threshold3(hass, service_calls):
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': 't1',  'threshold': { 'value': "sensor.v1", 'hysteresis': 3 } }, # err: no max or min
+        { 'domain': 'test', 'name': 't2',  'threshold': { 'value': "sensor.v2", 'hysteresis': 'sensor.h2', 'maximum': 5 } },
+        { 'domain': 'test', 'name': 't3',  'threshold': { 'value': "sensor.v3", 'hysteresis': 'sensor.h3', 'minimum': 1 } },
+        { 'domain': 'test', 'name': 't4',  'threshold': { 'value': "sensor.v4", 'hysteresis': 2, 'maximum': 'sensor.max4' } },
+        { 'domain': 'test', 'name': 't5',  'threshold': { 'value': "sensor.v5", 'hysteresis': 2, 'minimum': 'sensor.min5' } },
+        { 'domain': 'test', 'name': 't6',  'threshold': { 'value': "sensor.v6", 'hysteresis': 'sensor.h6', 'maximum': 'sensor.max6', 'minimum': 'sensor.min6' } },
+    ], } }
+    hass.states.async_set("sensor.v2", "3")
+    hass.states.async_set("sensor.h2", "1")
+    hass.states.async_set("sensor.v3", "3")
+    hass.states.async_set("sensor.h3", "1")
+    hass.states.async_set("sensor.v4", "3")
+    hass.states.async_set("sensor.max4", "4")
+    hass.states.async_set("sensor.v5", "3")
+    hass.states.async_set("sensor.min5", "2")
+    hass.states.async_set("sensor.v6", "3")
+    hass.states.async_set("sensor.h6", "2")
+    hass.states.async_set("sensor.min6", "2")
+    hass.states.async_set("sensor.max6", "5")
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'must contain at least one of minimum.*t1')
+    assert service_calls.isEmpty()
+
+    # t2
+    await setAndWait(hass, 'sensor.v2', '4')  # small increase 3 -> 4, max 5
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.h2', '2')  # hyst change, but still in limits
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v2', '6')
+    service_calls.popNotifyEmpty('persistent_notification', 't2: turned on')
+    await setAndWait(hass, 'sensor.v2', '4') # within hyst
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.h2', '0.5') # no longer within hyst
+    service_calls.popNotifyEmpty('persistent_notification', 't2: turned off')
+    await setAndWait(hass, 'sensor.h2', '2') # within hyst but we already turned off
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.h2', '-1') # illegal val
+    service_calls.popNotifyEmpty('persistent_notification', 't2.*min is zero')
+    await setAndWait(hass, 'sensor.v2', '3') # still ilegal
+    service_calls.popNotifyEmpty('persistent_notification', 't2.*min is zero')
+
+    # t3
+    await setAndWait(hass, 'sensor.v3', '4')  # small decrease 3 -> 2, min 1
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.h3', '2')  # hyst change, but still in limits
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v3', '0')
+    service_calls.popNotifyEmpty('persistent_notification', 't3: turned on')
+    await setAndWait(hass, 'sensor.v3', '2') # within hyst
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.h3', '0.5') # no longer within hyst
+    service_calls.popNotifyEmpty('persistent_notification', 't3: turned off')
+    await setAndWait(hass, 'sensor.h3', '2') # within hyst but we already turned off
+    assert service_calls.isEmpty()
+
+    # t4
+    await setAndWait(hass, 'sensor.v4', '4') # at limit
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.max4', '5')  # limit increase
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v4', '7')
+    service_calls.popNotifyEmpty('persistent_notification', 't4: turned on')
+    await setAndWait(hass, 'sensor.v4', '4') # within hyst
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.max4', '7')  # now val is outside hyst
+    service_calls.popNotifyEmpty('persistent_notification', 't4: turned off')
+    
+    # t5
+    await setAndWait(hass, 'sensor.v5', '2') # at limit
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.min5', '1')  # limit decrease
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v5', '0')
+    service_calls.popNotifyEmpty('persistent_notification', 't5: turned on')
+    await setAndWait(hass, 'sensor.v5', '2') # within hyst
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.min5', '-1')  # now val is outside hyst
+    service_calls.popNotifyEmpty('persistent_notification', 't5: turned off')
+    
+    # t6
+    await setAndWait(hass, 'sensor.v6', '5') # at limit
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.max6', '4')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned on')
+    await setAndWait(hass, 'sensor.v6', '3')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.h6', '0.5')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned off')
+    await setAndWait(hass, 'sensor.v6', '1')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned on')
+    await setAndWait(hass, 'sensor.min6', '0')
+    service_calls.popNotifyEmpty('persistent_notification', 't6: turned off')
+    await setAndWait(hass, 'sensor.max6', '-3')
+    service_calls.popNotifyEmpty('persistent_notification', 't6.*threshold bounds error')
+    await setAndWait(hass, 'sensor.max6', '10')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.v6', '2')
+    assert service_calls.isEmpty()
+    
 async def test_event(hass, service_calls):
     cfg = { 'alert2' : { 'tracked' : [
         { 'domain': 'test', 'name': 't22' },

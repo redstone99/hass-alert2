@@ -265,16 +265,15 @@ class RenderValueView(HomeAssistantView):
                 obj = { name: ttxt }
                 tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME(obj)[name]
                 simple = True
-            elif name in ['threshold.value']:
-                obj = { 'value': ttxt, 'hysteresis': 3 }
-                tval = THRESHOLD_SCHEMA(obj)['value']
-                ttype = 'float'
-            elif name in ['threshold.hysteresis', 'threshold.minimum', 'threshold.maximum']:
+            elif name in ['threshold.value', 'threshold.hysteresis', 'threshold.minimum', 'threshold.maximum']:
                 subname = name[10:] # strip "threshold."
                 obj = { 'value': 7, 'hysteresis': 3 }
                 obj[subname] = ttxt
                 tval = THRESHOLD_SCHEMA(obj)[subname]
-                simple = True
+                if isinstance(tval, float):
+                    simple = True
+                else:
+                    ttype = 'float'
             elif name in ['delay_on_secs']:
                 if extraVars:
                     obj = { 'domain': 'foo', 'name': 'bar', 'generator':'f2', 'generator_name': 'f3' }
@@ -354,9 +353,10 @@ class RenderValueView(HomeAssistantView):
             # data may contain multiple templates. Also, it needs to merge in defaults
             defaults = self.uiMgr._alertData.topConfig # from
             mergedVal = getField(name, { 'domain':'foo', 'name':'bar', name: tval }, defaults)
-            (err, result) = expandDataDict(mergedVal, NotificationReason.Fire,
-                                           types.SimpleNamespace(extraVariables=extraVars, entity_id='fake_entity_id', alDomain='dom', alName='nam'))
-            if err:
+            try:
+                result = expandDataDict(mergedVal, NotificationReason.Fire,
+                                        types.SimpleNamespace(extraVariables=extraVars, entity_id='fake_entity_id', alDomain='dom', alName='nam'))
+            except HomeAssistantError as err:
                 return self.json({ 'error': f'data template {err}'})
         else:
             msg = f'{gAssertMsg} validate unknown ttype={ttype} for name={name}'

@@ -179,28 +179,60 @@ def getField(fieldName, config, defaultCfg):
         raise vol.Invalid(f'Alert {config["domain"]},{config["name"]} config or defaults must specify {fieldName}')
     return val
 
+
+def expandSingle(elem, fname, extraVars):
+    if isinstance(elem, template_helper.Template):
+        try:
+            valStr = elem.async_render(variables=extraVars, parse_result=False)
+        except TemplateError as err:
+            raise HomeAssistantError(f'template render failed for data field "{fname}": {err}')
+        if False:
+            try:
+                tval = ast.literal_eval(valStr)
+            except Exception as err:  # literal_eval can throw various kinds of exceptions
+                if re.match(r'\s*[\'"].*[\'"]\s*$', valStr):
+                    raise HomeAssistantError(f'Error rendering data field "{fname}". Field rendered to string "{valStr}". Subsequent python literal eval thew error: {err}')
+                else:
+                    raise HomeAssistantError(f'Error rendering data field "{fname}". Note - template strings in data fields need extra quotes around them. If you mean this field to produce a string, it appears to be missing extra surrounding quotes. Field rendered to string "{valStr}". Subsequent python literal eval thew error: {err}')
+        return valStr # tval
+    elif isinstance(elem, dict):
+        return { k : expandSingle(v, f'{fname}->{k}' if fname else k, extraVars) for k, v in elem.items() }
+    elif isinstance(elem, list):
+        return [ expandSingle(v, fname, extraVars) for v in elem ]
+    else:
+        return elem
+
 # returns (err, newDict)
 def expandDataDict(adict, reason: NotificationReason, ent):
-    keys = adict.keys()
-    newDict = {}
+    #keys = adict.keys()
+    #newDict = {}
     variables = { 'notify_reason': reason.name, 'alert_entity_id': ent.entity_id,
                   'alert_domain': ent.alDomain, 'alert_name': ent.alName }
     if ent.extraVariables:
         variables.update(ent.extraVariables)
+    return expandSingle(adict, '', variables)
+
     for akey in keys:
         if isinstance(adict[akey], template_helper.Template):
             try:
                 valStr = adict[akey].async_render(variables=variables, parse_result=False)
             except TemplateError as err:
                 return (f'template render failed for data field "{akey}": {err}', None)
-            try:
-                tval = ast.literal_eval(valStr)
-            except Exception as err:  # literal_eval can throw various kinds of exceptions
-                if re.match(r'\s*[\'"].*[\'"]\s*$', valStr):
-                    return (f'Error rendering data field "{akey}". Field rendered to string "{valStr}". Subsequent python literal eval thew error: {err}', None)
-                else:
-                    return (f'Error rendering data field "{akey}". Note - template strings in data fields need extra quotes around them. If you mean this field to produce a string, it appears to be missing extra surrounding quotes. Field rendered to string "{valStr}". Subsequent python literal eval thew error: {err}', None)
-            newDict[akey] = tval
+            if False:
+                try:
+                    tval = ast.literal_eval(valStr)
+                except Exception as err:  # literal_eval can throw various kinds of exceptions
+                    if re.match(r'\s*[\'"].*[\'"]\s*$', valStr):
+                        return (f'Error rendering data field "{akey}". Field rendered to string "{valStr}". Subsequent python literal eval thew error: {err}', None)
+                    else:
+                        return (f'Error rendering data field "{akey}". Note - template strings in data fields need extra quotes around them. If you mean this field to produce a string, it appears to be missing extra surrounding quotes. Field rendered to string "{valStr}". Subsequent python literal eval thew error: {err}', None)
+            newDict[akey] = valStr # tval
+        elif isinstance(adict[akey], dict):
+            subRez = expandDataDict(adict[key], reason, ent)
+            if subRez[0] is None:
+                newDict[akey] = subRez[1]
+            else:
+                return subRez
         else:
             newDict[akey] = adict[akey]
     return (None, newDict)
@@ -350,7 +382,8 @@ class Tracker:
         Str  = 2
         StrEmptyOk  = 3
         Float = 4
-        List = 5
+        NonnegativeFloat = 5
+        List = 6
     def __init__(self, parentEnt, sname, hass, alertData, cfgList, cb, extraVariables):
         self.hass = hass
         self.alertData = alertData
@@ -471,11 +504,14 @@ class Tracker:
                     report(DOMAIN, 'error', f'{self.fullName} {self.cfgList[idx]["fieldName"]} template rendered to "{resultStrs[idx]}", which is not truthy (e.g., "true", "on" or opposites) template="{self.cfgList[idx]["template"].template}"')
                     return
                 results[idx] = abool
-            elif ttype == Tracker.Type.Float:
+            elif ttype in [ Tracker.Type.Float,  Tracker.Type.NonnegativeFloat ]:
                 try:
                     afloat = float(resultStrs[idx])
                 except ValueError:
                     report(DOMAIN, 'error', f'{self.fullName} {self.cfgList[idx]["fieldName"]} template rendered to "{resultStrs[idx]}" rather than a float')
+                    return
+                if ttype == Tracker.Type.NonnegativeFloat and afloat < 0:
+                    report(DOMAIN, 'error', f'{self.fullName} {self.cfgList[idx]["fieldName"]} template rendered to "{resultStrs[idx]}" which is negative (min is zero)')
                     return
                 results[idx] = afloat
             elif ttype == Tracker.Type.List:
@@ -1443,9 +1479,10 @@ class AlertBase(AlertCommon, RestoreEntity):
 
             args = {}
             if self._data is not None:
-                (err, nDict) = expandDataDict(self._data, reason, self)
-                if err:
-                    msg += self.reportIfSafe(DOMAIN, 'error', f'{self.name} data template {err}')
+                try:
+                    nDict = expandDataDict(self._data, reason, self)
+                except HomeAssistantError as err:
+                    msg += self.reportIfSafe(DOMAIN, 'error', f'{self.name} data {err}')
                 else:
                     args['data'] = nDict
             if extra_data is not None:
@@ -1660,18 +1697,29 @@ class ConditionAlert(AlertBase):
         self.cond_true_time = None
         self.cond_true_task = None
 
-        self._threshold_value_template = config['threshold']['value'] if 'threshold' in config else None
-        if self._threshold_value_template is not None:
-            self._threshold_value_template.hass = hass
-            self.threshold_max = config['threshold']['maximum'] if 'maximum' in config['threshold'] else None
-            self.threshold_min = config['threshold']['minimum'] if 'minimum' in config['threshold'] else None
-            self.threshold_hysteresis = config['threshold']['hysteresis'] if 'hysteresis' in config['threshold'] else None
-            self.threshold_exceeded = ThresholdExeeded.Init # to record if we crossed min or max
         templs = []
         if self._condition_template is not None:
             templs.append({'fieldName': 'condition', 'type': Tracker.Type.Bool, 'template': self._condition_template })
+        self._threshold_value_template = config['threshold']['value'] if 'threshold' in config else None
         if self._threshold_value_template is not None:
+            self._threshold_value_template.hass = hass
             templs.append({'fieldName': 'value', 'type': Tracker.Type.Float, 'template': self._threshold_value_template })
+            self._threshold_hysteresis_float_or_template =  config['threshold']['hysteresis']
+            if isinstance(self._threshold_hysteresis_float_or_template, template_helper.Template):
+                self._threshold_hysteresis_float_or_template.hass = hass
+                templs.append({'fieldName': 'hysteresis', 'type': Tracker.Type.NonnegativeFloat, 'template': self._threshold_hysteresis_float_or_template })
+            self._threshold_max_float_or_template = config['threshold']['maximum'] if 'maximum' in config['threshold'] else None
+            if isinstance(self._threshold_max_float_or_template, template_helper.Template):
+                self._threshold_max_float_or_template.hass = hass
+                templs.append({'fieldName': 'maximum', 'type': Tracker.Type.Float, 'template': self._threshold_max_float_or_template })
+            self._threshold_min_float_or_template = config['threshold']['minimum'] if 'minimum' in config['threshold'] else None
+            if isinstance(self._threshold_min_float_or_template, template_helper.Template):
+                self._threshold_min_float_or_template.hass = hass
+                templs.append({'fieldName': 'minimum', 'type': Tracker.Type.Float, 'template': self._threshold_min_float_or_template })
+            
+            #self.threshold_min = config['threshold']['minimum'] if 'minimum' in config['threshold'] else None
+            #self.threshold_hysteresis = config['threshold']['hysteresis'] if 'hysteresis' in config['threshold'] else None
+            #self.threshold_exceeded = ThresholdExeeded.Init # to record if we crossed min or max
         self.condValTracker = Tracker(self, 'condition-value', hass, alertData, templs, self.cond_val_update, self.extraVariables)
         
         self.onTracker = None
@@ -1952,17 +2000,26 @@ class ConditionAlert(AlertBase):
         return self.state == 'on' and (not self.last_ack_time or self.last_ack_time < self.last_on_time)
     
     def cond_val_update(self, results):
-        condition_bool = thresh_val = None
-        if len(results) == 2:
-            condition_bool = results[0]
-            thresh_val = results[1]
-        elif self._condition_template is not None:
-            condition_bool = results[0]
-        else:
-            if self._threshold_value_template is None:
-                report(DOMAIN, 'error', f'{gAssertMsg} {self.name}.  both condition and thresh val template is none')
-                return
-            thresh_val = results[0]
+        # The order of entries in results should match the order appended to templ in initialization
+        #
+        condition_bool = thresh_val = hysteresis_val = min_val = max_val = None
+        if self._condition_template is not None:
+            condition_bool = results.pop(0)
+        if self._threshold_value_template is not None:
+            thresh_val = results.pop(0)
+            thresh_hyst = results.pop(0) if isinstance(self._threshold_hysteresis_float_or_template, template_helper.Template) \
+                else self._threshold_hysteresis_float_or_template
+            max_val = results.pop(0) if isinstance(self._threshold_max_float_or_template, template_helper.Template) \
+                else self._threshold_max_float_or_template
+            min_val = results.pop(0) if isinstance(self._threshold_min_float_or_template, template_helper.Template) \
+                else self._threshold_min_float_or_template
+        if len(results) > 0:
+            report(DOMAIN, 'error', f'{gAssertMsg} {self.name}.  wrong number of tracked condition/threshold parameters')
+            return
+
+        if max_val is not None and min_val is not None and min_val > max_val:
+            report(DOMAIN, 'error', f'{self.name}: threshold bounds error min > max ({min_val} > {max_val})')
+            return
         
         # Now we have a condition_bool|None and a thresh_val|None
         # Figure out new state
@@ -1977,20 +2034,20 @@ class ConditionAlert(AlertBase):
                 newState = condition_bool
         else:
             # Update threshold_exceeded
-            aboveMax = self.threshold_max is not None and thresh_val > self.threshold_max
-            belowMin = self.threshold_min is not None and thresh_val < self.threshold_min
+            aboveMax = max_val is not None and thresh_val > max_val
+            belowMin = min_val is not None and thresh_val < min_val
             if aboveMax:
                 self.threshold_exceeded = ThresholdExeeded.Max
             elif belowMin:
                 self.threshold_exceeded = ThresholdExeeded.Min
             elif self.state == 'on':
                 # >=, <= so that if hysteresis is 0, it behaves as if hysteresis wasn't specified
-                aboveMaxHyst = self.threshold_max is not None and \
+                aboveMaxHyst = max_val is not None and \
                     self.threshold_exceeded == ThresholdExeeded.Max and \
-                    thresh_val > (self.threshold_max - self.threshold_hysteresis)
-                belowMinHyst = self.threshold_min is not None and \
+                    thresh_val > (max_val - thresh_hyst)
+                belowMinHyst = min_val is not None and \
                     self.threshold_exceeded == ThresholdExeeded.Min and \
-                    thresh_val < (self.threshold_min + self.threshold_hysteresis)
+                    thresh_val < (min_val + thresh_hyst)
                 if aboveMaxHyst or belowMinHyst:
                     pass # threshold_exceeded is unchanged
                 else:

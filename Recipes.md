@@ -86,7 +86,7 @@ And if you wanted to support a companion app action to ack an alert via the noti
         actions:
           - action: "alert2.development2 ack"
             title: Ack
-        my_entity_id: "'{{ alert_entity_id }}'"
+        my_entity_id: "{{ alert_entity_id }}"
 ```` 
 
 Continuing with the door example, suppose you had multiple doors and you wanted to alert if any of them are open too long.  Using generators:
