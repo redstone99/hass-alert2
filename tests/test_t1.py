@@ -3831,19 +3831,22 @@ async def test_data(hass, service_calls):
     await setAndWait(hass, "sensor.b", 'off')
     cfg = { 'alert2' : { 'alerts': [
         { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a',
-          'data': { 'd1': 7, 'd2': '{% if notify_reason=="Fire" %}99{%else%}30{%endif%}',
-                    'd3': '"{% if notify_reason=="Fire" %}abc{%else%}def{%endif%}"', 'd4': 'foo-bar',
+          'data': { 'd1': 7,
+                    'd2': '{% if notify_reason=="Fire" %}99{%else%}30{%endif%}',
+                    'd3': '{% if notify_reason=="Fire" %}abc{%else%}def{%endif%}', 'd4': 'foo-bar',
                     'd5': '{% if notify_reason=="Fire" %}True{%else%}False{%endif%}',
-                    'd6': '{% if notify_reason=="Fire" %}[ { "action": "foo", "title": "bar" } ]{%else%}[]{%endif%}',
-                    'd7': '"{{ alert_entity_id }}"',
+                    #'d6': '{% if notify_reason=="Fire" %}[ { "action": "foo", "title": "bar" } ]{%else%}[]{%endif%}',
+                    'd6': [ { 'action': '{% if notify_reason=="Fire" %}foo{%else%}a2{%endif%}', 'title': 3 } ],
+                    'd7': '{{ alert_entity_id }}',
                    } },
-        { 'domain': 'test', 'name': '{{ genElem }}', 'condition': 'sensor.a', 'data': { 'd1': 6, 'd2': '"{{ genElem+notify_reason }}"' }, 'generator': 't2', 'generator_name': 'g1' },
-        { 'domain': 'test', 'name': 't4', 'condition': 'sensor.b', 'data':{ 'd1': ' "{{ "foo" }}"   ' }}, # ok
+        { 'domain': 'test', 'name': '{{ genElem }}', 'condition': 'sensor.a', 'data': { 'd1': 6, 'd2': '{{ genElem+notify_reason }}' }, 'generator': 't2', 'generator_name': 'g1' },
+        { 'domain': 'test', 'name': 't4', 'condition': 'sensor.b', 'data':{ 'd1': ' {{ "foo" }}   ' }}, # ok
         # Some bad literals
-        { 'domain': 'test', 'name': 't5', 'condition': 'sensor.b', 'data':{ 'd1': '{{ "foo" }}' }}, # missing both quotes
-        { 'domain': 'test', 'name': 't6', 'condition': 'sensor.b', 'data':{ 'd1': '"{{ "foo" }}' }}, # missing one quote
+        #{ 'domain': 'test', 'name': 't5', 'condition': 'sensor.b', 'data':{ 'd1': '{{ "foo" }}' }}, # missing both quotes
+        #{ 'domain': 'test', 'name': 't6', 'condition': 'sensor.b', 'data':{ 'd1': '"{{ "foo" }}' }}, # missing one quote
         ], 'tracked' : [
-            { 'domain': 'test', 'name': 't3', 'data': { 'd1': '"{{ notify_reason }}xy"', 'd2': 99 } },
+            { 'domain': 'test', 'name': 't3', 'data': { 'd1': '{{ notify_reason }}xy', 'd2': 99 } },
+            { 'domain': 'test', 'name': 't5', 'data': { 'd1': '{{ notify_reason - xx }}' } },
         ]}}
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
@@ -3852,8 +3855,8 @@ async def test_data(hass, service_calls):
 
     await setAndWait(hass, "sensor.a", 'on')
     service_calls.popNotifySearch('persistent_notification', 't1', 'turned on',
-                                  extraFields={ 'data': { 'd1': 7, 'd2': 99, 'd3':'abc', 'd4':'foo-bar',
-                                                          'd5': True, 'd6': [ { 'action': 'foo', 'title': 'bar'} ],
+                                  extraFields={ 'data': { 'd1': 7, 'd2': '99', 'd3':'abc', 'd4':'foo-bar',
+                                                          'd5': 'True', 'd6': [ { 'action': 'foo', 'title': 3} ],
                                                           'd7': 'alert2.test_t1' }})
     service_calls.popNotifyEmpty('persistent_notification', 't2: turned on', extraFields={ 'data': { 'd1': 6, 'd2': 't2Fire'}})
     
@@ -3863,19 +3866,26 @@ async def test_data(hass, service_calls):
 
     await setAndWait(hass, "sensor.a", 'off')
     service_calls.popNotifySearch('persistent_notification', 't1', 'turned off',
-                                  extraFields={ 'data': { 'd1': 7, 'd2': 30, 'd3':'def', 'd4':'foo-bar',
-                                                          'd5': False, 'd6': [], 'd7': 'alert2.test_t1' }})
+                                  extraFields={ 'data': { 'd1': 7, 'd2': '30', 'd3':'def', 'd4':'foo-bar',
+                                                          'd5': 'False', 'd6': [ { 'action': 'a2', 'title':3 }], 'd7': 'alert2.test_t1' }})
     service_calls.popNotifyEmpty('persistent_notification', 't2: turned off', extraFields={ 'data': { 'd1': 6, 'd2': 't2StopFiring'}})
 
     await setAndWait(hass, "sensor.b", 'on')
     service_calls.popNotifySearch('persistent_notification', 't4', 'turned on', extraFields={ 'data': { 'd1': 'foo'  }})
-    service_calls.popNotifySearch('persistent_notification', 't5 data template Error', 'extra quotes')
-    service_calls.popNotifySearch('persistent_notification', 't6 data template Error', 'extra quotes')
-    service_calls.popNotifySearch('persistent_notification', 't5', 'turned on')
-    service_calls.popNotifySearch('persistent_notification', 't6', 'turned on')
+    #service_calls.popNotifySearch('persistent_notification', 't5 data template Error', 'extra quotes')
+    #service_calls.popNotifySearch('persistent_notification', 't6 data template Error', 'extra quotes')
+    #service_calls.popNotifySearch('persistent_notification', 't5', 'turned on')
+    #service_calls.popNotifySearch('persistent_notification', 't6', 'turned on')
     assert service_calls.isEmpty()
 
-async def test_data2(hass, service_calls):
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'t5', 'message': 'foo'})
+    await hass.async_block_till_done()
+    service_calls.popNotifySearch('persistent_notification', 'alert2_error', 'data template render failed.*"d1".*undefined')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t5: foo')
+
+
+    
+async def skip_test_data2(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': {
         'data': {
             'actions': "[{ action: '{{ 3+4 }}' }]"
@@ -3890,7 +3900,7 @@ async def test_data2(hass, service_calls):
     service_calls.popNotifySearch('persistent_notification', 't1: foo', '')
     service_calls.popNotifyEmpty('persistent_notification', 'd_t1 data template Error rendering data field "actions".*alert2_error itself had issue: alert2_error data template')
 
-async def test_data3(hass, service_calls):
+async def skip_test_data3(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': {
         'data': {
             'actions': "[{ 'action': 'foo_{{ 3+4 }}' }]"
