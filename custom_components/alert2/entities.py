@@ -896,6 +896,12 @@ class AlertBase(AlertCommon, RestoreEntity):
         self._title_template = config['title'] if 'title' in config else None
         self._target_template = config['target'] if 'target' in config else None
         self._data = getField('data', config, defaultCfg)
+        # Added on Aug 24, 2025 for v1.16. Remove with next version
+        if self._data:
+            if any([ isinstance(self._data[x], template_helper.Template) for x in self._data.keys() ]):
+                if alertData.uiMgr.setOneTime('v1.16_data_syntax_change'):
+                    report(DOMAIN, 'warning', f'One-time msg: Alert2 v1.16 changed the syntax of how templates are used in "data" fields. If you wrote those templates pre-v1.16 you may need to update them. See docs at https://github.com/redstone99/hass-alert2?tab=readme-ov-file#common-alert-features-1')
+        
         self._display_msg_template = config['display_msg'] if 'display_msg' in config else None
         self._icon = getField('icon', config, defaultCfg)
         self._ack_required = config['ack_required'] if 'ack_required' in config else False

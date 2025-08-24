@@ -484,6 +484,7 @@ async def test_defaults3(hass, service_calls, hass_storage, hass_client, monkeyp
         m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
         await hass.services.async_call('alert2','reload', {})
         await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'One-time.*v1.16 changed the syntax')
     assert service_calls.isEmpty()
     gad = hass.data[DOMAIN]
     assert gad.alerts['test']['t10']._data == { 'a': 12 }

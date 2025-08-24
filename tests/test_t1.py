@@ -3955,6 +3955,7 @@ async def test_data(hass, service_calls):
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'One-time.*v1.16 changed the syntax')
     assert service_calls.isEmpty()
 
     await setAndWait(hass, "sensor.a", 'on')
