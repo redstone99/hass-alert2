@@ -529,7 +529,7 @@ To reduce spurious notifications due to races between two hierarchically-related
 
 #### Common alert features
 
-Alerts may pass additional data to the notifier via the `data` field. This is convenient for notification platforms such as [`mobile_app`](https://companion.home-assistant.io/docs/notifications/notifications-basic/). `data` must be a dictionary.  Values may be templates which product string values. Templates can occur in nested sub-dictionaries. See examples below.
+Alerts may pass additional data to the notifier via the `data` field. This is convenient for notification platforms such as [`mobile_app`](https://companion.home-assistant.io/docs/notifications/notifications-basic/). `data` must be a dictionary.  Values may be templates which product string values. Dictionary can contain lists and sub-dictionaries. Templates can occur in nested sub-dictionaries. See examples below.
 
 Template strings in `data` fields can access a variable, `notify_reason`, containing the reason for the notification.  `notify_reason` may take the following string values:
 
