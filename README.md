@@ -670,9 +670,14 @@ Example:
         - domain: alert2
           name: error
           reminder_frequency_mins: 20
+          
+        - domain: alert2
+          name: global_exception
+          # To limit frequency of messages
+          throttle_fires_per_mins: [5, 60]
+          # OR to completely disable messages
+          notifier: null
           ...
-        - domain: dahua
-          name: side_porch_fault
 
 ### Alert recommendations
 
