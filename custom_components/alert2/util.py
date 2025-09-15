@@ -19,6 +19,13 @@ EVENT_ALERT2_ACK = 'alert2_alert_ack'
 EVENT_ALERT2_UNACK = 'alert2_alert_unack'
 shutting_down = False
 
+class PersistantNotificationHelper:
+    Separate = 'separate'
+    Collapse = 'collapse'
+    CollapseAndDismiss = 'collapse_and_dismiss'
+    def genNotificationId(alEnt):
+        return f'alert2-dn={alEnt.alDomain}-nm={alEnt.alName}'
+
 #
 # report() - report that an event alert has fired.
 # 

@@ -6,6 +6,11 @@ from homeassistant.core import (ServiceRegistry)
 if os.environ.get('JTESTDIR'):
     sys.path.insert(0, os.environ['JTESTDIR'])
 from custom_components.alert2.util import (     set_shutting_down, )
+
+#
+# To get debug logging, run with --log-cli-level=DEBUG
+#
+
 #import logging
 #_LOGGER = logging.getLogger(None) # get root logger
 #_LOGGER.setLevel(logging.INFO)
@@ -64,7 +69,8 @@ def auto_patch_service_call(enable_custom_integrations, hass, monkeypatch):
         #_LOGGER.warning(f'got call to {domain}.{service} with data={service_data}')
         if domain == 'notify':
             cc.recCall(domain, service, service_data)
-            return None
+            #return None
+            return await originalCall(registryObj, domain, service, service_data, *args, **kwargs)
         else:
             return await originalCall(registryObj, domain, service, service_data, *args, **kwargs)
     monkeypatch.setattr(ServiceRegistry, 'async_call', mock_async_call)

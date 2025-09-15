@@ -8,7 +8,7 @@ import re
 from functools import lru_cache
 from   homeassistant.core import callback
 from   homeassistant.helpers import template as template_helper
-from .util import (GENERATOR_DOMAIN)
+from .util import (GENERATOR_DOMAIN, PersistantNotificationHelper)
 
 TemplateVarsType = None
 RenderInfo = None
@@ -239,12 +239,20 @@ DEFAULTS_SCHEMA = vol.Schema({
     vol.Optional('supersede_debounce_secs'): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional('icon'): cv.icon,
     vol.Optional('data'): jDictTemplate,
+    vol.Optional('persistent_notifier_grouping'): vol.Any(PersistantNotificationHelper.Separate,
+                                                          PersistantNotificationHelper.Collapse,
+                                                          PersistantNotificationHelper.CollapseAndDismiss,
+                                                          msg=f'must be one of "{PersistantNotificationHelper.Separate}", "{PersistantNotificationHelper.Collapse}" or "{PersistantNotificationHelper.CollapseAndDismiss}"'),
 })
 
 SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({
     vol.Optional('notifier'): vol.Any(cv.template, jstringList),
     vol.Optional('summary_notifier'): vol.Any(cv.boolean, cv.template, jstringList),
     vol.Optional('done_notifier'): vol.Any(cv.boolean, cv.template, jstringList),
+    vol.Optional('persistent_notifier_grouping'): vol.Any(PersistantNotificationHelper.Separate,
+                                                          PersistantNotificationHelper.Collapse,
+                                                          PersistantNotificationHelper.CollapseAndDismiss,
+                                                          msg=f'must be one of "{PersistantNotificationHelper.Separate}", "{PersistantNotificationHelper.Collapse}" or "{PersistantNotificationHelper.CollapseAndDismiss}"'),
     vol.Optional('friendly_name'): cv.template,
     vol.Optional('title'): cv.template,
     vol.Optional('target'): cv.template,

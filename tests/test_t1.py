@@ -31,6 +31,7 @@ import homeassistant.const
 from homeassistant import config as conf_util
 import homeassistant.helpers.restore_state as rs
 from homeassistant.util.yaml import parse_yaml
+import homeassistant.components.persistent_notification as pn
 #from tests.common import MockConfigEntry
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -4036,3 +4037,99 @@ async def test_nested_generator(hass, service_calls):
     # Hrm, writing the supersedes so it only applies to genA or genB would be messy
     # eg. want to alert on printer ink being low, across different ink colors
 
+
+async def test_persistent_notification(hass, service_calls):
+    await setAndWait(hass, "sensor.a1", 'off')
+    await setAndWait(hass, "sensor.a2", 'off')
+    await setAndWait(hass, "sensor.a3", 'off')
+    cfg = { 'alert2' : { 'alerts': [
+        { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a1' },
+        { 'domain': 'test', 'name': 't2', 'condition': 'sensor.a2', 'persistent_notifier_grouping': 'collapse' },
+        { 'domain': 'test', 'name': 't3', 'condition': 'sensor.a3', 'persistent_notifier_grouping': 'collapse_and_dismiss' },
+        { 'domain': 'test', 'name': 't4', 'condition': 'off', 'persistent_notifier_grouping': 'badpng' },
+    ]}}
+    assert await async_setup_component(hass, "notify", {})
+    assert await async_setup_component(hass, "persistent_notification", {})
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifySearch('persistent_notification', 't4', 'must be one of "separate", ')
+    assert service_calls.isEmpty()
+    
+    output = {}
+    def fake_send(msg):
+        nonlocal output
+        _LOGGER.info(f'in fake_send: {msg}')
+        output = msg
+    class FakeConn(object):
+        pass
+    fake_conn = FakeConn()
+    fake_conn.send_message = fake_send
+    def getPersistentNotes():
+        nonlocal output
+        output = {}
+        pn.websocket_get_notifications(hass, fake_conn, { 'id': 'foo' })
+        assert output['success'] == True
+        return output['result']
+
+
+    await hass.services.async_call('persistent_notification','dismiss_all', {})
+    await hass.async_block_till_done()
+    assert getPersistentNotes() == []
+
+    # First on/off with default which is separate
+    #
+    await setAndWait(hass, "sensor.a1", 'on')
+    await hass.async_block_till_done()
+    rez = getPersistentNotes()
+    assert len(rez) == 1
+    assert rez[0]['message'] == 'Alert2 test_t1: turned on'
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t1: turned on')
+    #
+    await setAndWait(hass, "sensor.a1", 'off')
+    await hass.async_block_till_done()
+    rez = getPersistentNotes()
+    assert len(rez) == 2
+    assert rez[1]['message'].startswith('Alert2 test_t1: turned off')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t1: turned off')
+
+    await hass.services.async_call('persistent_notification','dismiss_all', {})
+    await hass.async_block_till_done()
+    assert getPersistentNotes() == []
+
+    
+    # Then on/off with collapse
+    #
+    await setAndWait(hass, "sensor.a2", 'on')
+    await hass.async_block_till_done()
+    rez = getPersistentNotes()
+    assert len(rez) == 1
+    assert rez[0]['message'] == 'Alert2 test_t2: turned on'
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t2: turned on')
+    #
+    await setAndWait(hass, "sensor.a2", 'off')
+    await hass.async_block_till_done()
+    rez = getPersistentNotes()
+    assert len(rez) == 1
+    assert rez[0]['message'].startswith('Alert2 test_t2: turned off')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t2: turned off')
+
+    await hass.services.async_call('persistent_notification','dismiss_all', {})
+    await hass.async_block_till_done()
+    assert getPersistentNotes() == []
+
+    
+    # Then on/off with collapse_and_dismiss
+    #
+    await setAndWait(hass, "sensor.a3", 'on')
+    await hass.async_block_till_done()
+    rez = getPersistentNotes()
+    assert len(rez) == 1
+    assert rez[0]['message'] == 'Alert2 test_t3: turned on'
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t3: turned on')
+    #
+    await setAndWait(hass, "sensor.a3", 'off')
+    await hass.async_block_till_done()
+    rez = getPersistentNotes()
+    assert len(rez) == 0
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t3: turned off')

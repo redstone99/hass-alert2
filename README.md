@@ -303,6 +303,7 @@ The `defaults:` subsection specifies optional default values for parameters comm
 | `supersede_debounce_secs` | float | Suppress notifications of an alert if any superseding alert has fired within this many seconds of now. The purpose of this setting is to reduce extraneous notifications due to races between two alerts both turning on or off at almost the same time. Defaults to 0.5 seconds.  Can be any value >= 0. |
 | `icon` | string | Icon to display next to alert name in UI. Must be of form `prefix:name`. Defaults to `mdi:alert`. |
 | `data` | dict | Dictionary passed as the "data" parameter to the notify service call. Dict fields may be template strings. Templates can access `notify_reason` variable containing reason for notification. `data` may be overriden on a key-by-key basis. See doc in [Common alert features](#common-alert-features-1)  |
+| `persistent_notifier_grouping` | string | Can be "separate", "collapse" or "collapse_and_dismiss". When the `persistent_notification` notifier is used, controls how multiple notification messages for the same alert are handled.  "separate" will keep each notification distinct. "collapse" will result in a single persistent notification (keeping only the most recent notification). "collapse_and_dismiss" is similar to "collapse" except the notification is also dismissed if the alert is a condition alert and it turns off.<br>Defaults to "separate". |
 
 Example:
 
@@ -376,6 +377,7 @@ Entity name related fields:
 | `target` | template | optional | Passed as the "target" parameter to the notify service call |
 | `data` | dict | optional | Override, on a key-by-key basis, any default `data` dict specified. See doc in [Common alert features](#common-alert-features-1)  |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
+| `persistent_notifier_grouping` | bool | optional | Override the default value of `persistent_notifier_grouping`.  |
 
 <br>Generator-related fields:
 

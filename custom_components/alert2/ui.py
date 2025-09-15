@@ -119,6 +119,7 @@ def prepStrConfigField(fname, tval, doReport=True):
                     'title', 'target', 'domain', 'name', 'message', 'done_message',
                     'reminder_message', 'ack_reminder_message', 'ack_reminders_only',
                     'condition', 'condition_on', 'condition_off', 'early_start', 'supersede_debounce_secs',
+                    'persistent_notifier_grouping',
                     # We have entries for both "threshold." prefixed values
                     # as well as the values without prefix.
                     # Prefix version is used by renderValue
@@ -181,7 +182,7 @@ class RenderValueView(HomeAssistantView):
                 if isinstance(tval, bool):
                     simple = True
             elif name in ['annotate_messages', 'reminder_frequency_mins', 'throttle_fires_per_mins',
-                          'supersede_debounce_secs', 'icon']:
+                          'supersede_debounce_secs', 'icon', 'persistent_notifier_grouping']:
                 tval = DEFAULTS_SCHEMA({ name: ttxt })[name]
                 simple = True
             elif name in ['supersedes']:

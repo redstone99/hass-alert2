@@ -38,6 +38,7 @@ from .util import (
     EVENT_ALERT2_UNACK,
     EVENT_ALERT2_ON,
     EVENT_ALERT2_OFF,
+    PersistantNotificationHelper
 )
 from .config import ( literalIllegalChar )
 
@@ -59,6 +60,9 @@ class ThresholdExeeded(Enum):
 NOTIFICATIONS_ENABLED  = 'enabled'
 NOTIFICATIONS_DISABLED = 'disabled'
 
+        
+
+    
 # return a string x, st, jinja2.Template(x).render() == astr
 # message field in components/notify/const.py:NOTIFY_SERVICE_SCHEMA is a template and will be rendered
 # That is, even though notifications comopnent complains about passing templates to notify, it still calls render()
@@ -891,6 +895,8 @@ class AlertBase(AlertCommon, RestoreEntity):
         self._summary_notifier = getField('summary_notifier', config, defaultCfg)
         self._done_notifier = getField('done_notifier', config, defaultCfg)
         self._priority = getField('priority', config, defaultCfg)
+        self._persistent_notifier_grouping = getField('persistent_notifier_grouping', config, defaultCfg)
+        self._used_persistent_notifier = False
         self._condition_template = config['condition'] if 'condition' in config else None
         self._message_template = config['message'] if 'message' in config else None
         self._title_template = config['title'] if 'title' in config else None
@@ -1520,6 +1526,12 @@ class AlertBase(AlertCommon, RestoreEntity):
                 _LOGGER.warning(f'{self.entity_id} notifying {notifier_list}: {args["message"]}')
                 async def foo():
                     for notifier in notifier_list:
+                        if notifier == 'persistent_notification':
+                            self._used_persistent_notifier = True
+                            if self._persistent_notifier_grouping != PersistantNotificationHelper.Separate:
+                                if 'data' not in args:
+                                    args['data'] = {}
+                                args['data']['notification_id'] = PersistantNotificationHelper.genNotificationId(self)
                         try:
                             await self.hass.services.async_call('notify', notifier, # eg 'raw_jtelegram'
                                                                 args)
@@ -1949,6 +1961,14 @@ class ConditionAlert(AlertBase):
                 skip_notify = self.is_acked() and not self.ackRemindersOnly
                 self._notify_pre_debounce(now, NotificationReason.StopFiring, msg, skip_notify=skip_notify)
                 self.reminder_check(now)
+
+                if self._used_persistent_notifier and self._persistent_notifier_grouping == PersistantNotificationHelper.CollapseAndDismiss:
+                    async def foo():
+                        await self.hass.services.async_call('persistent_notification', 'dismiss', { 'notification_id': PersistantNotificationHelper.genNotificationId(self)})
+                    create_background_task(self.hass, DOMAIN, foo())
+
+
+                
             
             if self.annotate_messages and (msg.startswith('command_') or \
                                            any([msg.startswith(x) for x in ['clear_badge', 'clear_notification', 'update_widgets', 'remove_channel'] ])):

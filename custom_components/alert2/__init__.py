@@ -512,7 +512,8 @@ class Alert2Data:
                 'throttle_fires_per_mins': None,
                 'priority': 'low',
                 'supersede_debounce_secs': 0.5,
-                'icon': 'mdi:alert'
+                'icon': 'mdi:alert',
+                'persistent_notifier_grouping': 'separate'
             },
             # Optional defaults for internal alerts
             'tracked': [
