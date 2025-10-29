@@ -726,7 +726,7 @@ class Alert2Data:
         await self.init2()
         # Redo prior calls to declareEventMulti() from other components
         if self.declEvMultiArr:
-            await self.declareEventMulti(self.declEvMultiArr)
+            await self.declareEventMulti(self.declEvMultiArr, isReload=True)
         self.binarySensorDict['hastarted']._attr_extra_state_attributes['last_reload_time'] = dt.now()
         self.binarySensorDict['hastarted'].async_write_ha_state()
 
@@ -1062,7 +1062,7 @@ class Alert2Data:
         return entity
         
     # declare multiple event alerts, and also unhandled_exception
-    async def declareEventMulti(self, arr):
+    async def declareEventMulti(self, arr, isReload=False):
         entities = []
         for x in arr:
             ent = self.declareEvent(x['domain'], x['name'])
@@ -1077,7 +1077,8 @@ class Alert2Data:
                     entities.append(ent2)
                 else:
                     report(DOMAIN, 'error', ent2) # ent is errMsg
-        self.declEvMultiArr = self.declEvMultiArr + arr
+        if not isReload:
+            self.declEvMultiArr = self.declEvMultiArr + arr
         await self.component.async_add_entities(entities)
         for ent in entities:
             _LOGGER.debug(f'Lifecycle created alert {ent.entity_id}')

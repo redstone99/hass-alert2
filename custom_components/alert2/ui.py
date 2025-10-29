@@ -104,9 +104,12 @@ class SaveDefaultsView(HomeAssistantView):
 def prepStrConfigField(fname, tval, doReport=True):
     if fname in [ 'notifier', 'summary_notifier', 'done_notifier', 'reminder_frequency_mins',
                   'throttle_fires_per_mins',
-                  'data', 'generator', 'defer_startup_notifications' ]:
+                  'generator', 'defer_startup_notifications' ]:
         if template_helper.is_template_string(tval):
             return tval
+        return parse_yaml(tval)
+    elif fname in [ 'data' ]:
+        # data must be a dictionary, so need to parse yaml to get the dict
         return parse_yaml(tval)
     elif fname in [ 'supersedes' ]:
         stripped_tval = tval.strip()

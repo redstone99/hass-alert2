@@ -682,6 +682,8 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     # data
     rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{ a: b, c: "d" }' })
     assert rez == { 'rez': { 'a': 'b', 'c': 'd' } }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{ a: b, c: "{{ 3 }}" }' })
+    assert rez == { 'rez': { 'a': 'b', 'c': '3' } }
     rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '"{ e:f}"' })
     assert re.search('must be a dict', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{}' })
@@ -1829,3 +1831,22 @@ async def test_internal2(hass, service_calls, hass_storage, hass_client):
         'domain':'alert2', 'name':'warning', 'notifier': "[ 4" } })
     assert re.search('parsing a flow sequence', rez['error'])
     assert service_calls.isEmpty()
+
+async def test_data(hass, service_calls, hass_storage):
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2': { } }
+    uiCfg = { 'defaults' : { },
+              'alerts': [
+                  { 'domain': 'd', 'name': 'n1', 'condition':'sensor.a',
+                    'data': "{ 'actions': [ { 'action': 'foo', 'title': '{{ notify_reason }}' } ] }" },
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 'd_n1: turned on', extraFields={ 'data': { 'actions': [{ 'action': 'foo', 'title': 'Fire' }] } })
