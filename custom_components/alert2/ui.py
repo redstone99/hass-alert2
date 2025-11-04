@@ -32,7 +32,7 @@ from .config import ( TOP_LEVEL_SCHEMA, DEFAULTS_SCHEMA, SINGLE_TRACKED_SCHEMA_P
                       GENERATOR_SCHEMA, NO_GENERATOR_SCHEMA, SUPERSEDES_GEN )
 from .util import (     GENERATOR_DOMAIN )
 from .entities import (notifierTemplateToList, renderResultToList, generatorElemToVars, AlertGenerator, Tracker,
-                       processSupersedes, getField, expandDataDict, NotificationReason)
+                       processSupersedes, getField, expandDataDict, NotificationReason, entNameFromDN)
 from homeassistant.components.websocket_api import (decorators, async_register_command)
 _LOGGER = logging.getLogger(__name__)
 
@@ -585,13 +585,15 @@ class UiMgr:
             hass.http.register_view(aview)
         self._store = MigratableStore(hass, STORAGE_VERSION, STORAGE_KEY)
         self.data = None
-        self.entities = []
+        self.entities = [] # Entities that loaded and results in an alert created in self._alertData
+        self.failedEnts = [] # Entities that failed to load, eg due to duplicate in YAML
         self.displayMsgWsMgr = DisplayMsgSocketMgr(hass, alertData)
         
     async def startup(self):
         # Store handles the case where there may be a write pending
         self.data = None # reset in case load throw exception
         self.data = await self._store.async_load()
+        _LOGGER.info(f'UI in startup - got data={self.data}')
         if self.data is None:
             self.data = { 'config': { 'defaults': {} } }
             
@@ -625,7 +627,7 @@ class UiMgr:
     async def declareAlerts(self):
         cfg = self.getPreppedConfig()
         if cfg is not None:
-            self.entities = await self._alertData.loadAlertBlock(cfg)
+            (self.entities, self.failedEnts) = await self._alertData.loadAlertBlock(cfg)
             _LOGGER.info(f'Lifecycle created {len(self.entities)} alerts from UI config')
         
     def saveTopConfig(self, topConfig):
@@ -716,7 +718,7 @@ class UiMgr:
 
         entIndex = next((i for i, item in enumerate(self.entities) if item.alDomain == domain and item.alName == name), -1)
         if entIndex == -1:
-            return { 'error': f'can not find existing UI-created alert with domain={domain} and name={name}' }
+            return { 'error': f'can not find existing valid UI-created alert with domain={domain} and name={name}' }
         dataIndex = self.getDataIndex(domain, name)
         if dataIndex == -1:
             errMsg = f'{gAssertMsg} updateAlert: domain={domain} and name={name} in self.entities but not in self.data config'
@@ -764,7 +766,8 @@ class UiMgr:
             name = acfg['generator_name']
             
         entIndex = next((i for i, item in enumerate(self.entities) if item.alDomain == domain and item.alName == name), -1)
-        if entIndex == -1:
+        failedEntIndex = next((i for i, item in enumerate(self.failedEnts) if item['domain'] == domain and item['name'] == name), -1)
+        if entIndex == -1 and failedEntIndex == -1:
             return { 'error': f'can not find existing UI-created alert with domain={domain} and name={name}' }
         dataIndex = self.getDataIndex(domain, name)
         if dataIndex == -1:
@@ -772,14 +775,20 @@ class UiMgr:
             _LOGGER.error(errMsg)
             return { 'error': errMsg }
 
-        rez = await self._alertData.undeclareAlert(domain, name, doReport=False, removeFromRegistry=True)
-        if rez is not None:
-            errMsg = f'{gAssertMsg} deleteAlert: domain={domain} name={name} found in UI, but undeclareAlert failed'
-            _LOGGER.error(errMsg)
-            return {'error': errMsg}
-       
-        _LOGGER.info(f'Lifecycle deleted alert {self.entities[entIndex].entity_id} via UI')
-        del self.entities[entIndex]
+        if entIndex >= 0:
+            rez = await self._alertData.undeclareAlert(domain, name, doReport=False, removeFromRegistry=True)
+            if rez is not None:
+                errMsg = f'{gAssertMsg} deleteAlert: domain={domain} name={name} found in UI, but undeclareAlert failed'
+                _LOGGER.error(errMsg)
+                return {'error': errMsg}
+            eid = self.entities[entIndex].entity_id
+            del self.entities[entIndex]
+            _LOGGER.info(f'Lifecycle deleted alert {eid} via UI')
+        if failedEntIndex >= 0:
+            bEnt = self.failedEnts[failedEntIndex]
+            del self.failedEnts[failedEntIndex]
+            _LOGGER.info(f'Lifecycle deleted invalid alert domain={bEnt["domain"]} name={bEnt["name"]} via UI')
+
         del self.data['config']['alerts'][dataIndex]
         if not self.data['config']['alerts']:
             del self.data['config']['alerts']
@@ -801,6 +810,16 @@ class UiMgr:
                     break
             if ok:
                 results.append({ 'id': ent.entity_id, 'domain': ent.alDomain, 'name': ent.alName })
+        # Include entities that failed to load
+        for fEnt in self.failedEnts:
+            fakeEntId = 'alert2.' + entNameFromDN(fEnt['domain'], fEnt['name']).lower()
+            ok = True
+            for term in terms:
+                if term not in fakeEntId:
+                    ok = False
+                    break
+            if ok:
+                results.append({ 'id': fakeEntId, 'domain': fEnt['domain'], 'name': fEnt['name'], 'failedToLoad': True })
         return results
 
     def setOneTime(self, akey):

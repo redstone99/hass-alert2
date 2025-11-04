@@ -7,10 +7,11 @@
 #
 import asyncio
 import logging
+logging.basicConfig(level=logging.INFO)
+_LOGGER = logging.getLogger('dummy_server') # or None for root logger
 import sys
 import os
 from homeassistant.setup import async_setup_component
-_LOGGER = logging.getLogger(None) # get root logger
 if os.environ.get('JTESTDIR'):
     sys.path.insert(0, os.environ['JTESTDIR'])
 from custom_components.alert2 import (DOMAIN, Alert2Data)
@@ -29,18 +30,39 @@ from homeassistant.components.http.data_validator import RequestDataValidator
 import voluptuous as vol
 from aiohttp import web
 from typing import Any
+import pytest
 
+@pytest.fixture(autouse=True)
+def set_module_log_level(caplog):
+    #caplog.set_level(logging.INFO, logger=None)
+    global _LOGGER
+    #logging.basicConfig(level=logging.WARNING)
+    rootLogger = logging.getLogger(None) # get root logger
+    rootLogger.setLevel(logging.INFO)
+    _LOGGER = logging.getLogger('dummy_server')
+    _LOGGER.setLevel(logging.INFO)
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    
 #from tests.components.recorder.common import (
 #    async_wait_recording_done,
 #)
 
 done = asyncio.Condition()
 
+class FakeStore:
+    def __init__(self, data):
+        self.data = data
+    async def async_load(self):
+        return self.data
+    def async_delay_save(self, data_to_save, delaytime):
+        pass
+    
 class JTestView(HomeAssistantView):
     def __init__(self, hass, hass_storage, monkeypatch):
         self.hass = hass
         self.hass_storage = hass_storage
         self.monkeypatch = monkeypatch
+        self.realStore = None
     url = "/api/alert2test/tcheck"
     name = "api:alert2test:tcheck"
     @RequestDataValidator(vol.Schema({
@@ -55,8 +77,22 @@ class JTestView(HomeAssistantView):
             elif data['stage'] == 'reset':
                 await self.hass.async_block_till_done()
                 uiCfg = { 'defaults': {} }
+                if 'uiYaml' in data and isinstance(data['uiYaml'], dict):
+                    # There's one test that uses uiYaml to set up an invalid config.
+                    # We need to temporarily override the store used inside uiMgr to make it work.
+                    # So we keep around the original store used in the var realStore to restore things afterwards so subsequent tests work.
+                    uiCfg = data['uiYaml']
+                    _LOGGER.info(f'Setting uiCfg to {uiCfg}')
+                    assert self.realStore == None
+                    self.realStore = gad.uiMgr._store
+                    gad.uiMgr._store = FakeStore({ 'config': uiCfg })
+                else:
+                    if self.realStore != None:
+                        gad.uiMgr._store = self.realStore
+                        self.realStore = None
                 self.hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
                                                         'data': { 'config': uiCfg } }
+                #if 'uiYaml' in data and isinstance(data['uiYaml'], dict):
                 #gad.uiMgr.saveTopConfig({ 'defaults': {} })
                 cfg = {'alert2': {}}
                 if 'yaml' in data and isinstance(data['yaml'], dict):
@@ -73,8 +109,10 @@ class JTestView(HomeAssistantView):
                 async with done:
                     await done.notify()
             else:
+                _LOGGER.error(f'Got bad tcheck stage data={data}')
                 assert False
         else:
+            _LOGGER.error(f'Got bad tcheck missing stage data={data}')
             assert False
         return self.json({})
 

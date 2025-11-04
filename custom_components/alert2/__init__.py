@@ -751,7 +751,7 @@ class Alert2Data:
             else:
                 report(DOMAIN, 'error', msg)
 
-        ents = await self.loadAlertBlock(self._rawYamlConfig)
+        (ents, failedEnts) = await self.loadAlertBlock(self._rawYamlConfig)
         _LOGGER.info(f'Lifecycle created {len(ents)} alerts from YAML config')
         await self.uiMgr.declareAlerts()
 
@@ -763,12 +763,15 @@ class Alert2Data:
         self.delayGcRegistry()
 
     # stage 1 is for supersedes.  Stage 2 is to declare the alerts
+    # loadAlertBlock returns entities that loaded successfully and psuedo-ents that failed to load
     async def loadAlertBlock(self, aRawCfg):
+        failedEnts = []
         entities = []
         if 'tracked' in aRawCfg and isinstance(aRawCfg['tracked'], list):
             for obj in aRawCfg['tracked']:
                 newEnt = None
                 skipReport = False
+                aCfg = None
                 try:
                     aCfg = SINGLE_TRACKED_SCHEMA(obj)
                     if aCfg['domain'] == DOMAIN and aCfg['name'] in ['error', 'warning','global_exception']:
@@ -777,11 +780,17 @@ class Alert2Data:
                         newEnt = self.declareEventInt(aCfg)
                 except vol.Invalid as v:
                     report(DOMAIN, 'error', f'tracked section of config: {v}. Relevant section: {obj}')
+                    if 'domain' in obj and 'name' in obj:
+                        failedEnts.append({ 'domain': obj['domain'], 'name': obj['name'] })
                     continue
                 if isinstance(newEnt, Entity):
                     entities.append(newEnt)
-                elif not skipReport:
-                    report(DOMAIN, 'error', newEnt) # errMsg
+                else:
+                    if not skipReport:
+                        fullMsg = f'{newEnt}. UI Alert failed to load due to duplicate, so will not appear in Alert Manager'
+                        report(DOMAIN, 'error', fullMsg) # newEnt has errMsg
+                    failedEnts.append({ 'domain': obj['domain'], 'name': obj['name'] })
+                    
         await self.component.async_add_entities(entities)
         for newEnt in entities:
             _LOGGER.debug(f'Lifecycle created alert {newEnt.entity_id}')
@@ -789,8 +798,13 @@ class Alert2Data:
         if 'alerts' in aRawCfg and isinstance(aRawCfg['alerts'], list):
             for obj in aRawCfg['alerts']:
                 newEnt = await self.declareAlert(obj)
-                entities.append(newEnt)
-        return entities
+                if isinstance(newEnt, Entity):
+                    entities.append(newEnt)
+                else:
+                    if 'domain' in obj and 'name' in obj:
+                        failedEnts.append({ 'domain': obj['domain'], 'name': obj['name'] })
+                    
+        return (entities, failedEnts)
         
     # if doReport then return ent or None
     # if not doReport then return ent or errMsg string

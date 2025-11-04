@@ -31,7 +31,8 @@ a2Ui.SAVE_DELAY = 0
 alert2.gGcDelaySecs = 0.1
 
 # Pycares starts a forever thread that pytest_homeassistant_custom_component thinks is a lingering thread so its verify_cleanup complains about.  To hack around, we start the forever thread early
-pycares._shutdown_manager.start()
+# More recent pycares seems to not have this anymore
+# pycares._shutdown_manager.start()
 
 # Make sure at end of each test there are no extra notifications we haven't processed
 @pytest.fixture(autouse=True)
@@ -1850,3 +1851,67 @@ async def test_data(hass, service_calls, hass_storage):
 
     await setAndWait(hass, "sensor.a", 'on')
     service_calls.popNotifyEmpty('persistent_notification', 'd_n1: turned on', extraFields={ 'data': { 'actions': [{ 'action': 'foo', 'title': 'Fire' }] } })
+
+async def test_conflict(hass, service_calls, hass_storage, hass_client):
+    # Was bug where conflicting alert definitions made manageAlert:search to die
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        { 'domain': 'd', 'name': 't1', 'condition': 'off' },
+        ]}}
+    uiCfg = { 'defaults' : { },
+              'alerts' : [
+                  { 'domain': 'd', 'name': 't1', 'condition': 'off' },
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'Duplicate declaration.*name=t1')
+    gad = hass.data[DOMAIN]
+    assert gad.alerts['d']['t1']
+
+    client = await hass_client()
+    async def tpost(url, adict):
+        resp = await client.post(url, json=adict)
+        assert resp.status == 200
+        rez = await resp.json()
+        await hass.async_block_till_done()
+        return rez
+    
+    rez = await tpost("/api/alert2/manageAlert", {'search': { 'str': '' } } )
+    assert rez == { 'results': [{'id': 'alert2.d_t1', 'domain': 'd', 'name': 't1', 'failedToLoad': True}] }
+    assert service_calls.isEmpty()
+
+    rez = await tpost("/api/alert2/manageAlert", {'search': { 'str': 'd_t1' } } )
+    assert rez == { 'results': [{'id': 'alert2.d_t1', 'domain': 'd', 'name': 't1', 'failedToLoad': True}] }
+    assert service_calls.isEmpty()
+
+    # Working with ok alert should be fine
+    rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'t2', 'condition': "off" } })
+    assert rez == { }
+    assert service_calls.isEmpty()
+    assert gad.alerts['d']['t2']
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'t2', 'condition': "no" } })
+    assert rez == { }
+    assert service_calls.isEmpty()
+    assert gad.alerts['d']['t2']
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'t2' } })
+    assert rez == { }
+    assert service_calls.isEmpty()
+    assert not 't2' in gad.alerts['d']
+
+    # Create dup or update of invalid alert should fail
+    rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'t1', 'condition': "no" } })
+    assert re.search('Duplicate declaration', rez['error'])
+    assert service_calls.isEmpty()
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'t1', 'condition': "no" } })
+    assert re.search('can not find existing', rez['error'])
+    assert service_calls.isEmpty()
+
+    # Delete of invalid alert should be fine
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'t1' } })
+    assert rez == { }
+    assert service_calls.isEmpty()
+    # YAML alert continues to exist
+    assert gad.alerts['d']['t1']
