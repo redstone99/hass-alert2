@@ -41,7 +41,7 @@ from .config import (
     TOP_LEVEL_SCHEMA,
 )
 from .entities import (
-    EventAlert, ConditionAlert, AlertGenerator, NotificationReason
+    EventAlert, ConditionAlert, AlertGenerator, NotificationReason, DomainCounters
 )
 from .ui import ( UiMgr )
 from .util import (
@@ -667,7 +667,9 @@ class Alert2Data:
                 SERVICE_RELOAD,
                 self.reload_service_handler,
             )
-            
+
+        DomainCounters.setup(self._hass, self.sensorComponent.async_add_entities)
+        
         await self.processConfig()
 
     async def shutdown_alerts(self):
@@ -1158,4 +1160,3 @@ class Alert2Data:
         await alertObj.record_event(message, extra_data=data)
         # TODO - I'm not sure this line does anythign, and probably is wrong.
         self.inHandler = False
-
