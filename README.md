@@ -302,7 +302,7 @@ The `defaults:` subsection specifies optional default values for parameters comm
 | `priority` | string | Can be "low", "medium", or "high". Affects display of alert in the Alert2 UI Overview card.  Active alerts are sorted by priority and medium and high-priority alerts have a badge colored orange and red, respectively. May be template when used with generators. Default is "low" |
 | `supersede_debounce_secs` | float | Suppress notifications of an alert if any superseding alert has fired within this many seconds of now. The purpose of this setting is to reduce extraneous notifications due to races between two alerts both turning on or off at almost the same time. Defaults to 0.5 seconds.  Can be any value >= 0. |
 | `icon` | string | Icon to display next to alert name in UI. Must be of form `prefix:name`. Defaults to `mdi:alert`. |
-| `data` | dict | Dictionary passed as the "data" parameter to the notify service call. Dict fields may be template strings. Templates can access `notify_reason` variable containing reason for notification. `data` may be overriden on a key-by-key basis. See doc in [Common alert features](#common-alert-features-1)  |
+| `data` | dict or string | Dictionary passed as the "data" parameter to the notify service call. May be either a dict or a template string that evaluates to a dict. Dict fields may be template strings. `data` may be overriden on a key-by-key basis for top-level keys. See doc in [Common alert features](#common-alert-features-1)  |
 | `persistent_notifier_grouping` | string | Can be "separate", "collapse" or "collapse_and_dismiss". When the `persistent_notification` notifier is used, controls how multiple notification messages for the same alert are handled.  "separate" will keep each notification distinct. "collapse" will result in a single persistent notification (keeping only the most recent notification). "collapse_and_dismiss" is similar to "collapse" except the notification is also dismissed if the alert is a condition alert and it turns off.<br>Defaults to "separate". |
 
 Example:
@@ -375,7 +375,7 @@ Entity name related fields:
 | `ack_reminders_only` | bool | optional | If set to truthy, an acked condition alert will still send a notification when the alert stops firing. Default is false. |
 | `title` | template | optional | Passed as the "title" parameter to the notify service call |
 | `target` | template | optional | Passed as the "target" parameter to the notify service call |
-| `data` | dict | optional | Override, on a key-by-key basis, any default `data` dict specified. See doc in [Common alert features](#common-alert-features-1)  |
+| `data` | dict or string | optional | Dict or template string that evaluates to a dict. Overrides, on a key-by-key basis (for top-level keys), any default `data` dict specified. See doc in [Common alert features](#common-alert-features-1)  |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `persistent_notifier_grouping` | bool | optional | Override the default value of `persistent_notifier_grouping`.  |
 
@@ -531,7 +531,7 @@ To reduce spurious notifications due to races between two hierarchically-related
 
 #### Common alert features
 
-Alerts may pass additional data to the notifier via the `data` field. This is convenient for notification platforms such as [`mobile_app`](https://companion.home-assistant.io/docs/notifications/notifications-basic/). `data` must be a dictionary.  Values may be templates which product string values. Dictionary can contain lists and sub-dictionaries. Templates can occur in nested sub-dictionaries. See examples below.
+Alerts may pass additional data to the notifier via the `data` field. This is convenient for notification platforms such as [`mobile_app`](https://companion.home-assistant.io/docs/notifications/notifications-basic/). `data` can be either a dictionary or a template string that evaluates to a dict.  Values in the dict may be templates which produce string values. Dictionary can contain lists and sub-dictionaries. Templates can occur in nested sub-dictionaries. See examples below.
 
 Template strings in `data` fields can access a variable, `notify_reason`, containing the reason for the notification.  `notify_reason` may take the following string values:
 
@@ -571,9 +571,9 @@ Template strings in `data` fields can also access the variables `alert_entity_id
               - action: foo
                 title: "for-{{ notify_reason }}"
 
-The `data` dict may be specified in multiple locations.  These are merged together to produce the final `data` dict passed to notifiers. The merge order is 1) `defaults` section of your YAML config, 2) "Defaults" in the UI "Alert Manager" card, 3) individual alert definition.  So the individual alert definition has the highest precedence.  The merge is done on a key-by-key basis.
+The `data` dict may be specified in multiple locations.  These are merged together to produce the final `data` dict passed to notifiers. The merge order is 1) `defaults` section of your YAML config, 2) "Defaults" in the UI "Alert Manager" card, 3) individual alert definition.  So the individual alert definition has the highest precedence.  The merge is done on a key-by-key basis for top-level keys.
 
-For example, the following will result in a dict `{ a: 2, b: 3 }` being sent to notifiers:
+For example, the following will result in a dict `{ a: 2, b: foo }` being sent to notifiers:
 
     alert2:
       defaults:
@@ -581,9 +581,17 @@ For example, the following will result in a dict `{ a: 2, b: 3 }` being sent to 
       alerts:
         - domain: test
           name: foo
-          data: { a: 2, b: 3 }
+          data: { a: 2, b: foo }
 
+And the `data` field may be a single template string evaluating to a dict.  So the previous examlpe could also be written as follows. Note the extra quoting required:
 
+    alert2:
+      defaults:
+        data: "{{ { 'a': 1 } }}"
+      alerts:
+        - domain: test
+          name: foo
+          data: "{{ { 'a': 2, 'b': 'foo' } }}"
 
 #### Notifier config
 

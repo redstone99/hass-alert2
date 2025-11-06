@@ -109,6 +109,11 @@ def prepStrConfigField(fname, tval, doReport=True):
             return tval
         return parse_yaml(tval)
     elif fname in [ 'data' ]:
+        tt = tval.strip()
+        if len(tt) > 2 and template_helper.is_template_string(tt[0:2]):
+            # If data starts with template characters, then it can't parse to a yaml dict.
+            # So if it's legal, it must be a template string that should produce a dict.
+            return tval
         # data must be a dictionary, so need to parse yaml to get the dict
         return parse_yaml(tval)
     elif fname in [ 'supersedes' ]:

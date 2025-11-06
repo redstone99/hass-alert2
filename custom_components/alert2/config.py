@@ -209,21 +209,13 @@ def jDomain(afield):
         raise vol.Invalid(f'"{GENERATOR_DOMAIN}" is a reserved domain')
     return dd
 
-
-def jDictSingle(anElem):
-    if isinstance(anElem, str) and template_helper.is_template_string(anElem):
-        return cv.template(anElem)
-    elif isinstance(anElem, dict):
-        return { k : jDictSingle(v) for k,v in anElem.items() }
-    elif isinstance(anElem, list):
-        return [ jDictSingle(v) for v in anElem ]
+def jDictTemplate(aval):
+    if isinstance(aval, dict):
+        return cv.template_complex(aval) # recurses through dict
+    elif isinstance(aval, str):
+        return cv.template(aval)  # hopefully produces a dict
     else:
-        return anElem
-
-def jDictTemplate(adict):
-    if not isinstance(adict, dict):
-        raise vol.Invalid(f'"data" field must be a dict')
-    return jDictSingle(adict)
+        raise vol.Invalid(f'"data" field must be either a dict or a string the evaluates to a dict')
 
 DEFAULTS_SCHEMA = vol.Schema({
     vol.Optional('notifier'): vol.Any(cv.template, jstringList),
@@ -244,6 +236,10 @@ DEFAULTS_SCHEMA = vol.Schema({
                                                           PersistantNotificationHelper.CollapseAndDismiss,
                                                           msg=f'must be one of "{PersistantNotificationHelper.Separate}", "{PersistantNotificationHelper.Collapse}" or "{PersistantNotificationHelper.CollapseAndDismiss}"'),
 })
+DEFAULTS_SCHEMA_INTERNAL = DEFAULTS_SCHEMA.extend({
+    vol.Optional('data'): vol.Any(jDictTemplate, [ jDictTemplate ]),
+})
+
 
 SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({
     vol.Optional('notifier'): vol.Any(cv.template, jstringList),
@@ -337,7 +333,7 @@ NO_GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
 SINGLE_ALERT_SCHEMA_CONDITION = check_off(vol.Any(GENERATOR_SCHEMA, NO_GENERATOR_SCHEMA))
 
 TOP_LEVEL_SCHEMA = vol.Schema({
-    vol.Optional('defaults'): DEFAULTS_SCHEMA, #dict,
+    vol.Optional('defaults'): DEFAULTS_SCHEMA,
     vol.Optional('tracked'): list,
     vol.Optional('alerts'): list,
     # IF CHANGE these top-level params, update
@@ -347,3 +343,6 @@ TOP_LEVEL_SCHEMA = vol.Schema({
     vol.Optional('notifier_startup_grace_secs'): vol.All(vol.Coerce(float), vol.Range(min=0.)),
     vol.Optional('defer_startup_notifications'): vol.Any(cv.boolean, jstringList),
 })
+
+TOP_LEVEL_SCHEMA_INTERNAL = TOP_LEVEL_SCHEMA.extend({
+    vol.Optional('defaults'): DEFAULTS_SCHEMA_INTERNAL })

@@ -163,16 +163,14 @@ def getField(fieldName, config, defaultCfg):
         for atracked in defaultCfg['tracked']:
             if atracked['name'] == config['name'] and fieldName in atracked:
                 if fieldName == 'data' and foundVal:
-                    val = val.copy()
-                    val.update(atracked[fieldName])
+                    val = mergeDataDict(val, atracked[fieldName])
                 else:
                     val = atracked[fieldName]
                 foundVal = True
     
     if fieldName in config:
         if fieldName == 'data' and foundVal:
-            val = val.copy()
-            val.update(config[fieldName])
+            val = mergeDataDict(val, config[fieldName])
         else:
             val = config[fieldName]
         foundVal = True
@@ -183,7 +181,17 @@ def getField(fieldName, config, defaultCfg):
         raise vol.Invalid(f'Alert {config["domain"]},{config["name"]} config or defaults must specify {fieldName}')
     return val
 
-
+def mergeDataDict(currVal, newVal):
+    if isinstance(currVal, dict) and isinstance(newVal, dict):
+        rez = currVal.copy()
+        rez.update(newVal)
+        return rez
+    if isinstance(currVal, list):
+        rez = currVal.copy()
+        rez.append(newVal)
+        return rez
+    return [ currVal, newVal ]
+        
 def expandSingle(elem, fname, extraVars):
     if isinstance(elem, template_helper.Template):
         try:
@@ -206,41 +214,31 @@ def expandSingle(elem, fname, extraVars):
     else:
         return elem
 
-# returns (err, newDict)
-def expandDataDict(adict, reason: NotificationReason, ent):
-    #keys = adict.keys()
-    #newDict = {}
+def expandDataDictInt(elem, reason: NotificationReason, ent):
     variables = { 'notify_reason': reason.name, 'alert_entity_id': ent.entity_id,
                   'alert_domain': ent.alDomain, 'alert_name': ent.alName }
     if ent.extraVariables:
         variables.update(ent.extraVariables)
-    return expandSingle(adict, '', variables)
+    if isinstance(elem, template_helper.Template): # template producing a dict
+        try:
+            rez = elem.async_render(variables=variables, parse_result=True)
+        except TemplateError as err:
+            raise HomeAssistantError(f'template render failed for data: {err}')
+        if isinstance(rez, dict):
+            return rez
+        raise HomeAssistantError(f'Data string template failed to produce a dict, it produced: {rez} of type {type(rez)}')
+    if not isinstance(elem, dict):
+        report(DOMAIN, 'error', f'{gAssertMsg} data element should be dict but instead is {type(elem)}: {elem}')
+    return expandSingle(elem, '', variables)
 
-    for akey in keys:
-        if isinstance(adict[akey], template_helper.Template):
-            try:
-                valStr = adict[akey].async_render(variables=variables, parse_result=False)
-            except TemplateError as err:
-                return (f'template render failed for data field "{akey}": {err}', None)
-            if False:
-                try:
-                    tval = ast.literal_eval(valStr)
-                except Exception as err:  # literal_eval can throw various kinds of exceptions
-                    if re.match(r'\s*[\'"].*[\'"]\s*$', valStr):
-                        return (f'Error rendering data field "{akey}". Field rendered to string "{valStr}". Subsequent python literal eval thew error: {err}', None)
-                    else:
-                        return (f'Error rendering data field "{akey}". Note - template strings in data fields need extra quotes around them. If you mean this field to produce a string, it appears to be missing extra surrounding quotes. Field rendered to string "{valStr}". Subsequent python literal eval thew error: {err}', None)
-            newDict[akey] = valStr # tval
-        elif isinstance(adict[akey], dict):
-            subRez = expandDataDict(adict[key], reason, ent)
-            if subRez[0] is None:
-                newDict[akey] = subRez[1]
-            else:
-                return subRez
-        else:
-            newDict[akey] = adict[akey]
-    return (None, newDict)
-
+def expandDataDict(elem, reason: NotificationReason, ent):
+    if isinstance(elem, list):
+        rez = {}
+        for tData in elem:
+            newDict = expandDataDict(tData, reason, ent)
+            rez.update(newDict)
+        return rez
+    return expandDataDictInt(elem, reason, ent)
 
 def agoStr(secondsAgo):
     if secondsAgo < 1.5*60:
@@ -903,7 +901,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         self._target_template = config['target'] if 'target' in config else None
         self._data = getField('data', config, defaultCfg)
         # Added on Aug 24, 2025 for v1.16. Remove with next version
-        if self._data:
+        if self._data and isinstance(self._data, dict):
             if any([ isinstance(self._data[x], template_helper.Template) for x in self._data.keys() ]):
                 if alertData.uiMgr.setOneTime('v1.16_data_syntax_change'):
                     report(DOMAIN, 'warning', f'One-time msg: Alert2 v1.16 changed the syntax of how templates are used in "data" fields. If you wrote those templates pre-v1.16 you may need to update them. See docs at https://github.com/redstone99/hass-alert2?tab=readme-ov-file#common-alert-features-1')

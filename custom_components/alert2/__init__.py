@@ -39,9 +39,10 @@ from .config import (
     SINGLE_ALERT_SCHEMA_EVENT,
     SINGLE_ALERT_SCHEMA_CONDITION,
     TOP_LEVEL_SCHEMA,
+    TOP_LEVEL_SCHEMA_INTERNAL,
 )
 from .entities import (
-    EventAlert, ConditionAlert, AlertGenerator, NotificationReason
+    EventAlert, ConditionAlert, AlertGenerator, NotificationReason, mergeDataDict
 )
 from .ui import ( UiMgr )
 from .util import (
@@ -445,11 +446,10 @@ class SupersedeNotifyMgr:
                     return
         self.addNotification(thisPair, pcall)
 
+
 def updateConfigDict(currConfig, newConfig):
-    currHasData = 'data' in currConfig
     if 'data' in currConfig and 'data' in newConfig:
-        newData = currConfig['data'].copy()
-        newData.update(newConfig['data'])
+        newData = mergeDataDict(currConfig['data'], newConfig['data'])
         currConfig.update(newConfig)
         currConfig['data'] = newData
     else:
@@ -484,7 +484,6 @@ class Alert2Data:
         if cfg is None:
             return None
         if 'defaults' in cfg:
-            #tmpUiConfig['defaults'].update(cfg['defaults'])
             updateConfigDict(tmpUiConfig['defaults'], cfg['defaults'])
         if 'skip_internal_errors' in cfg:
             tmpUiConfig['skip_internal_errors'] = cfg['skip_internal_errors']
@@ -493,7 +492,7 @@ class Alert2Data:
         if 'defer_startup_notifications' in cfg:
             tmpUiConfig['defer_startup_notifications'] = cfg['defer_startup_notifications']
         try:
-            self.topConfig = TOP_LEVEL_SCHEMA(tmpUiConfig)
+            self.topConfig = TOP_LEVEL_SCHEMA_INTERNAL(tmpUiConfig)
             self.rawTopConfig = tmpUiConfig
         except vol.Invalid as v:
             return f'UI config: {v}'

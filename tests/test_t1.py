@@ -3989,37 +3989,102 @@ async def test_data(hass, service_calls):
     service_calls.popNotifySearch('persistent_notification', 'alert2_error', 'data template render failed.*"d1".*undefined')
     service_calls.popNotifyEmpty('persistent_notification', 'test_t5: foo')
 
+async def test_data2(hass, service_calls):
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2' : { 'alerts': [
+        { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a',
+          'data': '{% if notify_reason=="Fire" %} {{ {"a":7} }} {%else%} {{ {"a":8} }}{%endif%}' },
+        { 'domain': 'test', 'name': 't2', 'condition': 'off',
+          'data': [ 'a', 'b' ] },
+        ], 'tracked' : [
+        ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifySearch('persistent_notification', 't2', '"data" field must be ')
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't1: turned on', extraFields={ 'data': { 'a':  7}})
+    await setAndWait(hass, "sensor.a", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't1: turned off', extraFields={ 'data': { 'a':  8}})
+    
+async def test_data3(hass, service_calls):
+    # Test how defaults can be overridden on a key-by-key basis
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2' : { 'defaults': {
+        'data': { 'a': 9, 'b': '{{ notify_reason }}' },
+    },
+                         'alerts': [
+                             { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a' },
+                             { 'domain': 'test', 'name': 't2', 'condition': 'sensor.a', 'data': { 'c': 10, 'd': '{{ notify_reason }}z' } },
+                             { 'domain': 'test', 'name': 't3', 'condition': 'sensor.a', 'data': { 'a': 12 } },
+                             { 'domain': 'test', 'name': 't4', 'condition': 'sensor.a', 'data': '{{ { "a": 13, "e": 14 } }}' },
+                             { 'domain': 'test', 'name': 't5', 'condition': 'sensor.a', 'data': '{{ { "z": 15 } }}' },
+                         ],
+                         'tracked': [
+                             { 'domain': 'd', 'name': 't6' },
+                             { 'domain': 'd', 'name': 't7', 'data': { 'c': 17 } },
+                             { 'domain': 'd', 'name': 't8', 'data': { 'a': '{{ notify_reason }}ff' } },
+                             { 'domain': 'd', 'name': 't9', 'data': '{{ {"e": 22} }}'},
+                             { 'domain': 'd', 'name': 't10', 'data': '{{ "happy" }}'},
+                         ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'One-time.*v1.16 changed the syntax')
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifySearch('persistent_notification', 't1', 't1: turned on', extraFields={ 'data': {'a':9,'b':'Fire'}})
+    service_calls.popNotifySearch('persistent_notification', 't2', 't2: turned on', extraFields={ 'data': {'a':9,'b':'Fire','c':10,'d':'Firez'}})
+    service_calls.popNotifySearch('persistent_notification', 't3', 't3: turned on', extraFields={ 'data': {'a':12,'b':'Fire'}})
+    service_calls.popNotifySearch('persistent_notification', 't4', 't4: turned on', extraFields={ 'data': {'a':13,'b':'Fire','e':14}})
+    service_calls.popNotifySearch('persistent_notification', 't5', 't5: turned on', extraFields={ 'data': {'a':9,'b':'Fire','z':15}})
+    assert service_calls.isEmpty()
 
     
-async def skip_test_data2(hass, service_calls):
+    await hass.services.async_call('alert2','report', {'domain':'d','name':'t6', 'message': 'foo'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 't6: foo', extraFields={ 'data':{'a':9,'b':'Fire'}})
+    await hass.services.async_call('alert2','report', {'domain':'d','name':'t7', 'message': 'foo'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 't7: foo', extraFields={ 'data':{'a':9,'b':'Fire','c':17}})
+    await hass.services.async_call('alert2','report', {'domain':'d','name':'t8', 'message': 'foo'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 't8: foo', extraFields={ 'data':{'a':'Fireff','b':'Fire'}})
+    await hass.services.async_call('alert2','report', {'domain':'d','name':'t9', 'message': 'foo'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 't9: foo', extraFields={ 'data':{'a':9,'b':'Fire','e':22}})
+    await hass.services.async_call('alert2','report', {'domain':'d','name':'t10', 'message': 'foo'})
+    await hass.async_block_till_done()
+    service_calls.popNotifySearch('persistent_notification', 't10', 't10: foo')
+    service_calls.popNotifyEmpty('persistent_notification', 'alert2_error.*failed to produce a dict', extraFields={ 'data':{'a':9,'b':'Fire'}})
+
+
+async def test_data4(hass, service_calls):
+    # Test how defaults can be overridden on a key-by-key basis
+    await setAndWait(hass, "sensor.a", 'off')
     cfg = { 'alert2' : { 'defaults': {
-        'data': {
-            'actions': "[{ action: '{{ 3+4 }}' }]"
-        }}, 'tracked': [ { 'domain': 'd', 'name': 't1' } ]}}
+        'data': '{{ {"a": 7} }}',
+    },
+                         'alerts': [
+                             { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a' },
+                             { 'domain': 'test', 'name': 't2', 'condition': 'sensor.a', 'data': { 'a': 8,'b':9} },
+                             { 'domain': 'test', 'name': 't3', 'condition': 'sensor.a', 'data': '{{ { "a": 10, "e": 14 } }}' },
+                         ],
+                        }}
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
+    #service_calls.popNotifyEmpty('persistent_notification', 'One-time.*v1.16 changed the syntax')
     assert service_calls.isEmpty()
 
-    await hass.services.async_call('alert2','report', {'domain':'d','name':'t1', 'message': 'foo'})
-    await hass.async_block_till_done()
-    service_calls.popNotifySearch('persistent_notification', 't1: foo', '')
-    service_calls.popNotifyEmpty('persistent_notification', 'd_t1 data template Error rendering data field "actions".*alert2_error itself had issue: alert2_error data template')
-
-async def skip_test_data3(hass, service_calls):
-    cfg = { 'alert2' : { 'defaults': {
-        'data': {
-            'actions': "[{ 'action': 'foo_{{ 3+4 }}' }]"
-        }}, 'tracked': [ { 'domain': 'd', 'name': 't1' } ]}}
-    assert await async_setup_component(hass, DOMAIN, cfg)
-    await hass.async_start()
-    await hass.async_block_till_done()
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifySearch('persistent_notification', 't1', 't1: turned on', extraFields={ 'data': {'a':7}})
+    service_calls.popNotifySearch('persistent_notification', 't2', 't2: turned on', extraFields={ 'data': {'a':8,'b':9}})
+    service_calls.popNotifySearch('persistent_notification', 't3', 't3: turned on', extraFields={ 'data': {'a':10,'e':14}})
     assert service_calls.isEmpty()
-
-    await hass.services.async_call('alert2','report', {'domain':'d','name':'t1', 'message': 'ick'})
-    await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'd_t1: ick', extraFields={ 'data': { 'actions': [{ 'action': 'foo_7' }] } })
-
     
     
 async def test_nested_generator(hass, service_calls):

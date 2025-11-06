@@ -337,9 +337,13 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert rez['rawUi']['defaults']['data'] == "{ 'a': 3 }"
     assert hass_storage['alert2.storage']['data']['config']['defaults']['data'] == "{ 'a': 3 }"
     assert rez['raw']['defaults']['data'] == {"a": 3}
+    # Try template string
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'data': "{{ { 'a': 5 } }}" }}})
+    assert rez['rawUi']['defaults']['data'] == "{{ { 'a': 5 } }}"
+    assert rez['raw']['defaults']['data'] == [ {'a': 1 }, "{{ { 'a': 5 } }}" ]
+   
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'data': 'xxx'} }})
     assert re.search('must be a dict', rez['error'])
-
 
     
     ########################
@@ -382,6 +386,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
             # 'icon' - underlying default comes through
             # supersede_debounce_secs: overridden
             'persistent_notifier_grouping': 'collapse',
+            'data': '{{ {"a": 4} }}',
         },
         'alerts': [
             { 'domain': 'test', 'name': 't1', 'condition': 'off' }
@@ -418,7 +423,9 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     assert t1.movingSum.intervalSecs == 60*6 # uiCfg['defaults']['throttle_fires_per_mins'][1]*60
     assert t1._priority == 'low'
     assert t1._icon == 'mdi:alert'
-    assert t1._data == {'a': 3}
+    assert isinstance(t1._data, list) and len(t1._data) == 2
+    assert t1._data[0].template == '{{ {"a": 4} }}'
+    assert t1._data[1] == {'a': 3}
     assert t1._persistent_notifier_grouping == PersistantNotificationHelper.Collapse
     
     # Check how defaults are sent to UI
@@ -429,6 +436,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
                                             'summary_notifier': False, 'done_notifier': True, 'annotate_messages': True,
                                             'throttle_fires_per_mins': [1, 2], 'priority': 'low', 'icon':'mdi:alert',
                                             'persistent_notifier_grouping': PersistantNotificationHelper.Collapse,
+                                            'data': '{{ {"a": 4} }}',
                                             },
                                'tracked': [{'domain': 'alert2', 'name': 'global_exception', 'throttle_fires_per_mins': [20, 60]}],
                                'skip_internal_errors': False, 'notifier_startup_grace_secs': 4,
@@ -438,7 +446,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
                                         'summary_notifier': False, 'done_notifier': True, 'annotate_messages': True,
                                         'throttle_fires_per_mins': [5, 6], 'priority': 'low', 'icon':'mdi:alert',
                                         'persistent_notifier_grouping': PersistantNotificationHelper.Collapse,
-                                        'data': {'a': 3} },
+                                        'data': ['{{ {"a": 4} }}', {'a': 3}] },
                            'tracked': [{'domain': 'alert2', 'name': 'global_exception', 'throttle_fires_per_mins': [20, 60]}],
                            'skip_internal_errors': 'true', 'notifier_startup_grace_secs': '7',
                            'defer_startup_notifications': True },
@@ -685,8 +693,10 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert rez == { 'rez': { 'a': 'b', 'c': 'd' } }
     rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{ a: b, c: "{{ 3 }}" }' })
     assert rez == { 'rez': { 'a': 'b', 'c': '3' } }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{{ { "a": 5 } }}' })
+    assert rez == { 'rez': { 'a': 5 } }
     rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '"{ e:f}"' })
-    assert re.search('must be a dict', rez['error'])
+    assert re.search('failed to produce a dict', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{}' })
     assert rez == { 'rez': {} }
     uiCfg = { 'defaults' : { 'data': "{'a': 12 }" }  }
@@ -696,6 +706,8 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert rez == { 'rez': { 'a': 12, 'b': 13 } }
     rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{"a":14}' })
     assert rez == { 'rez': { 'a': 14 } }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{{ {"a":15} }}' })
+    assert rez == { 'rez': { 'a': 15 } }
     
     # display_msg
     rez = await tpost("/api/alert2/renderValue", {'name': 'display_msg', 'txt': 'joe  ' })
@@ -1851,6 +1863,61 @@ async def test_data(hass, service_calls, hass_storage):
 
     await setAndWait(hass, "sensor.a", 'on')
     service_calls.popNotifyEmpty('persistent_notification', 'd_n1: turned on', extraFields={ 'data': { 'actions': [{ 'action': 'foo', 'title': 'Fire' }] } })
+
+async def test_data2(hass, service_calls, hass_storage):
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2': { 'defaults': { 'data': { 'a': 1 } } } }
+    uiCfg = { 'defaults' : { 'data': '{{ { "b":2 } }}' },
+              'alerts': [
+                  { 'domain': 'd', 'name': 'n1', 'condition':'sensor.a' },
+                  { 'domain': 'd', 'name': 'n2', 'condition':'sensor.a', 'data': "{ 'c': 3 }" },
+                  { 'domain': 'd', 'name': 'n3', 'condition':'sensor.a', 'data': '{{ { "d": 4 } }}' },
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifySearch('persistent_notification', 'n1', 'd_n1: turned on', extraFields={ 'data': { 'a':1,'b':2 }})
+    service_calls.popNotifySearch('persistent_notification', 'n2', 'd_n2: turned on', extraFields={ 'data': { 'a':1,'b':2,'c':3 }})
+    service_calls.popNotifySearch('persistent_notification', 'n3', 'd_n3: turned on', extraFields={ 'data': { 'a':1,'b':2,'d':4 }})
+    assert service_calls.isEmpty()
+async def test_data3(hass, service_calls, hass_storage):
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2': { 'defaults': { 'data': '{{ { "a": 1 } }}' } } }
+    uiCfg = { 'defaults' : { 'data': '{{ { "b":2 } }}' },
+              'alerts': [   { 'domain': 'd', 'name': 'n1', 'condition':'sensor.a', 'data': "{ 'c': 3 }" },  ] }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifySearch('persistent_notification', 'n1', 'd_n1: turned on', extraFields={ 'data': { 'a':1,'b':2,'c':3 }})
+    assert service_calls.isEmpty()
+async def test_data4(hass, service_calls, hass_storage):
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2': { 'defaults': { 'data': { 'a': 1 } } } }
+    uiCfg = { 'defaults' : { 'data': "{ 'b':2 }" },
+              'alerts': [   { 'domain': 'd', 'name': 'n1', 'condition':'sensor.a', 'data': "{ 'c': 3 }" }, 
+                            { 'domain': 'd', 'name': 'n2', 'condition':'sensor.a', 'data': "{{ { 'c': 3 } }}" },  ] }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifySearch('persistent_notification', 'n1', 'd_n1: turned on', extraFields={ 'data': { 'a':1,'b':2,'c':3 }})
+    service_calls.popNotifySearch('persistent_notification', 'n2', 'd_n2: turned on', extraFields={ 'data': { 'a':1,'b':2,'c':3 }})
+    assert service_calls.isEmpty()
 
 async def test_conflict(hass, service_calls, hass_storage, hass_client):
     # Was bug where conflicting alert definitions made manageAlert:search to die
