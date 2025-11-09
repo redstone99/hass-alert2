@@ -3907,11 +3907,13 @@ async def test_done_notifier(hass, service_calls):
         return None
     hass.services.async_register('notify', 'foo', mock_service_foo)
     await setAndWait(hass, "sensor.a", 'off')
+    await setAndWait(hass, "sensor.b", 'off')
     cfg = { 'alert2' : { 'defaults': { },
                          'alerts': [
                              { 'domain':'t', 'name': 't1', 'condition': 'sensor.a', 'done_notifier': False  },
                              { 'domain':'t', 'name': 't2', 'condition': 'sensor.a', 'done_notifier': 'foo'  },
                              { 'domain':'t', 'name': 't3', 'condition': 'off', 'done_notifier': 'no'  },
+                             { 'domain':'t', 'name': 't4', 'condition': 'sensor.b', 'notifier': 'foo' },
                          ],
                         } }
     assert await async_setup_component(hass, DOMAIN, cfg)
@@ -3931,6 +3933,14 @@ async def test_done_notifier(hass, service_calls):
     await setAndWait(hass, "sensor.a", 'off')
     service_calls.popNotifyEmpty('foo', 't2: turned off')
 
+    # Done notifier should use 'notifier' setting
+    await setAndWait(hass, "sensor.b", 'on')
+    service_calls.popNotifyEmpty('foo', 't4: turned on')
+    await setAndWait(hass, "sensor.b", 'off')
+    service_calls.popNotifyEmpty('foo', 't4: turned off')
+    assert service_calls.isEmpty()
+
+    
 async def test_data(hass, service_calls):
     await setAndWait(hass, "sensor.a", 'off')
     await setAndWait(hass, "sensor.b", 'off')

@@ -62,13 +62,14 @@ Example alerting if a door is open too long. The alert starts firing only once t
       delay_on_secs: 600
 ```
 
-Extending above example to notify via HA companion mobile app, with notification that disappears when alert turns off.  In the following, we turn off `annotate_messages` so that the magic "clear_notification" is sent verbatim when the alert turns off.
+Extending above example to notify via HA companion mobile app, with notification that disappears when alert turns off.  In the following, we turn off `annotate_messages` so that the magic "clear_notification" is sent verbatim when the alert turns off.  Note that the companion app requires setting `tag` when using "clear_notification".
 
 ```yaml
     - domain: front_door
       name: open too long
       condition:  binary_sensor.front_door_open
       delay_on_secs: 600
+      notifier: mobile_app_pixel_12
       annotate_messages: false
       # Since annotate_messages is false, "message" needs to specify what the notification is for
       message: front_door open too long
