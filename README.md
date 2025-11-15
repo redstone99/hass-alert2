@@ -531,9 +531,9 @@ To reduce spurious notifications due to races between two hierarchically-related
 
 #### Common alert features
 
-Alerts may pass additional data to the notifier via the `data` field. This is convenient for notification platforms such as [`mobile_app`](https://companion.home-assistant.io/docs/notifications/notifications-basic/). `data` can be either a dictionary or a template string that evaluates to a dict.  Values in the dict may be templates which produce string values. Dictionary can contain lists and sub-dictionaries. Templates can occur in nested sub-dictionaries. See examples below.
+Most template alert config fields related to notifications can access extra template variables for convenience.
 
-Template strings in `data` fields can access a variable, `notify_reason`, containing the reason for the notification.  `notify_reason` may take the following string values:
+One extra variable is `notify_reason`, containing the reason for the notification.  `notify_reason` may take the following string values:
 
 | Value | Description |
 |---|---|
@@ -543,9 +543,15 @@ Template strings in `data` fields can access a variable, `notify_reason`, contai
 | `ReminderToAck` | Reminder that an alert has not yet been acked. |
 | `Summary` | Summary of alert activity after notifications have been limited, either due to being snoozed or throttled. |
 
-Template strings in `data` fields can also access the variables `alert_entity_id`, `alert_domain` and `alert_name`. This should make it easier on iOS companion app to implement an "Ack" button in notifications and pass through the alert entity id to the event handler.
+Other extra variables include `alert_entity_id`, `alert_domain` and `alert_name`. This should make it easier on iOS companion app to implement an "Ack" button in notifications and pass through the alert entity id to the event handler.
 
-`data` field examples:
+Config fields supporting these extra variables are:  `message`, `done_message`, `reminder_message`, `ack_reminder_message`, `target`, `title`, `notifier`, `done_notifier`, `summary_notifier` and `data.
+
+#### `Data` field 
+
+Alerts may pass additional data to the notifier via the `data` field. This is convenient for notification platforms such as [`mobile_app`](https://companion.home-assistant.io/docs/notifications/notifications-basic/). `data` can be either a dictionary or a template string that evaluates to a dict.  Values in the dict may be templates which produce string values. Dictionary can contain lists and sub-dictionaries. Templates can occur in nested sub-dictionaries.
+
+For example:
 
     alert2:
       alerts:

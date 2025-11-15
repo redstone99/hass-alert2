@@ -32,7 +32,7 @@ from .config import ( TOP_LEVEL_SCHEMA, DEFAULTS_SCHEMA, SINGLE_TRACKED_SCHEMA_P
                       GENERATOR_SCHEMA, NO_GENERATOR_SCHEMA, SUPERSEDES_GEN )
 from .util import (     GENERATOR_DOMAIN )
 from .entities import (notifierTemplateToList, renderResultToList, generatorElemToVars, AlertGenerator, Tracker,
-                       processSupersedes, getField, expandDataDict, NotificationReason, entNameFromDN)
+                       processSupersedes, getField, expandDataDict, NotificationReason, entNameFromDN, AlertBase)
 from homeassistant.components.websocket_api import (decorators, async_register_command)
 _LOGGER = logging.getLogger(__name__)
 
@@ -170,6 +170,7 @@ class RenderValueView(HomeAssistantView):
         name = data['name']
         extraVars = data['extraVars'] if 'extraVars' in data and data['extraVars'] else {}
         simple = False
+        addNotificationVars = False
 
         try:
             ttxt = prepStrConfigField(name, ttxt)
@@ -187,6 +188,7 @@ class RenderValueView(HomeAssistantView):
             if name in ['notifier','summary_notifier', 'done_notifier']:
                 tval = DEFAULTS_SCHEMA({ name: ttxt })[name]
                 ttype = 'notifier_list'
+                addNotificationVars = True
                 if isinstance(tval, bool):
                     simple = True
             elif name in ['annotate_messages', 'reminder_frequency_mins', 'throttle_fires_per_mins',
@@ -211,11 +213,16 @@ class RenderValueView(HomeAssistantView):
                     obj[name] = ttxt
                     tval = NO_GENERATOR_SCHEMA(obj)[name]
                     simple = True
-            elif name in ['friendly_name', 'title', 'target']:
+            elif name in ['friendly_name']:
                 tval = SINGLE_TRACKED_SCHEMA_PRE_NAME({ name: ttxt })[name]
+                ttype = 'string'
+            elif name in ['title', 'target']:
+                tval = SINGLE_TRACKED_SCHEMA_PRE_NAME({ name: ttxt })[name]
+                addNotificationVars = True
                 ttype = 'string'
             elif name in ['message', 'done_message', 'reminder_message', 'ack_reminder_message' ]:
                 tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME({ name: ttxt})[name]
+                addNotificationVars = True
                 ttype = 'string'
             elif name in ['display_msg' ]:
                 tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME({ name: ttxt})[name]
@@ -225,6 +232,7 @@ class RenderValueView(HomeAssistantView):
                     ttype = 'string'
             elif name in ['data']:
                 tval = SINGLE_TRACKED_SCHEMA_PRE_NAME({ name: ttxt})[name]
+                addNotificationVars = True
                 ttype = 'data-dict'
             elif name in ['priority']:
                 if extraVars:
@@ -317,10 +325,14 @@ class RenderValueView(HomeAssistantView):
         if simple:
             return self.json({ 'rez': tval })
             
-
+        if addNotificationVars:
+            fakeEnt = types.SimpleNamespace(extraVariables=extraVars, entity_id='fake_entity_id', alDomain='dom', alName='nam')
+            notificationVars = AlertBase.getNotificationVars(fakeEnt, NotificationReason.Fire)
+        else:
+            notificationVars = extraVars
         
         if ttype == 'notifier_list':
-            (notifiers, errors, debugInfo) = notifierTemplateToList(self.uiMgr._hass, None, tval, 'notifier')
+            (notifiers, errors, debugInfo) = notifierTemplateToList(self.uiMgr._hass, notificationVars, tval, 'notifier')
             if errors:
                 errStr = ','.join(errors)
                 return self.json({ 'error': f'Notifier list error: {errStr}', 'rez': notifiers })
@@ -331,7 +343,7 @@ class RenderValueView(HomeAssistantView):
                 report(DOMAIN, 'error', msg)
                 return self.json({ 'error': f'Server error: {msg}' })
             try:
-                aresult = tval.async_render(parse_result=False, variables=extraVars)
+                aresult = tval.async_render(parse_result=False, variables=notificationVars)
             except TemplateError as err:
                 return self.json({ 'error': f'render error: {str(err)}' })
             if ttype in ['string']:
@@ -363,8 +375,7 @@ class RenderValueView(HomeAssistantView):
             defaults = self.uiMgr._alertData.topConfig # from
             mergedVal = getField(name, { 'domain':'foo', 'name':'bar', name: tval }, defaults)
             try:
-                result = expandDataDict(mergedVal, NotificationReason.Fire,
-                                        types.SimpleNamespace(extraVariables=extraVars, entity_id='fake_entity_id', alDomain='dom', alName='nam'))
+                result = expandDataDict(mergedVal, notificationVars)
             except HomeAssistantError as err:
                 return self.json({ 'error': f'data template {err}'})
         else:

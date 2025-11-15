@@ -214,14 +214,10 @@ def expandSingle(elem, fname, extraVars):
     else:
         return elem
 
-def expandDataDictInt(elem, reason: NotificationReason, ent):
-    variables = { 'notify_reason': reason.name, 'alert_entity_id': ent.entity_id,
-                  'alert_domain': ent.alDomain, 'alert_name': ent.alName }
-    if ent.extraVariables:
-        variables.update(ent.extraVariables)
+def expandDataDictInt(elem, notificationVars):
     if isinstance(elem, template_helper.Template): # template producing a dict
         try:
-            rez = elem.async_render(variables=variables, parse_result=True)
+            rez = elem.async_render(variables=notificationVars, parse_result=True)
         except TemplateError as err:
             raise HomeAssistantError(f'template render failed for data: {err}')
         if isinstance(rez, dict):
@@ -229,16 +225,16 @@ def expandDataDictInt(elem, reason: NotificationReason, ent):
         raise HomeAssistantError(f'Data string template failed to produce a dict, it produced: {rez} of type {type(rez)}')
     if not isinstance(elem, dict):
         report(DOMAIN, 'error', f'{gAssertMsg} data element should be dict but instead is {type(elem)}: {elem}')
-    return expandSingle(elem, '', variables)
+    return expandSingle(elem, '', notificationVars)
 
-def expandDataDict(elem, reason: NotificationReason, ent):
+def expandDataDict(elem, notificationVars):
     if isinstance(elem, list):
         rez = {}
         for tData in elem:
-            newDict = expandDataDict(tData, reason, ent)
+            newDict = expandDataDict(tData, notificationVars)
             rez.update(newDict)
         return rez
-    return expandDataDictInt(elem, reason, ent)
+    return expandDataDictInt(elem, notificationVars)
 
 def agoStr(secondsAgo):
     if secondsAgo < 1.5*60:
@@ -817,7 +813,7 @@ class AlertGenerator(AlertCommon, SensorEntity):
             self.async_write_ha_state()
 
 
-def notifierTemplateToList(hass, extraVariables, templOrList, sourceTemplate):
+def notifierTemplateToList(hass, notificationVars, templOrList, sourceTemplate):
     errors = []
     debugInfo = []
     if isinstance(templOrList, list):
@@ -825,7 +821,7 @@ def notifierTemplateToList(hass, extraVariables, templOrList, sourceTemplate):
         # config did some validation that it's list of non-empty strings
     else:
         try:
-            renderRez = templOrList.async_render(variables=extraVariables, parse_result=False).strip()
+            renderRez = templOrList.async_render(variables=notificationVars, parse_result=False).strip()
         except TemplateError as err:
             errors.append(f'{sourceTemplate} template: {err}')
             tnotifiers = []
@@ -860,6 +856,7 @@ def notifierTemplateToList(hass, extraVariables, templOrList, sourceTemplate):
         else:
             notifiers.append(anotifier)
     return (notifiers, errors, debugInfo)
+
 
 # Functionality common to both event alerts and condition alerts
 #
@@ -972,6 +969,13 @@ class AlertBase(AlertCommon, RestoreEntity):
         #await super().startWatching()  not in parent class
         if self.friendlyNameTracker:
             self.friendlyNameTracker.startWatching()
+
+    def getNotificationVars(self, reason: NotificationReason):
+        notificationVars = { 'notify_reason': reason.name, 'alert_entity_id': self.entity_id,
+                             'alert_domain': self.alDomain, 'alert_name': self.alName }
+        if self.extraVariables:
+            notificationVars.update(self.extraVariables)
+        return notificationVars
             
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
@@ -1185,19 +1189,19 @@ class AlertBase(AlertCommon, RestoreEntity):
 
     def ack_reminder_notify_timer_cb(self, now):
         #fired_secs = (now - self.last_fired_time).total_seconds()
+        reason = NotificationReason.ReminderToAck
         msg = ''
         if self._ack_reminder_message_template is None:
             msg += f'not acked yet'
         else:
-            evars = self.extraVariables.copy() if self.extraVariables else {}
+            notificationVars = self.getNotificationVars(reason)
             #evars['on_secs'] = on_secs
             #evars['on_time_str'] = agoStr(on_secs)
             try:
-                msg += self._ack_reminder_message_template.async_render(variables=evars, parse_result=False)
+                msg += self._ack_reminder_message_template.async_render(variables=notificationVars, parse_result=False)
             except TemplateError as err:
                 msg += f'not acked yet [ack_reminder_message template error]'
                 msg += self.reportIfSafe(DOMAIN, 'error', f'{self.name} ack_reminder_message template: {err}')
-        reason = NotificationReason.ReminderToAck
         self._notify_pre_debounce(now, reason, msg)
         self.reminder_check(now)  # to set up next reminder to ack
         self.async_write_ha_state()
@@ -1227,7 +1231,7 @@ class AlertBase(AlertCommon, RestoreEntity):
                 notifier_template = self._done_notifier
 
 
-        (notifiers, errors, debugInfo) = notifierTemplateToList(self.hass, self.extraVariables, notifier_template,
+        (notifiers, errors, debugInfo) = notifierTemplateToList(self.hass, self.getNotificationVars(reason), notifier_template,
                                                                 sourceTemplate)
                     
         notifier_list = []
@@ -1487,10 +1491,12 @@ class AlertBase(AlertCommon, RestoreEntity):
         if doNotify:
             self.last_notified_time = now
 
+            notificationVars = self.getNotificationVars(reason)
+            
             args = {}
             if self._data is not None:
                 try:
-                    nDict = expandDataDict(self._data, reason, self)
+                    nDict = expandDataDict(self._data, notificationVars)
                 except HomeAssistantError as err:
                     msg += self.reportIfSafe(DOMAIN, 'error', f'{self.name} data {err}')
                 else:
@@ -1499,13 +1505,13 @@ class AlertBase(AlertCommon, RestoreEntity):
                 args['data'] = (args['data'] if 'data' in args else {}) | extra_data
             if self._target_template is not None:
                 try:
-                    args['target'] = self._target_template.async_render(variables=self.extraVariables, parse_result=False)
+                    args['target'] = self._target_template.async_render(variables=notificationVars, parse_result=False)
                 except TemplateError as err:
                     msg += self.reportIfSafe(DOMAIN, 'error', f'{self.name} Target template: {err}')
                     # Continue and notify anyways
             if self._title_template is not None:
                 try:
-                    args['title'] = self._title_template.async_render(variables=self.extraVariables, parse_result=False)
+                    args['title'] = self._title_template.async_render(variables=notificationVars, parse_result=False)
                 except TemplateError as err:
                     msg += self.reportIfSafe(DOMAIN, 'error', f'{self.name} Title template: {err}')
                     # Continue and notify anyways
@@ -1636,7 +1642,10 @@ class EventAlert(AlertBase):
         msg = ''
         if self._message_template is not None:
             try:
-                msg = self._message_template.async_render(variables, parse_result=False)
+                notificationVars = self.getNotificationVars(NotificationReason.Fire)
+                # I think 'variables' is redundant with self.getNotificationVars
+                notificationVars.update(variables)
+                msg = self._message_template.async_render(notificationVars, parse_result=False)
             except TemplateError as err:
                 report(DOMAIN, 'error', f'{self.name} Message template: {err}')
                 return
@@ -1933,31 +1942,35 @@ class ConditionAlert(AlertBase):
         if self.added_to_hass_called:
             if state:
                 _LOGGER.warning(f'Activity {self.entity_id} turned on')
+                reason = NotificationReason.Fire
                 msg = '' #'fired.'
                 if self._message_template is None:
                     msg = f'turned on'
                 else:
+                    notificationVars = self.getNotificationVars(reason)
                     try:
-                        msg = self._message_template.async_render(variables=self.extraVariables, parse_result=False)
+                        msg = self._message_template.async_render(variables=notificationVars, parse_result=False)
                     except TemplateError as err:
                         report(DOMAIN, 'error', f'{self.name} Condition template: {err}')
                         return
-                self._notify_pre_debounce(now, NotificationReason.Fire, msg)
+                self._notify_pre_debounce(now, reason, msg)
                 self.reminder_check(now)
             else:
                 _LOGGER.warning(f'Activity {self.entity_id} turned off')
+                reason = NotificationReason.StopFiring
                 #is_acked = self.last_ack_time and self.last_on_time and self.last_ack_time > self.last_on_time
                 secs_on = (self.last_off_time - self.last_on_time).total_seconds()
                 if self._done_message_template is None:
                     msg = f'turned off after {agoStr(secs_on)}.'
                 else:
+                    notificationVars = self.getNotificationVars(reason)
                     try:
-                        msg = self._done_message_template.async_render(variables=self.extraVariables, parse_result=False)
+                        msg = self._done_message_template.async_render(variables=notificationVars, parse_result=False)
                     except TemplateError as err:
                         report(DOMAIN, 'error', f'{self.name} done_message template: {err}')
                         msg = f'turned off after {agoStr(secs_on)}. [done_message template error]'
                 skip_notify = self.is_acked() and not self.ackRemindersOnly
-                self._notify_pre_debounce(now, NotificationReason.StopFiring, msg, skip_notify=skip_notify)
+                self._notify_pre_debounce(now, reason, msg, skip_notify=skip_notify)
                 self.reminder_check(now)
 
                 if self._used_persistent_notifier and self._persistent_notifier_grouping == PersistantNotificationHelper.CollapseAndDismiss:
@@ -1987,6 +2000,7 @@ class ConditionAlert(AlertBase):
         msg = ''
         is_on = self.state == 'on'
         if is_on:
+            reason = NotificationReason.ReminderOn
             if not self.last_on_time:
                 report(DOMAIN, 'error', f'{gAssertMsg} notify_timer_cb, is_on=True but no self.last_on_time={self.last_on_time} for {self.name}')
             else:
@@ -1994,7 +2008,7 @@ class ConditionAlert(AlertBase):
                 if self._reminder_message_template is None:
                     msg += f'on for {agoStr(on_secs)}'
                 else:
-                    evars = self.extraVariables.copy() if self.extraVariables else {}
+                    evars = self.getNotificationVars(reason)
                     evars['on_secs'] = on_secs
                     evars['on_time_str'] = agoStr(on_secs)
                     try:
@@ -2002,12 +2016,11 @@ class ConditionAlert(AlertBase):
                     except TemplateError as err:
                         report(DOMAIN, 'error', f'{self.name} reminder_message template: {err}')
                         msg += f'on for {agoStr(on_secs)} [reminder_message template error]'
-            reason = NotificationReason.ReminderOn
         else:
+            reason = NotificationReason.Summary
             secs_off = (now - self.last_off_time).total_seconds()
             on_secs = (self.last_off_time - self.last_on_time).total_seconds()
             msg += f'turned off {agoStr(secs_off)} ago after being on for {agoStr(on_secs)}'
-            reason = NotificationReason.Summary
         self._notify_pre_debounce(now, reason, msg)
         self.reminder_check(now)  # to set up next reminder (eg if alert is still on)
         self.async_write_ha_state()
