@@ -545,7 +545,7 @@ One extra variable is `notify_reason`, containing the reason for the notificatio
 
 Other extra variables include `alert_entity_id`, `alert_domain` and `alert_name`. This should make it easier on iOS companion app to implement an "Ack" button in notifications and pass through the alert entity id to the event handler.
 
-Config fields supporting these extra variables are:  `message`, `done_message`, `reminder_message`, `ack_reminder_message`, `target`, `title`, `notifier`, `done_notifier`, `summary_notifier` and `data.
+Config fields supporting these extra variables are:  `message`, `done_message`, `reminder_message`, `ack_reminder_message`, `target`, `title`, `notifier`, `done_notifier`, `summary_notifier` and `data`.
 
 #### `Data` field 
 
