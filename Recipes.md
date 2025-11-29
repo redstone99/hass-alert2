@@ -85,10 +85,52 @@ And if you wanted to support a companion app action to ack an alert via the noti
       ...
       data:
         actions:
-          - action: "alert2.development2 ack"
+          - action: "{{ alert_entity_id }} ack"
             title: Ack
-        my_entity_id: "{{ alert_entity_id }}"
-```` 
+````
+Note: Don´t forget to add an automation to listen for events of type `mobile_app_notification_action` to react to the actions clicked by the user. Here is an example automation:
+```
+- id: React to action events from Alert2 alerts
+  alias: Alert2 - React to events from Alert-Notifications
+  description: ""
+  triggers:
+    - trigger: event
+      event_type: mobile_app_notification_action
+  conditions:
+    - condition: template
+      value_template: '{{ trigger.event.data.action.startswith("alert2") }}'
+  actions:
+    - variables:
+        alert2id: '{{ (trigger.event.data.action).split(" ")[0] }}'
+        type: '{{ (trigger.event.data.action).split(" ")[1] }}'
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: '{{ type == "ack" }}'
+          sequence:
+            - action: alert2.ack
+              target:
+                entity_id: "{{ alert2id }}"
+        - conditions:
+            - condition: template
+              value_template: '{{ type == "snooze" }}'
+          sequence:
+            - variables:
+                duration: '{{ (trigger.event.data.action).split(" ")[2] }}'
+                until:
+                  "{% if duration == \"tomorrow\" %}\n  {{ today_at(\"09:00:00\") +
+                  timedelta(days=1) }}\n{% else %}\n  {{ now() + as_timedelta(duration)
+                  }}\n{% endif %}"
+            - action: alert2.notification_control
+              data:
+                enable: "on"
+                ack_at_snooze_start: false
+                snooze_until: "{{ until }}"
+              target:
+                entity_id: "{{ alert2id }}"
+  mode: parallel
+
+```
 
 Continuing with the door example, suppose you had multiple doors and you wanted to alert if any of them are open too long.  Using generators:
 
