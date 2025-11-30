@@ -78,18 +78,6 @@ Extending above example to notify via HA companion mobile app, with notification
         tag: "front_door-open-too-long"
 ```
 
-And if you wanted to support a companion app action to ack an alert via the notification on iOS, you can pass the alert2 entity id to the event handler you set up via something like:
-
-````yaml
-    - domain: ....
-      ...
-      data:
-        actions:
-          - action: "alert2.development2 ack"
-            title: Ack
-        my_entity_id: "{{ alert_entity_id }}"
-```` 
-
 Continuing with the door example, suppose you had multiple doors and you wanted to alert if any of them are open too long.  Using generators:
 
 ```yaml
@@ -99,6 +87,66 @@ Continuing with the door example, suppose you had multiple doors and you wanted 
       delay_on_secs: 600
       generator_name: g1
       generator: [ front_door, side_door, garage_door ]
+```
+
+### Mobile notification actions
+
+Suppose you want to have mobile notifications include actions such as an option to ack or snooze the alert.  The way to do this is to specify the alert entity id somewhere in the `data` field and then write an automation to handle the notification event.  At the time of writing this, HA doesn't seem to forward any extra data fields to the event, so it seems the only way to pass the alert entity id is encoding it in the action name. The example below adds actions to ack an alert and snooze it for an hour:
+
+````yaml
+    - domain: ....
+      ...
+      data:
+        actions:
+          - action: "{{ alert_entity_id }} ack"
+            title: Ack
+          - action: "{{ alert_entity_id }} snooze 01:00:00"
+            title: Snooze 1hr
+````
+
+Now you need an automation to handle the resulting event. The automation below handles both "ack" and "snooze". Note that "snooze" encodes a duration argument in the action name.
+
+```
+- id: React to action events from Alert2 alerts
+  alias: Alert2 - React to events from Alert-Notifications
+  description: ""
+  triggers:
+    - trigger: event
+      event_type: mobile_app_notification_action
+  conditions:
+    - condition: template
+      value_template: '{{ trigger.event.data.action.startswith("alert2") }}'
+  actions:
+    - variables:
+        alert2id: '{{ (trigger.event.data.action).split(" ")[0] }}'
+        type: '{{ (trigger.event.data.action).split(" ")[1] }}'
+    - choose:
+        - conditions:
+            - condition: template
+              value_template: '{{ type == "ack" }}'
+          sequence:
+            - action: alert2.ack
+              target:
+                entity_id: "{{ alert2id }}"
+        - conditions:
+            - condition: template
+              value_template: '{{ type == "snooze" }}'
+          sequence:
+            - variables:
+                duration: '{{ (trigger.event.data.action).split(" ")[2] }}'
+                until:
+                  "{% if duration == \"tomorrow\" %}\n  {{ today_at(\"09:00:00\") +
+                  timedelta(days=1) }}\n{% else %}\n  {{ now() + as_timedelta(duration)
+                  }}\n{% endif %}"
+            - action: alert2.notification_control
+              data:
+                enable: "on"
+                ack_at_snooze_start: false
+                snooze_until: "{{ until }}"
+              target:
+                entity_id: "{{ alert2id }}"
+  mode: parallel
+
 ```
 
 ## More advanced alerts
