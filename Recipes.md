@@ -78,7 +78,20 @@ Extending above example to notify via HA companion mobile app, with notification
         tag: "front_door-open-too-long"
 ```
 
-And if you wanted to support a companion app action to ack an alert via the notification on iOS, you can pass the alert2 entity id to the event handler you set up via something like:
+Continuing with the door example, suppose you had multiple doors and you wanted to alert if any of them are open too long.  Using generators:
+
+```yaml
+    - domain: "{{ genElem }}"
+      name: open too long
+      condition:  "{{ states('binary_sensor.' + genElem + '_open') }}"
+      delay_on_secs: 600
+      generator_name: g1
+      generator: [ front_door, side_door, garage_door ]
+```
+
+### Mobile notification actions
+
+Suppose you want to have mobile notifications include actions such as an option to ack or snooze the alert.  The way to do this is to specify the alert entity id somewhere in the `data` field and then write an automation to handle the notification event.  At the time of writing this, HA doesn't seem to forward any extra data fields to the event, so it seems the only way to pass the alert entity id is encoding it in the action name. The example below adds actions to ack an alert and snooze it for an hour:
 
 ````yaml
     - domain: ....
@@ -87,8 +100,12 @@ And if you wanted to support a companion app action to ack an alert via the noti
         actions:
           - action: "{{ alert_entity_id }} ack"
             title: Ack
+          - action: "{{ alert_entity_id }} snooze 01:00:00"
+            title: Snooze 1hr
 ````
-Note: Don´t forget to add an automation to listen for events of type `mobile_app_notification_action` to react to the actions clicked by the user. Here is an example automation:
+
+Now you need an automation to handle the resulting event. The automation below handles both "ack" and "snooze". Note that "snooze" encodes a duration argument in the action name.
+
 ```
 - id: React to action events from Alert2 alerts
   alias: Alert2 - React to events from Alert-Notifications
@@ -130,17 +147,6 @@ Note: Don´t forget to add an automation to listen for events of type `mobile_ap
                 entity_id: "{{ alert2id }}"
   mode: parallel
 
-```
-
-Continuing with the door example, suppose you had multiple doors and you wanted to alert if any of them are open too long.  Using generators:
-
-```yaml
-    - domain: "{{ genElem }}"
-      name: open too long
-      condition:  "{{ states('binary_sensor.' + genElem + '_open') }}"
-      delay_on_secs: 600
-      generator_name: g1
-      generator: [ front_door, side_door, garage_door ]
 ```
 
 ## More advanced alerts
