@@ -1982,3 +1982,27 @@ async def test_conflict(hass, service_calls, hass_storage, hass_client):
     assert service_calls.isEmpty()
     # YAML alert continues to exist
     assert gad.alerts['d']['t1']
+
+
+async def test_intl(hass, service_calls, hass_storage, hass_client):
+    # Was bug where conflicting alert definitions made manageAlert:search to die
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
+        { 'domain': 'd', 'name': 't1_ö', 'condition': 'off' },
+        { 'domain': 'd', 'name': 't1_a', 'condition': 'off' },
+        ]}}
+    uiCfg = { 'defaults' : { },
+              'alerts' : [
+                  { 'domain': 'd', 'name': 't1_o', 'condition': 'off' },
+                  { 'domain': 'd', 'name': 't1_ä', 'condition': 'off' },
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifySearch('persistent_notification', 'd=d/n=t1_o and d=d/n=t1_ö', 'Domain/name alias.*produce entity_id=alert2.d_t1_o')
+    service_calls.popNotifySearch('persistent_notification', 'd=d/n=t1_ä and d=d/n=t1_a', 'Domain/name alias.*produce entity_id=alert2.d_t1_a')
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+    assert set(gad.alerts['d'].keys()) == set([ 't1_a', 't1_ö'])

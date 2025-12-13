@@ -30,8 +30,11 @@ from custom_components.alert2.util import (     GENERATOR_DOMAIN,
 import homeassistant.const
 from homeassistant import config as conf_util
 import homeassistant.helpers.restore_state as rs
+import homeassistant.helpers.entity_registry as er
+import homeassistant.helpers.entity_platform as ep
 from homeassistant.util.yaml import parse_yaml
 import homeassistant.components.persistent_notification as pn
+from homeassistant.components.notify import NotifyEntity, NotifyEntityFeature
 #from tests.common import MockConfigEntry
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -577,6 +580,75 @@ async def test_notifiers5(hass, service_calls):
     # literally as a notifier name
     service_calls.popNotifyEmpty('persistent_notification', f'Following notifiers are not known.*\'unavailable\'.*\'sensor.testent\'')
 
+async def test_notifiers6(hass, service_calls):
+    # Test new notifier system.  Create 
+    await setAndWait(hass, "sensor.a1", 'off')
+    await setAndWait(hass, "sensor.a2", 'off')
+    await setAndWait(hass, "sensor.a3", 'off')
+    await setAndWait(hass, "sensor.a4", 'off')
+    cfg = { 'alert2' : { 'alerts': [
+        { 'domain': 'd', 'name': 't1', 'condition': 'sensor.a1', 'notifier': 'notify.notify_happy3' },
+        { 'domain': 'd', 'name': 't2', 'condition': 'sensor.a2', 'notifier': 'notify.notify_happy3', 'title': 'mytitle' },
+        { 'domain': 'd', 'name': 't3', 'condition': 'sensor.a3', 'notifier': '{{ [ "notify.notify_happy3", "persistent_notification" ] }}', 'title': 'title2' },
+        { 'domain': 'd', 'name': 't4', 'condition': 'sensor.a4', 'notifier': 'notify.notify_happy3', 'data': { 'a': 3 } },
+    ]}}
+    assert await async_setup_component(hass, "notify", {})
+    assert await async_setup_component(hass, "persistent_notification", {})
+    assert await async_setup_component(hass, DOMAIN, cfg)
+
+    # Create new notify entity, notify.notify_happy3
+    #
+    gotSendMsg = None
+    class TestNotifyEntity(NotifyEntity):
+        _attr_supported_features = NotifyEntityFeature.TITLE
+        def __init__(self, config, subconfig) -> None:
+            self._attr_unique_id = f'happy3'
+            self.name = f'happy'
+        async def async_send_message(self, message: str, title: str | None = None) -> None:
+            #_LOGGER.info('!!!!!!!!!  got send message ')
+            nonlocal gotSendMsg
+            gotSendMsg = { 'msg': message }
+            if title is not None:
+                gotSendMsg['title'] = title
+    x =  ep.async_get_platforms(hass, 'notify')
+    assert len(x) == 1
+    notifyEntPlatform = x[0]
+    nEnt = TestNotifyEntity(None, None)
+    await notifyEntPlatform.async_add_entities([nEnt])
+
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    # List all entities known
+    #   entities = er.async_get(hass).entities
+    #   _LOGGER.info(list(entities.key()))
+    await hass.services.async_call('notify','send_message', {'entity_id': 'notify.notify_happy3', 'message': 'amsg', 'title': 'atitle' })
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('send_message', f'amsg')
+    assert service_calls.isEmpty()
+    assert gotSendMsg == { 'msg': 'amsg', 'title': 'atitle' }
+    gotSendMsg = None
+
+        
+    await setAndWait(hass, "sensor.a1", 'on')
+    service_calls.popNotifyEmpty('send_message', f't1: turned on')
+    assert gotSendMsg == { 'msg': 'Alert2 d_t1: turned on'}
+    gotSendMsg = None
+    await setAndWait(hass, "sensor.a2", 'on')
+    service_calls.popNotifyEmpty('send_message', f't2: turned on')
+    assert gotSendMsg == { 'msg': 'Alert2 d_t2: turned on', 'title': 'mytitle' }
+    gotSendMsg = None
+    await setAndWait(hass, "sensor.a3", 'on')
+    service_calls.popNotifySearch('persistent_notification', 't3', f't3: turned on')
+    service_calls.popNotifyEmpty('send_message', f't3: turned on')
+    assert gotSendMsg == { 'msg': 'Alert2 d_t3: turned on', 'title': 'title2' }
+    gotSendMsg = None
+    await setAndWait(hass, "sensor.a4", 'on')
+    await hass.async_block_till_done()
+    service_calls.popNotifySearch('send_message', 't4', f't4: turned on')
+    service_calls.popNotifyEmpty('persistent_notification', 'at present support only "message"')
+    assert gotSendMsg == None
+    
 async def test_throttle(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
         { 'domain': 'test', 'name': 't10a', 'condition': 'sensor.a', 'throttle_fires_per_mins': [2, 0.05], 'reminder_frequency_mins':0.01 },
@@ -4239,3 +4311,43 @@ async def test_new_vars(hass, service_calls):
     service_calls.popNotifySearch('persistent_notification', 't1', 'test_t1: StopFiring-d', extraFields={ 'target': 'StopFiringt', 'title': 'StopFiringt2' })
     service_calls.popNotifySearch('persistent_notification', 't2', 'test_t2: Fire-tr')
     assert service_calls.isEmpty()
+
+async def test_intl(hass, service_calls):
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2' : { 'alerts': [
+        { 'domain': 'döäü', 'name': 'töäü', 'condition': 'sensor.a', 'title': 'titleöäü', 'message': 'msgöäü', 'done_message': 'doneöäü' },
+        { 'domain': 'döäü', 'name': 'toau', 'friendly_name': 'friendöäü', 'condition': 'sensor.a' },
+        { 'domain': 'd', 'name': '{{ genElem }}', 'generator': [ 'a', 'ä' ], 'generator_name': 'g1', 'condition': 'off' },
+
+        { 'domain': 'döäü', 'name': 't1öäü', 'condition': 'sensor.a', 'title': 'titleöäü', 'message': 'msgöäü', 'done_message': 'doneöäü' },
+        { 'domain': 'döäü', 'name': 't2oau', 'friendly_name': 'friendöäü', 'condition': 'sensor.a' },
+        
+    ], 'tracked': [
+        { 'domain': 'döäü', 'name': 'töau', 'friendly_name': 'friendöäü' },
+        { 'domain': 'döäü', 'name': 'toäü' },
+    ]}}
+    assert await async_setup_component(hass, "notify", {})
+    assert await async_setup_component(hass, "persistent_notification", {})
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifySearch('persistent_notification', 'd=döäü/n=toäü and d=döäü/n=töau', 'Domain/name alias.*produce entity_id=alert2.doau_toau')
+    service_calls.popNotifySearch('persistent_notification', 'd=döäü/n=töäü and d=döäü/n=töau', 'Domain/name alias.*produce entity_id=alert2.doau_toau')
+    service_calls.popNotifySearch('persistent_notification', 'd=döäü/n=toau and d=döäü/n=töau', 'Domain/name alias.*produce entity_id=alert2.doau_toau')
+    service_calls.popNotifySearch('persistent_notification', '_g1', 'generated name "d_ä" conflicts with name "d_a"')
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifySearch('persistent_notification', 't1öäü', 'Alert2 döäü_t1öäü: msgöäü', extraFields={ 'title': 'titleöäü' })
+    service_calls.popNotifySearch('persistent_notification', 'friend', 'friendöäü: turned on')
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a", 'off')
+    service_calls.popNotifySearch('persistent_notification', 't1öäü', 'Alert2 döäü_t1öäü: doneöäü', extraFields={ 'title': 'titleöäü' })
+    service_calls.popNotifySearch('persistent_notification', 'friend', 'friendöäü: turned off')
+    assert service_calls.isEmpty()
+
+    gad = hass.data[DOMAIN]
+    for it in gad.alerts['döäü'].keys():
+        _LOGGER.info(f'Key={it} id={gad.alerts["döäü"][it].entity_id}  uid={gad.alerts["döäü"][it].unique_id}')
+    
