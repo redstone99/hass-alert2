@@ -804,7 +804,7 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger', 'txt': "[{'trigger':'template','value_template':'{{ true }}'}]" })
     assert rez == { 'rez': [{'platform':'template','value_template':'{{ true }}'}] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger', 'txt': "yes" })
-    assert re.search("'bool' is not iterable", rez['error'])
+    assert re.search("'bool' is not .* iterable", rez['error'])
 
     # trigger_on
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_on', 'txt': "[{'platform':'state','entity_id':'sensor.zz'}]" })
@@ -812,7 +812,7 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_on', 'txt': "[{'trigger':'template','value_template':'{{ true }}'}]" })
     assert rez == { 'rez': [{'platform':'template','value_template':'{{ true }}'}] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_on', 'txt': "yes" })
-    assert re.search("'bool' is not iterable", rez['error'])
+    assert re.search("'bool' is not .* iterable", rez['error'])
     
     # trigger_off
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_off', 'txt': "[{'platform':'state','entity_id':'sensor.zz'}]" })
@@ -820,7 +820,7 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_off', 'txt': "[{'trigger':'template','value_template':'{{ true }}'}]" })
     assert rez == { 'rez': [{'platform':'template','value_template':'{{ true }}'}] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_off', 'txt': "yes" })
-    assert re.search("'bool' is not iterable", rez['error'])
+    assert re.search("'bool' is not .* iterable", rez['error'])
     
     # condition
     rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': 'on' })
@@ -1274,8 +1274,7 @@ async def test_create3(hass, service_calls, hass_client, hass_storage):
     
     
 async def test_reload(hass, service_calls, hass_client, hass_storage, monkeypatch):
-    cfg = { 'alert2' : {
-    } }
+    cfg = { 'alert2' : { } }
     uiCfg = { 'defaults' : { },
               'alerts': [
                   { 'domain': 'd', 'name': 'n1', 'condition':'off', 'throttle_fires_per_mins': '[3,4]' }
@@ -1301,6 +1300,28 @@ async def test_reload(hass, service_calls, hass_client, hass_storage, monkeypatc
         await hass.async_block_till_done()
     await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
     assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])
+
+async def test_reload2(hass, service_calls, hass_client, hass_storage, monkeypatch):
+    cfg = { }
+    uiCfg = { 'defaults' : { },
+              'alerts': [
+                  { 'domain': 'd', 'name': 'n1', 'condition':'off', 'throttle_fires_per_mins': '[3,4]' }
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    assert hass.states.get('alert2.d_n1').state == 'off'
+    assert set(gad.alerts['d'].keys()) == set([ 'n1' ])
+
+    async def fake_cfg(thass):
+        return cfg
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
+    assert set(gad.alerts['d'].keys()) == set([ 'n1' ])
 
 async def test_conflict1(hass, service_calls, hass_client, hass_storage):
     # Make sure UI alert can not overwrite a YAML alert.
