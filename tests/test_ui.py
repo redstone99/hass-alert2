@@ -82,6 +82,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
             'priority': 'medium',
             'supersede_debounce_secs': 4,
             'data': { 'a': 1 },
+            'reminder_message': 'foo-reminder',
         },
         'alerts': [
             { 'domain': 'test', 'name': 't1', 'condition': 'off' }
@@ -103,6 +104,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert t1._notifier_list_template.template == cfga['defaults']['notifier']
     assert t1._summary_notifier.template == cfga['defaults']['summary_notifier']
     assert t1._done_notifier.template == cfga['defaults']['done_notifier']
+    assert t1._reminder_message_template.template == cfga['defaults']['reminder_message']
     assert t1.reminder_frequency_mins == cfga['defaults']['reminder_frequency_mins']
     assert t1._supersede_debounce_secs == cfga['defaults']['supersede_debounce_secs']
     assert t1.movingSum.maxCount == cfga['defaults']['throttle_fires_per_mins'][0]
@@ -247,6 +249,15 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert rez['rawUi']['defaults']['done_notifier'] == '["foo","bar" ]'
     assert gad.topConfig['defaults']['done_notifier'] == ['foo','bar']
 
+    # reminder_message
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'reminder_message': False} }})
+    assert re.search('non-string value', rez['error'])
+    rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'reminder_message': 'foo'} }})
+    assert rez['rawUi']['defaults']['reminder_message'] == 'foo'
+    assert hass_storage['alert2.storage']['data']['config']['defaults']['reminder_message'] == 'foo'
+    assert gad.topConfig['defaults']['reminder_message'] == 'foo'
+    assert isinstance(gad.topConfig['defaults']['reminder_message'], template_helper.Template)
+
     # annotate_messages
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'annotate_messages': 'FAlse'} }})
     assert rez['rawUi']['defaults']['annotate_messages'] == 'FAlse'
@@ -386,6 +397,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
             # 'icon' - underlying default comes through
             # supersede_debounce_secs: overridden
             'persistent_notifier_grouping': 'collapse',
+            'reminder_message': 'rhappy',
             'data': '{{ {"a": 4} }}',
         },
         'alerts': [
@@ -427,6 +439,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     assert t1._data[0].template == '{{ {"a": 4} }}'
     assert t1._data[1] == {'a': 3}
     assert t1._persistent_notifier_grouping == PersistantNotificationHelper.Collapse
+    assert t1._reminder_message_template.template == cfga['defaults']['reminder_message']
     
     # Check how defaults are sent to UI
     rez = await tpost("/api/alert2/loadTopConfig", {})
@@ -436,6 +449,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
                                             'summary_notifier': False, 'done_notifier': True, 'annotate_messages': True,
                                             'throttle_fires_per_mins': [1, 2], 'priority': 'low', 'icon':'mdi:alert',
                                             'persistent_notifier_grouping': PersistantNotificationHelper.Collapse,
+                                            'reminder_message': 'rhappy',
                                             'data': '{{ {"a": 4} }}',
                                             },
                                'tracked': [{'domain': 'alert2', 'name': 'global_exception', 'throttle_fires_per_mins': [20, 60]}],
@@ -446,6 +460,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
                                         'summary_notifier': False, 'done_notifier': True, 'annotate_messages': True,
                                         'throttle_fires_per_mins': [5, 6], 'priority': 'low', 'icon':'mdi:alert',
                                         'persistent_notifier_grouping': PersistantNotificationHelper.Collapse,
+                                        'reminder_message': 'rhappy',
                                         'data': ['{{ {"a": 4} }}', {'a': 3}] },
                            'tracked': [{'domain': 'alert2', 'name': 'global_exception', 'throttle_fires_per_mins': [20, 60]}],
                            'skip_internal_errors': 'true', 'notifier_startup_grace_secs': '7',
@@ -768,6 +783,8 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert rez == { 'rez': 'foo{' }
     rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_message', 'txt': '{{ "joe"+notify_reason }}' })
     assert rez == { 'rez': 'joeFire' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_message', 'txt': '{{ "joe"+ get_message() }}' })
+    assert rez == { 'rez': 'joe[ message placeholder ]' }
     rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_message', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
     assert rez == { 'rez': 'joeyay' }
     

@@ -290,6 +290,9 @@ async def test_reminder3(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { 'reminder_frequency_mins': 0.01 },
                          'alerts' : [
                              { 'domain': 'test', 'name': 't5a', 'condition': 'sensor.b1' },
+                             { 'domain': 'test', 'name': 't5b', 'condition': 'sensor.b1', 'message': 'ymsg', 'reminder_message': '{{ get_message() + "zzz" }}' },
+                             { 'domain': 'test', 'name': 't5c', 'condition': 'sensor.b1',
+                               'message': '{% if notify_reason == "ReminderOn" %}{{yuck()}}{% else %}happy{% endif %}', 'reminder_message': '{{ get_message() + "zzz" }}' },
                          ], } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
@@ -297,11 +300,42 @@ async def test_reminder3(hass, service_calls):
     assert service_calls.isEmpty()
 
     await setAndWait(hass, 'sensor.b1', 'on')
+    service_calls.popNotifySearch('persistent_notification', 't5b', r'test_t5b: ymsg')
+    service_calls.popNotifySearch('persistent_notification', 't5c', r'test_t5c: happy')
     service_calls.popNotifyEmpty('persistent_notification', r'test_t5a: turned on')
     await asyncio.sleep(2) # reminder interval is 1 + specified interval
+    service_calls.popNotifySearch('persistent_notification', 't5b', r'test_t5b: ymsgzzz')
+    service_calls.popNotifySearch('persistent_notification', 't5c: ', r'test_t5c: on \[ message template error \]')
+    service_calls.popNotifySearch('persistent_notification', 't5c reminder', r'reminder_message referred to message with had render error')
     service_calls.popNotifyEmpty('persistent_notification', r'test_t5a.*on for')
     await setAndWait(hass, 'sensor.b1', 'off')
     await asyncio.sleep(1.2) # Wait for remainder 
+    service_calls.popNotifySearch('persistent_notification', 't5b', r'test_t5b: turned off')
+    service_calls.popNotifySearch('persistent_notification', 't5c', r'test_t5c: turned off')
+    service_calls.popNotifyEmpty('persistent_notification', r'test_t5a: turned off')
+
+async def test_reminder4(hass, service_calls):
+    hass.states.async_set("sensor.b1", "off")
+    cfg = { 'alert2' : { 'defaults': { 'reminder_frequency_mins': 0.01,
+                                       'reminder_message': '{{ get_message() + "zzz" }}' },
+                         'alerts' : [
+                             { 'domain': 'test', 'name': 't5a', 'condition': 'sensor.b1' },
+                             { 'domain': 'test', 'name': 't5b', 'condition': 'sensor.b1', 'message': 'ymsg', 'reminder_message': 'foo' },
+                         ], } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, 'sensor.b1', 'on')
+    service_calls.popNotifySearch('persistent_notification', 't5b', r'test_t5b: ymsg')
+    service_calls.popNotifyEmpty('persistent_notification', r'test_t5a: turned on')
+    await asyncio.sleep(2) # reminder interval is 1 + specified interval
+    service_calls.popNotifySearch('persistent_notification', 't5b', r'test_t5b: foo')
+    service_calls.popNotifyEmpty('persistent_notification', r'test_t5a: turned onzzz')
+    await setAndWait(hass, 'sensor.b1', 'off')
+    await asyncio.sleep(1.2) # Wait for remainder 
+    service_calls.popNotifySearch('persistent_notification', 't5b', r'test_t5b: turned off')
     service_calls.popNotifyEmpty('persistent_notification', r'test_t5a: turned off')
 
 def resetModuleLoadTime():
@@ -2523,7 +2557,7 @@ async def test_generator6(hass, service_calls):
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'duplicate entity id test_dupname')
+    service_calls.popNotifyEmpty('persistent_notification', 'conflicts with name "test_dupname"')
     #assert service_calls.isEmpty()
     
     gad = hass.data[DOMAIN]
@@ -4350,4 +4384,17 @@ async def test_intl(hass, service_calls):
     gad = hass.data[DOMAIN]
     for it in gad.alerts['döäü'].keys():
         _LOGGER.info(f'Key={it} id={gad.alerts["döäü"][it].entity_id}  uid={gad.alerts["döäü"][it].unique_id}')
+    
+async def test_reminder_msg(hass, service_calls):
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2' : { 'alerts': [
+        { 'domain': 'd', 'name': 't1', 'condition': 'sensor.a', 'reminder_message': '{{ message }}' },
+    ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+    t1 = gad.alerts['d']['t1']
+    _LOGGER.info(t1._reminder_message_template)
     
