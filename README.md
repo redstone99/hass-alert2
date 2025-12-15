@@ -237,6 +237,8 @@ The current recommended way to notify groups is to create an entity, such as a t
 
 Alert2 does not yet support [Notify Entity Groups](https://www.home-assistant.io/integrations/group/#notify-entity-groups), but open an [discussion](https://github.com/redstone99/hass-alert2/discussions) and request the feature if interested.
 
+Notifiers may be either legacy notifiers or the newer notify entities (entities beginning with `notify.` ).  When using the newer notify entities, Alert2 supports only the `message` and `title` fields. Specifying other fields like `data` with notify entities will result in an error.
+
 ### Alert2 internal errors
 
 Alert2 automatically defines a few event alerts that fire internally:
@@ -294,7 +296,8 @@ The `defaults:` subsection specifies optional default values for parameters comm
 | Key | Type | Description |
 |---|---|---|
 | `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. Minimum is 0.01 min.<br>Also used to control ack reminders for event or condition alerts that have `ack_required` set. |
-| `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. Service called will be `"notify." + notifier`.<br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers, an entity name whose state is a list of notifiers, a template that evaluates to either, or "null" to indicate no notification. See [Notifier Config](#notifier-config) section below for possibilities here.  |
+| `reminder_message` | template | Template string evaluated each time a reminder notification will be sent. Variable `on_secs` contains float seconds alert has been on.  Variable `on_time_str` contains time alert has been on as a string. The function `get_message()` will produce the `message` field. <br>Defaults to: ` on for {{ on_time_str }}`<br><br>Any message specified here will be prepended with alert domain and name unless `annotate_messages` is false.
+| `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. If specifying a legacy notifier, the service called will be `"notify." + notifier`.  If specifying a notify entity, Alert2 calls `notify.send_message`. <br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers, an entity name whose state is a list of notifiers, a template that evaluates to either, or "null" to indicate no notification. See [Notifier Config](#notifier-config) section below for possibilities here.  |
 | `summary_notifier` | bool or template | True to send summaries (see [Notifiers](#notifiers) section for detail) using the same notifier as other notifications.  False to not send summaries.  Or can be a template similar to `notifier` parameter to specify notifier to use for summaries. Default is `false`. |
 | `done_notifier` | bool or template | Controls notifier used to notify when a condition alert stops firing. True to use the `notifier` setting.  False or null to not send done notifications.  Or can be a template similar to `notifier` parameter to specify notifier to use for done notificaitons. Default is `true`. |
 | `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notification, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
@@ -325,9 +328,9 @@ Note `reminder_frequency_mins` or `throttle_fires_per_mins` may be specified as 
 
 ### Alerts
 
-The `alerts:` subsection contains a list of condition-based and event-based alert specifications. Alert names are split into `domain` and `name`. The reason is partly for semantic clarity and also for future management features, like grouping alerts by domain.
-The full list of parameters for each alert are as follows:
+The `alerts:` subsection contains a list of condition-based and event-based alert specifications. The full list of parameters for each alert are below.
 
+Alert names are split into `domain` and `name`. The reason is partly for semantic clarity and also for future management features, like grouping alerts by domain. The entity name of an alert is `alert2.{domain}_{name}`. Alert2 requires that the entity name be unique after slugification ( which converts international symbols to ASCII and whitespace to "_", among other conversions ).
 
 Entity name related fields:
 
@@ -364,7 +367,7 @@ Entity name related fields:
 |---|---|---|---|
 | `message` | template | optional | Template string evaluated when the alert fires. For event-based alerts, it can reference the `trigger` variable (see example below). Defaults to simple alert state change message like "... turned on".  <br><br>Any message specified here will be prepended with context information including the alert domain and name.  Set `annotate_messages` to false to disable that behavior (eg if you want to send a notification command to the companion app mobile_app platform). |
 | `done_message` | template | optional |Template string evaluated when an alert turns off. Defaults to simple alert state change message like "... turned off after x minutes".<br><br>Any message specified here will be prepended with context information including the alert domain and name.  Set `annotate_messages` to false to disable that behavior (eg if you want to send a notification command like "clear_notification" to the companion app mobile_app platform).
-| `reminder_message` | template | optional |Template string evaluated each time a reminder notification will be sent. Variable `on_secs` contains float seconds alert has been on.  Variable `on_time_str` contains time alert has been on as a string.  `reminder_message` defaults to:<br>`  on for {{ on_time_str }}`<br><br>Any message specified here will be prepended with alert domain and name unless `annotate_messages` is false.
+| `reminder_message` | template | optional |  Override the default `reminder_message`. Can be set to `null` to cause Alert2 to use the system default reminder message. |
 | `ack_reminder_message` | template | optional |Template string evaluated each time a reminder notification will be sent that an alert has not been acked. Used only is `ack_required` is set. `ack_reminder_message` defaults to:<br>`  not acked yet`<br><br>Any message specified here will be prepended with alert domain and name unless `annotate_messages` is false.
 | `notifier` | template | optional | Override the default `notifier`. See [Notifier Config](#notifier-config) section below for examples. |
 | `summary_notifier` | template | optional | Override the default `summary_notifier`. See [Notifier Config](#notifier-config) section below for examples. |
@@ -608,8 +611,8 @@ The `notifier` parameter can take a variety of different values. The basic usage
 
           # List of notifiers (native YAML)
           notifier:
-          - telegram_1
-          - telegram_2
+          - telegram_1              # legacy notifier
+          - notify.telegram_bot_x_y # notify entity
 
           # List of notifiers (YAML flow sequence, identical to list, above)
           notifier: [ telegram_1, telegram_2 ]
@@ -975,6 +978,7 @@ A few other service calls are used internally by [Alert2 UI](https://github.com/
 <br>`alert2.unack` unacks a single alert.
 <br>`alert2.manual_on` turns on a condition alert that was configured with `manual_on: true`.
 <br>`alert2.manual_off` turns off a condition alert that was configured with `manual_off: true`.
+<br>`alert2.get_display_msg` renders the `display_msg` field for an alert and returns it.
 
 More details on these calls are in the [`services.yaml`](https://github.com/redstone99/hass-alert2/blob/master/custom_components/alert2/services.yaml) file in this repo, or in the UI by going to "Developer tools" -> "Actions".
 

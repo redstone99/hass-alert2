@@ -89,3 +89,10 @@ manual_off:
 ack_all:
   name: Ack All
   description: Acks all Alert2 entities
+
+get_display_msg:
+  name: Get Alert display_msg
+  description: Renders the display_msg template on demand and returns result.
+  target:
+    entity:
+      domain: alert2

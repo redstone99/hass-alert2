@@ -17,11 +17,13 @@ import homeassistant.const as haConst
 from   homeassistant.core import HomeAssistant, Context, callback, Event, EventStateChangedData
 from   homeassistant.exceptions import TemplateError, ServiceNotFound, HomeAssistantError
 from   homeassistant.helpers import template as template_helper
+import homeassistant.helpers.entity_registry as er
 from   homeassistant.helpers.event import TrackTemplate, TrackTemplateResult, async_track_template_result
 from   homeassistant.helpers.trigger import async_initialize_triggers
 from   homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from   homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 import homeassistant.util.dt as dt
+from   homeassistant.util import slugify
 
 from .util import (
     create_task,
@@ -153,7 +155,6 @@ class MovingSum:
 
 def getField(fieldName, config, defaultCfg):
     foundVal = False
-    
     if fieldName in defaultCfg['defaults']:
         val = defaultCfg['defaults'][fieldName]
         foundVal = True
@@ -253,7 +254,9 @@ def agoStr(secondsAgo):
 
 def entNameFromDN(domain, name):
     return f'{domain}_{name}'
-
+def getPreferredEntityId(domain, name):
+    return f'alert2.{slugify(entNameFromDN(domain, name))}'
+    
 def renderResultToList(arez):
     if len(arez) == 0:
         return []
@@ -637,7 +640,7 @@ class AlertGenerator(AlertCommon, SensorEntity):
         # "name" here is overloaded. There's the 'name' from the domain+name specified in an alert config
         # then there's the 'name' that is the HA entity's name property.
         # Here we're using the entity name
-        self.nameEntityMap = {} # Map from name -> ent
+        self.idEntityMap = {} # Map from entity_id -> ent
         self._purgeRegistry = False
         
     def setRegistryPurge(self):
@@ -645,10 +648,10 @@ class AlertGenerator(AlertCommon, SensorEntity):
         
     @property
     def state(self) -> str:
-        return len(self.nameEntityMap)
+        return len(self.idEntityMap)
     @property
     def extra_state_attributes(self):
-        return { 'generated_ids': [ ent.entity_id for ent in self.nameEntityMap.values() ] }
+        return { 'generated_ids': [ ent.entity_id for ent in self.idEntityMap.values() ] }
     
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -660,9 +663,9 @@ class AlertGenerator(AlertCommon, SensorEntity):
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
         await self.shutdown()
-        for ent in self.nameEntityMap.values():
+        for ent in self.idEntityMap.values():
             await self.alertData.undeclareAlert(ent.alDomain, ent.alName, removeFromRegistry=self._purgeRegistry) # destroys ent
-        self.nameEntityMap = {}
+        self.idEntityMap = {}
     async def shutdown(self):
         self.tracker.shutdown()
         self.tracker = None
@@ -678,7 +681,7 @@ class AlertGenerator(AlertCommon, SensorEntity):
         
         # Now see if entities are added or deleted
         needWrite = False
-        currNames = set() # entity names (ie the part after alert2.)
+        currIdNameMap = {} # map of entity_id -> name
         sawError = False
         prevDomainName = None
         for idx, elem in enumerate(alist):
@@ -687,7 +690,8 @@ class AlertGenerator(AlertCommon, SensorEntity):
             #    sawError = True
             #    break
             svars = generatorElemToVars(self.hass, elem, idx, prevDomainName)
-            
+
+            #_LOGGER.info(f'name template about to render with vars={svars}')
             try:
                 nameStr = self.config['name'].async_render(variables=svars, parse_result=False).strip()
             except TemplateError as err:
@@ -700,17 +704,19 @@ class AlertGenerator(AlertCommon, SensorEntity):
                 report(DOMAIN, 'error', f'{self.name} Domain template returned err {err}')
                 sawError = True
                 break
-            entName = entNameFromDN(domainStr, nameStr)
-            if entName in currNames:
-                report(DOMAIN, 'error', f'{self.name} is requesting creation of duplicate entity id {entName}. Aborting')
+            
+            entId = getPreferredEntityId(domainStr, nameStr) # slugified, so no intl chars
+            entName = entNameFromDN(domainStr, nameStr) # not slugified, so keeps intl chars
+            if entId in currIdNameMap:
+                report(DOMAIN, 'error', f'{self.name} domain/name alias. generated name "{entName}" conflicts with name "{currIdNameMap[entId]}", both producing entity_id {entId}. Aborting')
                 sawError = True
                 break
-            currNames.add(entName)
+            currIdNameMap[entId] = entName
             prevDomainName = { 'domain': domainStr, 'name': nameStr }
-            hassState = self.hass.states.get(f'alert2.{entName}')
-            if entName in self.nameEntityMap:
+            hassState = self.hass.states.get(entId)
+            if entId in self.idEntityMap:
                 # entity continues to exist
-                ent = self.nameEntityMap[entName]
+                ent = self.idEntityMap[entId]
                 if hassState is None:
                     # If the entity is disabled, it will be removed from hass states, even though
                     # we may still have record of it.
@@ -784,16 +790,18 @@ class AlertGenerator(AlertCommon, SensorEntity):
                     sawError = True
                     break
                 else:
-                    self.nameEntityMap[entName] = ent
+                    self.idEntityMap[entId] = ent
                     needWrite = True
 
         if not sawError:
             # If we saw an error while processing templates, we might be missing entities
             # so don't do any deletions
-            for aname in list(self.nameEntityMap.keys()):
-                if not aname in currNames:
+            for aId in list(self.idEntityMap.keys()):
+                if not aId in currIdNameMap:
                     # entity no longer in list
-                    ent = self.nameEntityMap[aname]
+                    ent = self.idEntityMap[aId]
+                    if aId != ent.entity_id:
+                        report(DOMAIN, 'error', f'{gAssertMsg} whie removing ent from generator {self.name}: {aId} != {ent.entity_id}')
                     hassState = self.hass.states.get(ent.entity_id)
                     if hassState is None:
                         # If entity has been disabled it won't be in hass states even though we have record of it.
@@ -807,7 +815,7 @@ class AlertGenerator(AlertCommon, SensorEntity):
                     _LOGGER.info(f'Lifecycle generator {self.name} removing alert {ent.entity_id}')
                     #await ent.async_remove() # I think this is the complement of async_add_entities
                     await self.alertData.undeclareAlert(ent.alDomain, ent.alName, removeFromRegistry=True) # destroys ent
-                    del self.nameEntityMap[aname]
+                    del self.idEntityMap[aId]
                     needWrite = True
         if needWrite:
             self.async_write_ha_state()
@@ -831,7 +839,7 @@ def notifierTemplateToList(hass, notificationVars, templOrList, sourceTemplate):
             debugInfo.append(f'rendered="{renderRez}"')
             toEval = renderRez
             tstate = hass.states.get(renderRez)
-            if tstate is not None:
+            if tstate is not None and not renderRez.startswith('notify.'):
                 toEval = tstate.state
                 debugInfo.append(f'state="{toEval}"')
             try:
@@ -857,6 +865,10 @@ def notifierTemplateToList(hass, notificationVars, templOrList, sourceTemplate):
             notifiers.append(anotifier)
     return (notifiers, errors, debugInfo)
 
+def notifierExists(hass, anotifier):
+    entRegistry = er.async_get(hass)
+    return (anotifier.startswith('notify.') and entRegistry.async_is_registered(anotifier)) or \
+        (not anotifier.startswith('notify.') and hass.services.has_service('notify', anotifier))
 
 # Functionality common to both event alerts and condition alerts
 #
@@ -1104,6 +1116,16 @@ class AlertBase(AlertCommon, RestoreEntity):
         self.async_write_ha_state()
         self.reminder_check(now)
     
+    async def async_get_display_msg(self):
+        if self._display_msg_template is None:
+            return None
+        try:
+            msg = self._display_msg_template.async_render(variables=self.extraVariables, parse_result=False)
+        except TemplateError as err:
+            raise HomeAssistantError(f'display_msg template render err {err}')
+        _LOGGER.info(f'async_get_display_msg return {msg}')
+        return msg
+        
     async def async_ack(self):
         now = dt.now()
         self.ack_int(now)
@@ -1240,7 +1262,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         for anotifier in notifiers:
             if alertData.delayedNotifierMgr.willDefer(anotifier, args):
                 defer_notifier_list.append(anotifier)
-            elif self.hass.services.has_service('notify', anotifier):
+            elif notifierExists(self.hass, anotifier):
                 notifier_list.append(anotifier)
             else:
                 errMsg = f'{sourceTemplate} "{anotifier}" is not known to HA.'
@@ -1536,14 +1558,27 @@ class AlertBase(AlertCommon, RestoreEntity):
                                 if 'data' not in args:
                                     args['data'] = {}
                                 args['data']['notification_id'] = PersistantNotificationHelper.genNotificationId(self)
+                        if notifier.startswith('notify.'):
+                            args['entity_id'] = notifier
+                        elif 'entity_id' in args:
+                            del args['entity_id']
                         try:
-                            await self.hass.services.async_call('notify', notifier, # eg 'raw_jtelegram'
-                                                                args)
+                            if notifier.startswith('notify.'):
+                                await self.hass.services.async_call('notify', 'send_message', args)
+                            else:
+                                await self.hass.services.async_call('notify', notifier, # eg 'raw_jtelegram'
+                                                                    args)
                         except ServiceNotFound:
                             # We check has_service and depend on notify in manifest,
                             # so this should never happen.  But don't report in case it's for alert2.error
                             # so we don't loop.
                             _LOGGER.error(f'{gAssertMsg} {self.name} Somehow notify of {notifier} failed with ServiceNotFound. args={args}')
+                        except vol.error.MultipleInvalid as err:
+                            if notifier.startswith('notify.'):
+                                report(DOMAIN, 'error', f'New notifiers (those starting with "notify.") at present support only "message" and "title" parameters. If you want to specify extra parameters like "data", you must use the legacy notifier system.  Actual error:  {err}')
+                            else:
+                                raise
+                            
                     #futures = [ self.hass.services.async_call(
                     #    'notify', notifier, # eg 'raw_jtelegram'
                     #    args) for notifier in notifier_list ]
@@ -1709,7 +1744,7 @@ class ConditionAlert(AlertBase):
         self._done_message_template = config['done_message'] if 'done_message' in config else None
         if self._done_message_template is not None:
             self._done_message_template.hass = hass
-        self._reminder_message_template = config['reminder_message'] if 'reminder_message' in config else None
+        self._reminder_message_template = getField('reminder_message', config, defaultCfg)
         if self._reminder_message_template is not None:
             self._reminder_message_template.hass = hass
         self._supersede_debounce_secs = getField('supersede_debounce_secs', config, defaultCfg)
@@ -1914,7 +1949,15 @@ class ConditionAlert(AlertBase):
                 cancel_task(DOMAIN, self.cond_true_task)
                 self.cond_true_task = None
         return False
-        
+
+    # Throw exceptions on template errors
+    def get_message_or_exception(self, reason: NotificationReason):
+        if self._message_template is None:
+            return f'turned on'
+        else:
+            notificationVars = self.getNotificationVars(reason)
+            return self._message_template.async_render(variables=notificationVars, parse_result=False)
+    
     def update_state_internal(self, state:bool):
         if not isinstance(state, bool):
             report(DOMAIN, 'error', f'{gAssertMsg} update_state_internal ignoring call with non-bool {state} type={type(state)} for {self.name}')
@@ -1943,16 +1986,11 @@ class ConditionAlert(AlertBase):
             if state:
                 _LOGGER.warning(f'Activity {self.entity_id} turned on')
                 reason = NotificationReason.Fire
-                msg = '' #'fired.'
-                if self._message_template is None:
-                    msg = f'turned on'
-                else:
-                    notificationVars = self.getNotificationVars(reason)
-                    try:
-                        msg = self._message_template.async_render(variables=notificationVars, parse_result=False)
-                    except TemplateError as err:
-                        report(DOMAIN, 'error', f'{self.name} Condition template: {err}')
-                        return
+                try:
+                    msg = self.get_message_or_exception(reason)
+                except TemplateError as err:
+                    report(DOMAIN, 'error', f'{self.name} Condition template: {err}')
+                    return
                 self._notify_pre_debounce(now, reason, msg)
                 self.reminder_check(now)
             else:
@@ -2011,6 +2049,14 @@ class ConditionAlert(AlertBase):
                     evars = self.getNotificationVars(reason)
                     evars['on_secs'] = on_secs
                     evars['on_time_str'] = agoStr(on_secs)
+                    def get_msg_handler():
+                        try:
+                            msg = self.get_message_or_exception(reason)
+                        except TemplateError as err:
+                            report(DOMAIN, 'error', f'{self.name} reminder_message referred to message with had render error: {err}')
+                            return 'on [ message template error ]'
+                        return msg
+                    evars['get_message'] = get_msg_handler
                     try:
                         msg += self._reminder_message_template.async_render(variables=evars, parse_result=False)
                     except TemplateError as err:
@@ -2053,6 +2099,9 @@ class ConditionAlert(AlertBase):
         if len(results) > 0:
             report(DOMAIN, 'error', f'{gAssertMsg} {self.name}.  wrong number of tracked condition/threshold parameters')
             return
+
+        #_LOGGER.info(f'in cond_val_update: max_val={max_val} min_val={min_val} thresh_val={thresh_val} thresh_hyst={thresh_hyst}')
+        # assert isinstance(max_val, float) and isinstance(min_val, float) and isinstance(thresh_val, float)
 
         if max_val is not None and min_val is not None and min_val > max_val:
             report(DOMAIN, 'error', f'{self.name}: threshold bounds error min > max ({min_val} > {max_val})')

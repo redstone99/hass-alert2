@@ -20,18 +20,18 @@ from   homeassistant.const import (
     EVENT_HOMEASSISTANT_STOP,
     EVENT_HOMEASSISTANT_STARTED
 )
-from   homeassistant.core import HomeAssistant, Event
+from   homeassistant.core import HomeAssistant, Event, SupportsResponse
+from   homeassistant.exceptions import HomeAssistantError
 from   homeassistant.helpers import discovery
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.service import async_register_admin_service
 import homeassistant.helpers.config_validation as cv
-from   homeassistant.helpers.entity_component import EntityComponent
-from   homeassistant.helpers.typing import ConfigType
 from   homeassistant.helpers.entity import Entity
+from   homeassistant.helpers.entity_component import EntityComponent
+import homeassistant.helpers.entity_registry as entity_registry
+from   homeassistant.helpers.service import async_register_admin_service
+from   homeassistant.helpers.typing import ConfigType
 from   homeassistant.helpers import template as template_helper
 from   homeassistant.helpers import trigger as trigger_helper
 import homeassistant.util.dt as dt
-import homeassistant.helpers.entity_registry as entity_registry
 
 from .config import (
     DEFAULTS_SCHEMA,
@@ -42,7 +42,8 @@ from .config import (
     TOP_LEVEL_SCHEMA_INTERNAL,
 )
 from .entities import (
-    EventAlert, ConditionAlert, AlertGenerator, NotificationReason, mergeDataDict
+    EventAlert, ConditionAlert, AlertGenerator, NotificationReason, mergeDataDict, getPreferredEntityId,
+    notifierExists
 )
 from .ui import ( UiMgr )
 from .util import (
@@ -132,7 +133,7 @@ async def async_setup(hass, config: ConfigType):
     if DOMAIN in hass.data:
         _LOGGER.error('Somehow async_setup invoked after already initialized. Should never happen')
         assert False # die hard here.
-    _LOGGER.info('Setting up Alert2')
+    _LOGGER.info(f'Setting up Alert2')
 
     set_global_hass(hass)
     data = Alert2Data(hass, config)
@@ -194,7 +195,7 @@ class DelayedNotifierMgr:
             for anotifier in list(self.delayed_notifiers.keys()):
                 if self.notifier_deferred(anotifier):
                     pass
-                elif self._hass.services.has_service('notify', anotifier):
+                elif notifierExists(self._hass, anotifier):
                     nlist = self.delayed_notifiers[anotifier]
                     del self.delayed_notifiers[anotifier]
                     for args in nlist:
@@ -219,8 +220,7 @@ class DelayedNotifierMgr:
         #_LOGGER.debug(f'willDefer called for {anotifier} with {self.startupWaitDone} and {self.notifier_startup_grace_secs} and {self.notifier_deferred(anotifier)} and {self.defer_startup_notifications}')
         if self.startupWaitDone:
             return False
-        if self._hass.services.has_service('notify', anotifier) and \
-           not self.notifier_deferred(anotifier):
+        if notifierExists(self._hass, anotifier) and not self.notifier_deferred(anotifier):
             return False
         if not anotifier in self.delayed_notifiers:
             _LOGGER.info(f'Adding {anotifier} to delayed_notifiers')
@@ -477,6 +477,7 @@ class Alert2Data:
         self.supersedeMgr = SupersedeMgr()
         self.gcTask = None
         self.supersedeNotifyMgr = SupersedeNotifyMgr(self)
+        self.entityIdMap = {} # to detect collisions in slugified domain+name combos
 
     def noteUiUpdate(self):
         tmpUiConfig = copy.deepcopy(self.rawYamlBaseTopConfig)
@@ -512,7 +513,8 @@ class Alert2Data:
                 'priority': 'low',
                 'supersede_debounce_secs': 0.5,
                 'icon': 'mdi:alert',
-                'persistent_notifier_grouping': 'separate'
+                'persistent_notifier_grouping': 'separate',
+                'reminder_message': None,
             },
             # Optional defaults for internal alerts
             'tracked': [
@@ -660,6 +662,12 @@ class Alert2Data:
                 cv.make_entity_service_schema(EMPTY_SCHEMA),
                 "async_manual_off",
             )
+            self.component.async_register_entity_service(
+                'get_display_msg',
+                cv.make_entity_service_schema(EMPTY_SCHEMA),
+                "async_get_display_msg",
+                supports_response = SupportsResponse.ONLY
+            )
             async_register_admin_service(
                 self._hass,
                 DOMAIN,
@@ -696,6 +704,10 @@ class Alert2Data:
             names = list(self.alerts[domain].keys())
             for name in names:
                 await self.undeclareAlert(domain, name)
+        if self.entityIdMap:
+            repot(DOMAIN, 'error', f'{gAssertMsg} In unload_alerts, entityIdMap not empty after unloading alerts: {list(self.entityIdMap.keys())}')
+            self.entityIdMap = {}
+        
         # then condition alerts
         # need to unload them so an alert is not unloaded until any alert it transitively supersedes has
         # been unloaded. This is to prevent notificaitons getting sent out between the two unloadings.
@@ -719,9 +731,11 @@ class Alert2Data:
         _LOGGER.info('Lifecycle reload first removed all Alert2 alerts before reloading')
         
         conf = await self.component.async_prepare_reload(skip_reset=True)
-        if conf is None:
-            conf = {DOMAIN: {}}
-        self._rawYamlConfig = conf[DOMAIN]
+        # conf can be {} if there is no YAML entry for alert2. I forget when conf can be None
+        if conf is None or DOMAIN not in conf:
+            self._rawYamlConfig = {}
+        else:
+            self._rawYamlConfig = conf[DOMAIN]
         await self.init2()
         # Redo prior calls to declareEventMulti() from other components
         if self.declEvMultiArr:
@@ -763,7 +777,7 @@ class Alert2Data:
 
     # stage 1 is for supersedes.  Stage 2 is to declare the alerts
     # loadAlertBlock returns entities that loaded successfully and psuedo-ents that failed to load
-    async def loadAlertBlock(self, aRawCfg):
+    async def loadAlertBlock(self, aRawCfg, fromUI=False):
         failedEnts = []
         entities = []
         if 'tracked' in aRawCfg and isinstance(aRawCfg['tracked'], list):
@@ -786,7 +800,7 @@ class Alert2Data:
                     entities.append(newEnt)
                 else:
                     if not skipReport:
-                        fullMsg = f'{newEnt}. UI Alert failed to load due to duplicate, so will not appear in Alert Manager'
+                        fullMsg = f'{newEnt}.' + (' UI Alert failed to load due to duplicate, so will not appear in Alert Manager' if fromUI else '')
                         report(DOMAIN, 'error', fullMsg) # newEnt has errMsg
                     failedEnts.append({ 'domain': obj['domain'], 'name': obj['name'] })
                     
@@ -896,6 +910,15 @@ class Alert2Data:
             if entRegistry.async_is_registered(entId):
                 _LOGGER.info(f'Removing undeclared registry entry for {entId}')
                 entRegistry.async_remove(entId)
+
+        preferred_entity_id = getPreferredEntityId(domain, name)
+        if preferred_entity_id in self.entityIdMap:
+            del self.entityIdMap[preferred_entity_id]
+        else:
+            errMsg = f'domain={domain} name={name} not found in entityIdMap for removal'
+            if doReport:
+                report(DOMAIN, 'error', f'{gAssertMsg} {errMsg}')
+            return errMsg
         
         return None
 
@@ -1014,8 +1037,16 @@ class Alert2Data:
             return f'zero length domain with name="{name}"'
         if len(name) == 0:
             return f'zero length name with domain="{domain}"'
+
+        # HA slugifies entitiy name to create the entity_id, in helpers/entity_registry::async_generate_entity_id
+        # So umlautes and other symbols get converted to nearest ASCII equivalent.
+        # So two distinct domain/name pairs can result in same entity_id, resulting in HA appending a _2
+        preferred_entity_id = getPreferredEntityId(domain, name)
+        if preferred_entity_id in self.entityIdMap:
+            cc = self.entityIdMap[preferred_entity_id]
+            return f'Domain/name alias. d={domain}/n={name} and d={cc.alDomain}/n={cc.alName} both produce entity_id={preferred_entity_id}. Two alerts have domain/names that are distinct yet will conflict when HA converts them to entity_id, resulting in one with _2 appended, which probably isn\'t what you want. HA uses slugify to generate entity_id, which converts international characters to closets ASCII equivalent (eg stripping umlautes)'
         return None
-            
+    
     # Declare a single event alert
     # Return errMsg or ent
     def declareEvent(self, domain, name):
@@ -1037,6 +1068,7 @@ class Alert2Data:
             self.tracked[domain] = {}
         entity = EventAlert(self._hass, self, config, self.topConfig)
         self.tracked[domain][name] = entity
+        self.entityIdMap[getPreferredEntityId(domain, name)] = entity
         #self.notifiers.add(entity.notifier)
         return entity
     # declare single condition alert
@@ -1058,6 +1090,7 @@ class Alert2Data:
             self.alerts[domain] = {}
         entity = ConditionAlert(self._hass, self, config, self.topConfig, genVars=genVars)
         self.alerts[domain][name] = entity
+        self.entityIdMap[getPreferredEntityId(domain, name)] = entity
         #self.notifiers.add(entity.notifier)
         return entity
         
@@ -1072,6 +1105,7 @@ class Alert2Data:
             return errMsg
         entity = AlertGenerator(self._hass, self, config, rawConfig)
         self.generators[name] = entity
+        self.entityIdMap[getPreferredEntityId(domain, name)] = entity
         return entity
         
     # declare multiple event alerts, and also unhandled_exception

@@ -125,7 +125,7 @@ def prepStrConfigField(fname, tval, doReport=True):
         return parse_yaml(tval)
     elif fname in [ 'annotate_messages', 'ack_required', 'manual_off', 'manual_on', 'priority', 'icon', 'friendly_name',
                     'title', 'target', 'domain', 'name', 'message', 'done_message',
-                    'reminder_message', 'ack_reminder_message', 'ack_reminders_only',
+                    'ack_reminder_message', 'ack_reminders_only',
                     'condition', 'condition_on', 'condition_off', 'early_start', 'supersede_debounce_secs',
                     'persistent_notifier_grouping',
                     # We have entries for both "threshold." prefixed values
@@ -138,8 +138,9 @@ def prepStrConfigField(fname, tval, doReport=True):
                     'generator_name', 'skip_internal_errors', 'notifier_startup_grace_secs' ]:
         # Should not need yaml parsing
         return tval
-    elif fname in [ 'display_msg' ]:
-        if tval == 'null':
+    elif fname in [ 'display_msg', 'reminder_message' ]:
+        stripped_tval = tval.strip()
+        if stripped_tval == 'null':
             return parse_yaml(tval)
         return tval
     else:
@@ -328,6 +329,8 @@ class RenderValueView(HomeAssistantView):
         if addNotificationVars:
             fakeEnt = types.SimpleNamespace(extraVariables=extraVars, entity_id='fake_entity_id', alDomain='dom', alName='nam')
             notificationVars = AlertBase.getNotificationVars(fakeEnt, NotificationReason.Fire)
+            if name == 'reminder_message':
+                notificationVars['get_message'] = lambda : '[ message placeholder ]'
         else:
             notificationVars = extraVars
         
@@ -642,8 +645,10 @@ class UiMgr:
 
     async def declareAlerts(self):
         cfg = self.getPreppedConfig()
+        _LOGGER.info(f'Got prepped config of {cfg}')
+       
         if cfg is not None:
-            (self.entities, self.failedEnts) = await self._alertData.loadAlertBlock(cfg)
+            (self.entities, self.failedEnts) = await self._alertData.loadAlertBlock(cfg, fromUI=True)
             _LOGGER.info(f'Lifecycle created {len(self.entities)} alerts from UI config')
         
     def saveTopConfig(self, topConfig):

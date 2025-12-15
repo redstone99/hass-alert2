@@ -8,6 +8,7 @@ import re
 from functools import lru_cache
 from   homeassistant.core import callback
 from   homeassistant.helpers import template as template_helper
+from homeassistant.util.hass_dict import HassKey
 from .util import (GENERATOR_DOMAIN, PersistantNotificationHelper)
 
 TemplateVarsType = None
@@ -24,8 +25,34 @@ def entity_id_regex_extract(seq, find, ignorecase=False):
         m = regex.match(entity_id)
         if bool(m):
             yield  { "genEntityId": entity_id, "genGroups": list(m.groups()) }
-                
-class JTemplate(template_helper.Template):
+
+_GENERATOR_ENVIRONMENT = HassKey("template.environment_alert2_generator")
+#_REMINDER_ENVIRONMENT  = HassKey("template.environment_alert2_reminder")
+
+class CustomTemplate(template_helper.Template):
+    def _get_env(self, wanted_env, extra_lambda):
+        # Mostly copied from template_helper.Template::_env()
+        
+        # The _env() code caches environments so they're not created on each eval.
+        # We can't add extra functionality to one of those because it would pollute
+        # the environment that the rest of HA uses.
+        # So we want our own environment. And may as well cache it like the super() version does.
+        if self.hass is None:
+            return _NO_HASS_ENV
+        # Bypass cache if a custom log function is specified
+        if self._log_fn is not None:
+            ret = template_helper.TemplateEnvironment(self.hass, self._limited, self._strict, self._log_fn)
+            extra_lambda(ret)
+        else:
+            wanted_env = _GENERATOR_ENVIRONMENT # no option for limited or strict
+            if (ret := self.hass.data.get(wanted_env)) is None:
+                ret = self.hass.data[wanted_env] = template_helper.TemplateEnvironment(
+                    self.hass, self._limited, self._strict, self._log_fn
+                )
+                extra_lambda(ret)
+        return ret
+
+class JTemplate(CustomTemplate): #template_helper.Template):
     @callback
     def async_render_to_info(
             self,
@@ -54,10 +81,9 @@ class JTemplate(template_helper.Template):
         return ri
     @property
     def _env(self):
-        env = super()._env
-        env.filters['entity_regex'] = entity_id_regex_extract
-        return env
-
+        def add(env):
+            env.filters['entity_regex'] = entity_id_regex_extract
+        return self._get_env(_GENERATOR_ENVIRONMENT, add)
 
 def boolTemplate(cond):
     # we haven't done a voluptuous validation yet, so don't know what type cond is
@@ -235,6 +261,7 @@ DEFAULTS_SCHEMA = vol.Schema({
                                                           PersistantNotificationHelper.Collapse,
                                                           PersistantNotificationHelper.CollapseAndDismiss,
                                                           msg=f'must be one of "{PersistantNotificationHelper.Separate}", "{PersistantNotificationHelper.Collapse}" or "{PersistantNotificationHelper.CollapseAndDismiss}"'),
+    vol.Optional('reminder_message'): vol.Any(None, cv.template),
 })
 DEFAULTS_SCHEMA_INTERNAL = DEFAULTS_SCHEMA.extend({
     vol.Optional('data'): vol.Any(jDictTemplate, [ jDictTemplate ]),
@@ -301,7 +328,7 @@ SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Optional('condition_on'): boolTemplate,
     vol.Optional('trigger_on'): jProtectedTrigger,
     vol.Optional('manual_on'): cv.boolean,
-    vol.Optional('reminder_message'): cv.template,
+    vol.Optional('reminder_message'): vol.Any(None, cv.template),
     vol.Optional('done_message'): cv.template,
     vol.Optional('early_start'): cv.boolean,
     vol.Optional('supersede_debounce_secs'): vol.All(vol.Coerce(float), vol.Range(min=0)),
