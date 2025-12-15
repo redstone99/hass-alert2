@@ -158,6 +158,8 @@ async def test_server(recorder_mock, enable_custom_integrations, hass, hass_stor
         return await handler(request)
     hass.http.app.middlewares.append(auth_middleware)
     hass.http.register_view(JTestView(hass, hass_storage, monkeypatch))
+    #assert await async_setup_component(hass, "frontend", {})
+    await hass.http.start()
     await hass.async_start()
     async with done:
         await done.wait()
