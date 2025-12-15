@@ -29,6 +29,7 @@ from custom_components.alert2.util import (     GENERATOR_DOMAIN,
                                            )
 import homeassistant.const
 from homeassistant import config as conf_util
+from   homeassistant.exceptions import HomeAssistantError
 import homeassistant.helpers.restore_state as rs
 import homeassistant.helpers.entity_registry as er
 import homeassistant.helpers.entity_platform as ep
@@ -3723,6 +3724,28 @@ async def test_display_msg(hass, service_calls):
 
     # Make sure doc is correct saying "null" works
     assert parse_yaml("x: null") == { 'x': None }
+
+async def test_display_msg2(hass, service_calls):
+    cfg = {'alert2': { 'alerts': [
+         { 'domain': 'test', 'name': 't1', 'condition': 'off', 'display_msg': '{{ "yay" }}' },
+         { 'domain': 'test', 'name': 't2', 'condition': 'off' },
+         { 'domain': 'test', 'name': 't3', 'condition': 'off', 'display_msg': '{{ yayz - 3  }}' },
+        ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    msg = await hass.services.async_call('alert2','get_display_msg', { 'entity_id': 'alert2.test_t1' }, blocking=True, return_response=True)
+    assert msg == {'alert2.test_t1': 'yay'}
+    msg = await hass.services.async_call('alert2','get_display_msg', { 'entity_id': 'alert2.test_t2' }, blocking=True, return_response=True)
+    assert msg == {'alert2.test_t2': None }
+    try:
+        msg = await hass.services.async_call('alert2','get_display_msg', { 'entity_id': 'alert2.test_t3' }, blocking=True, return_response=True)
+    except HomeAssistantError as er:
+        assert 'yayz' in str(er)
+    else:
+        assert False
     
 async def test_priority(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [

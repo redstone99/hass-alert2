@@ -2046,10 +2046,12 @@ async def test_intl(hass, service_calls, hass_storage, hass_client):
     assert set(gad.alerts['d'].keys()) == set([ 't1_a', 't1_ö'])
 
 async def test_reminder_msg(hass, service_calls, hass_storage, hass_client):
-    cfg = { 'alert2' : { 'defaults': { 'reminder_message': 'foo' }, 'alerts' : [
-        ]}}
+    cfg = { 'alert2' : { 'defaults': {
+        'reminder_message': 'foo'
+    }, 'alerts' : []}}
     uiCfg = { 'defaults' : { },
               'alerts' : [
+                  # null overrides default, restoring to native default
                   { 'domain': 'd', 'name': 't1', 'condition': 'off', 'reminder_message': 'null' },
               ]
              }
@@ -2060,5 +2062,4 @@ async def test_reminder_msg(hass, service_calls, hass_storage, hass_client):
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     gad = hass.data[DOMAIN]
-    assert gad.alerts['d']['t1']
     assert gad.alerts['d']['t1']._reminder_message_template == None
