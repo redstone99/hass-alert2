@@ -2582,7 +2582,7 @@ async def test_generator6(hass, service_calls):
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'conflicts with name "test_dupname"')
+    service_calls.popNotifyEmpty('persistent_notification', '"a2" conflicts with "a1", .* alert2.test_dupname')
     #assert service_calls.isEmpty()
     
     gad = hass.data[DOMAIN]
@@ -4415,7 +4415,7 @@ async def test_intl(hass, service_calls):
     service_calls.popNotifySearch('persistent_notification', 'd=döäü/n=toäü and d=döäü/n=töau', 'Domain/name alias.*produce entity_id=alert2.doau_toau')
     service_calls.popNotifySearch('persistent_notification', 'd=döäü/n=töäü and d=döäü/n=töau', 'Domain/name alias.*produce entity_id=alert2.doau_toau')
     service_calls.popNotifySearch('persistent_notification', 'd=döäü/n=toau and d=döäü/n=töau', 'Domain/name alias.*produce entity_id=alert2.doau_toau')
-    service_calls.popNotifySearch('persistent_notification', '_g1', 'generated name "d_ä" conflicts with name "d_a"')
+    service_calls.popNotifySearch('persistent_notification', '_g1', 'generated element "ä" conflicts with "a"')
     assert service_calls.isEmpty()
 
     await setAndWait(hass, "sensor.a", 'on')
@@ -4431,17 +4431,3 @@ async def test_intl(hass, service_calls):
     gad = hass.data[DOMAIN]
     for it in gad.alerts['döäü'].keys():
         _LOGGER.info(f'Key={it} id={gad.alerts["döäü"][it].entity_id}  uid={gad.alerts["döäü"][it].unique_id}')
-    
-async def test_reminder_msg(hass, service_calls):
-    await setAndWait(hass, "sensor.a", 'off')
-    cfg = { 'alert2' : { 'alerts': [
-        { 'domain': 'd', 'name': 't1', 'condition': 'sensor.a', 'reminder_message': '{{ message }}' },
-    ]}}
-    assert await async_setup_component(hass, DOMAIN, cfg)
-    await hass.async_start()
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    gad = hass.data[DOMAIN]
-    t1 = gad.alerts['d']['t1']
-    _LOGGER.info(t1._reminder_message_template)
-    

@@ -681,7 +681,7 @@ class AlertGenerator(AlertCommon, SensorEntity):
         
         # Now see if entities are added or deleted
         needWrite = False
-        currIdNameMap = {} # map of entity_id -> name
+        currIdNameMap = {} # map of entity_id -> elem
         sawError = False
         prevDomainName = None
         for idx, elem in enumerate(alist):
@@ -708,10 +708,13 @@ class AlertGenerator(AlertCommon, SensorEntity):
             entId = getPreferredEntityId(domainStr, nameStr) # slugified, so no intl chars
             entName = entNameFromDN(domainStr, nameStr) # not slugified, so keeps intl chars
             if entId in currIdNameMap:
-                report(DOMAIN, 'error', f'{self.name} domain/name alias. generated name "{entName}" conflicts with name "{currIdNameMap[entId]}", both producing entity_id {entId}. Aborting')
+                elemStr = f'"{elem}"' if isinstance(elem, str) else elem
+                oldElem = currIdNameMap[entId]
+                oldElemStr = f'"{oldElem}"' if isinstance(oldElem, str) else oldElem
+                report(DOMAIN, 'error', f'{self.name} domain/name alias. generated element {elemStr} conflicts with {oldElemStr}, both producing entity_id {entId}. Aborting')
                 sawError = True
                 break
-            currIdNameMap[entId] = entName
+            currIdNameMap[entId] = elem
             prevDomainName = { 'domain': domainStr, 'name': nameStr }
             hassState = self.hass.states.get(entId)
             if entId in self.idEntityMap:
@@ -1319,12 +1322,15 @@ class AlertBase(AlertCommon, RestoreEntity):
         normal_remaining_secs = 0
         if reason in [ NotificationReason.ReminderOn, NotificationReason.ReminderToAck ]:
             reminder_frequency_mins = self.calc_next_reminder_frequency_mins(now)
-            # We use last_tried_notify_time rather than last_notified_time here becuase we may not have
-            # actually been notifying due to being superseded by another alert.
-            if self.last_tried_notify_time and reminder_frequency_mins > 0:
-                secs_since_last = (now - self.last_tried_notify_time).total_seconds()
-                next_secs = reminder_frequency_mins * 60.0
-                normal_remaining_secs = max(0, next_secs - secs_since_last)
+            if not self.reminder_frequency_mins: # list is empty
+                normal_remaining_secs = 60 * reminder_frequency_mins # reminder is always a month away (aka no reminders)
+            else:
+                # We use last_tried_notify_time rather than last_notified_time here becuase we may not have
+                # actually been notifying due to being superseded by another alert.
+                if self.last_tried_notify_time and reminder_frequency_mins > 0:
+                    secs_since_last = (now - self.last_tried_notify_time).total_seconds()
+                    next_secs = reminder_frequency_mins * 60.0
+                    normal_remaining_secs = max(0, next_secs - secs_since_last)
 
         if self.notified_max_on and max_limit_remaining_secs == 0:
             # If throttling turned off, it overrides the notification frequency setting
@@ -1354,6 +1360,8 @@ class AlertBase(AlertCommon, RestoreEntity):
         return (remaining_secs, freas)
             
     def calc_next_reminder_frequency_mins(self, now):
+        if not self.reminder_frequency_mins: # list is empty
+            return 30*24*60
         # For condition alert, the alert may off and this may be called as part of can_notify_now() after throttling ended.
         # or alert may be off and this is called due to delayed_init
         #
