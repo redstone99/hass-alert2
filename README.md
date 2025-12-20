@@ -295,7 +295,7 @@ The `defaults:` subsection specifies optional default values for parameters comm
 
 | Key | Type | Description |
 |---|---|---|
-| `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration).<br>Defaults to 60 minutes if not specified. Minimum is 0.01 min.<br>Also used to control ack reminders for event or condition alerts that have `ack_required` set. |
+| `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration). If it is the empty list then no reminders are sent.<br>Defaults to 60 minutes if not specified. Minimum is 0.01 min.<br>Also used to control ack reminders for event or condition alerts that have `ack_required` set. |
 | `reminder_message` | template | Template string evaluated each time a reminder notification will be sent. Variable `on_secs` contains float seconds alert has been on.  Variable `on_time_str` contains time alert has been on as a string. The function `get_message()` will produce the `message` field. <br>Defaults to: ` on for {{ on_time_str }}`<br><br>Any message specified here will be prepended with alert domain and name unless `annotate_messages` is false.
 | `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. If specifying a legacy notifier, the service called will be `"notify." + notifier`.  If specifying a notify entity, Alert2 calls `notify.send_message`. <br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers, an entity name whose state is a list of notifiers, a template that evaluates to either, or "null" to indicate no notification. See [Notifier Config](#notifier-config) section below for possibilities here.  |
 | `summary_notifier` | bool or template | True to send summaries (see [Notifiers](#notifiers) section for detail) using the same notifier as other notifications.  False to not send summaries.  Or can be a template similar to `notifier` parameter to specify notifier to use for summaries. Default is `false`. |
@@ -879,7 +879,9 @@ alert2:
 entity_regex( find_regex, ignorecase=False )
 ````
 
-`find_regex` specifies the regex test to apply to the entity_id of each entity. For each entity that matches, the output list includes a dictionary that maps "genEntityId" to the matched entity_id and `genGroups` to the list of regex groups (using match.groups())
+`find_regex` is a regex tested against the entity_id of each entity. `find_regex` is tested using regex `match()`, which identifies matches only at the start of the entity_id string.  To ensure matches match the entire entity_id rather than just a prefix, be sure to end your `find_regex` with "$".
+
+For each entity that matches, the output list includes a dictionary that maps "genEntityId" to the matched entity_id and `genGroups` to the list of regex groups (using match.groups())
 
 Here are some examples intended to match temperature sensors such as `sensor.temp_fl1`, `sensor.temp_fl2` and so forth.
 

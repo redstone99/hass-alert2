@@ -339,6 +339,25 @@ async def test_reminder4(hass, service_calls):
     service_calls.popNotifySearch('persistent_notification', 't5b', r'test_t5b: turned off')
     service_calls.popNotifyEmpty('persistent_notification', r'test_t5a: turned off')
 
+async def test_reminder5(hass, service_calls):
+    hass.states.async_set("sensor.b1", "off")
+    cfg = { 'alert2' : { 'alerts' : [
+                             { 'domain': 'test', 'name': 't1', 'condition': 'sensor.b1', 'reminder_frequency_mins': [] },
+                         ], } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, 'sensor.b1', 'on')
+    service_calls.popNotifyEmpty('persistent_notification', r'test_t1: turned on')
+
+    gad = hass.data[DOMAIN]
+    assert gad.alerts['test']['t1'].state == 'on'
+
+    await asyncio.sleep(0.1)
+    assert service_calls.isEmpty()
+    
 def resetModuleLoadTime():
     alert2.moduleLoadTime = rawdt.datetime.now(rawdt.UTC)
 
@@ -2482,7 +2501,11 @@ async def test_generator5(hass, service_calls):
         { 'domain': 'test', 'name': '{{ genEntityId|replace("sensor.foo1_bar","foo1") }}d', 'generator_name': 'g15',
           'generator': "{{ states|selectattr('entity_id','equalto','sensor.foo1_bar')|map(attribute='entity_id')|list }}",
           'message': 'ee={{genRaw}} rr={{genEntityId}}',
-          'condition': '{{ states(genEntityId) }}' }
+          'condition': '{{ states(genEntityId) }}' },
+        { 'domain': 'test', 'name': '{{ genGroups[0] }}_e', 'generator_name': 'g16',
+          'generator': "{{ states|entity_regex('sensor\.([^_]*)_foo')|list }}",
+          'condition': 'off' },
+        
     ]}}
     hass.states.async_set("sensor.ickbar", 'foo')
     hass.states.async_set("sensor.foo1_bar", 'on')
@@ -2494,9 +2517,10 @@ async def test_generator5(hass, service_calls):
     await hass.async_block_till_done()
 
     service_calls.popNotifySearch('persistent_notification', 'test_foo1c', 'test_foo1c: turned on')
+    service_calls.popNotifySearch('persistent_notification', 'g16', 'domain/name alias.*sensor.z_foo2.*sensor.z_foo1')
     service_calls.popNotifyEmpty('persistent_notification', 'test.foo1d: ee=sensor.foo1_bar rr=sensor.foo1_bar') # turned on
     gad = hass.data[DOMAIN]
-    assert len(gad.generators) == 5
+    assert len(gad.generators) == 6
     g11 = gad.generators['g11']
     assert g11.state == 2
     assert gad.alerts['test']['foo1'].state == 'off'
