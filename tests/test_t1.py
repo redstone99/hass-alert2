@@ -879,6 +879,60 @@ async def test_delay_on(hass, service_calls):
     assert hass.states.get('alert2.test_t12a').state == 'off'
     service_calls.popNotifyEmpty('persistent_notification', 'test_t12a: turned off')
 
+async def test_delay_on2(hass, service_calls):
+    hass.states.async_set("sensor.a", "off")
+    hass.states.async_set("sensor.d", "10")
+    hass.states.async_set("sensor.d2", "10")
+    hass.states.async_set("sensor.d3", "bad")
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a', 'delay_on_secs': 'sensor.d' },
+        # Alert is on from the getgo, should still wait till delay_on_secs is evaluted and so not fire.
+        { 'domain': 'test', 'name': 't2', 'condition': 'on', 'delay_on_secs': 'sensor.d2' },
+        { 'domain': 'test', 'name': 't3', 'condition': 'on', 'delay_on_secs': 'sensor.d3' },
+    ], } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t3.*template rendered to "bad"')
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, 'sensor.a', 'on')
+    # alert should not have fired
+    assert service_calls.isEmpty()
+    assert hass.states.get('alert2.test_t1').state == 'off'
+    # Still no firing
+    await setAndWait(hass, 'sensor.d', '9')
+    assert service_calls.isEmpty()
+    await asyncio.sleep(1)
+    await setAndWait(hass, 'sensor.d', '2')
+    assert service_calls.isEmpty()
+    # Now a second has passed and we set delay to less than that, so alarm should immediately fire
+    await setAndWait(hass, 'sensor.d', '0.7')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t1: turned on')
+    await setAndWait(hass, 'sensor.a', 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t1: turned off')
+
+    # Now set short, and lengthen and make sure doesn't fire with short interval
+    await setAndWait(hass, 'sensor.d', '0.2')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.a', 'on')
+    assert service_calls.isEmpty()
+    await asyncio.sleep(0.05)
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.d', '5')
+    await asyncio.sleep(1)
+    assert service_calls.isEmpty()
+    await setAndWait(hass, 'sensor.a', 'off')
+    assert service_calls.isEmpty()
+
+    # When sensor.d3 finally becomes a legit value, we can consider turning on the alarm.
+    #hass.states.async_set("sensor.d3", "bad")
+    await setAndWait(hass, 'sensor.d3', '0.5')
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t3: turned on')
+
+
+    
 async def test_threshold(hass, service_calls):
     cfg = { 'alert2' : { 'alerts' : [
         { 'domain': 'test', 'name': 't13a', 'condition': '{{ "xxx" }}', 'threshold': { 'value': "{{ 'zzz' }}", 'hysteresis': 3, 'minimum': 0 } },
@@ -3839,8 +3893,11 @@ async def test_delay_on_secs(hass, service_calls):
         { 'domain': 'test', 'name': 't3', 'condition': 'off', 'delay_on_secs': '4' },
         { 'domain': 'test', 'name': 't4', 'condition': 'off', 'delay_on_secs': 'foo' },
         { 'domain': 'test', 'name': 't5', 'condition': 'off', 'delay_on_secs': -2 },
-        # Template only allowed in generator
-        { 'domain': 'test', 'name': 't6', 'condition': 'off', 'delay_on_secs': '{{ 5 }}' },
+        { 'domain': 'test', 'name': 't6a', 'condition': 'off', 'delay_on_secs': '{{ 5 }}' },
+        { 'domain': 'test', 'name': 't6b', 'condition': 'off', 'delay_on_secs': '{{ "51" }}' },
+        { 'domain': 'test', 'name': 't6c', 'condition': 'off', 'delay_on_secs': None },
+        { 'domain': 'test', 'name': 't6d', 'condition': 'off', 'delay_on_secs': '{{ None }}' },
+        
         { 'domain': 'test', 'name': 't7', 'condition': 'off', 'delay_on_secs': '{{ "6" }}', 'generator': 'gg1', 'generator_name': 'g1' },
         { 'domain': 'test', 'name': 't8', 'condition': 'off', 'delay_on_secs': '{{ -7 }}', 'generator': 'gg2', 'generator_name': 'g2' },
         { 'domain': 'test', 'name': 't9', 'condition': 'off', 'delay_on_secs': '{{ [8][genIdx] }}', 'generator': 'gg3', 'generator_name': 'g3' },
@@ -3850,19 +3907,25 @@ async def test_delay_on_secs(hass, service_calls):
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
-    service_calls.popNotifySearch('persistent_notification', 't4', 'required key not provided')
-    service_calls.popNotifySearch('persistent_notification', 't5', 'required key not provided')
-    service_calls.popNotifySearch('persistent_notification', 't6', 'required key not provided')
-    service_calls.popNotifySearch('persistent_notification', 't8', 'required key not provided')
+    service_calls.popNotifySearch('persistent_notification', 't4', 'rendered to "unknown"')
+    service_calls.popNotifySearch('persistent_notification', 't5', 'float must be &gt; 0')
+    service_calls.popNotifySearch('persistent_notification', 't6c', 'not..NoneType')
+    service_calls.popNotifySearch('persistent_notification', 't6d', 'template returned None')
+    service_calls.popNotifySearch('persistent_notification', 't8', '"-7" which is negative')
     assert service_calls.isEmpty()
 
     gad = hass.data[DOMAIN]
-    assert list(gad.alerts['test'].keys()) == [ 't1', 't2', 't2a', 't3', 't7', 't9', 't10' ]
+    assert list(gad.alerts['test'].keys()) == [ 't1', 't2', 't2a', 't3', 't4', 't6a', 't6b', 't6d', 't7', 't8', 't9', 't10' ]
     assert gad.alerts['test']['t1'].delay_on_secs == 0
     assert gad.alerts['test']['t2'].delay_on_secs == 3
     assert gad.alerts['test']['t2a'].delay_on_secs == 0
     assert gad.alerts['test']['t3'].delay_on_secs == 4
+    assert gad.alerts['test']['t4'].delay_on_secs == None
+    assert gad.alerts['test']['t6a'].delay_on_secs == 5
+    assert gad.alerts['test']['t6b'].delay_on_secs == 51
+    assert gad.alerts['test']['t6d'].delay_on_secs == None
     assert gad.alerts['test']['t7'].delay_on_secs == 6
+    assert gad.alerts['test']['t8'].delay_on_secs == None
     assert gad.alerts['test']['t9'].delay_on_secs == 8
     assert gad.alerts['test']['t10'].delay_on_secs == 0
 
