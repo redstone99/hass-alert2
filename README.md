@@ -34,7 +34,7 @@ Alert2 is a [Home Assistant](https://www.home-assistant.io/) component that supp
 - [Configuration](#configuration)
 - [Generator patterns](#generator-patterns)
 - [Front-end UI](#front-end-ui)
-- [Service calls and events](#service-calls-and-events)
+- [Actions and events](#actions-and-events)
 - [Python alerting](#python-alerting)
 - [Contributing](#contributing)
 
@@ -161,12 +161,12 @@ The `supersedes` parameter specifies a hierarchical relationship between related
 
 ### Event alerts
 
-Event alerts may be triggered either by an explicit `trigger` option in the config, or by a service call to `alert2.report`.
+Event alerts may be triggered either by an explicit `trigger` option in the config, or by the action `alert2.report`.
 An event alert can also specify a `condition` as a template or entity name. The alert fires if it is triggered AND the condition evaluates to true.
 
 ### Common alert features
 
-Each alert maintains a bit indicating whether it has been ack'd or not.  That bit is reset each time the alert fires. Ack'ing is done by clicking a button in the UI (described below) or calling the `alert2.ack` service. Ack'ing stops reminder notifications (see below) and is indicated visually in the UI.  The `alert2.unack` service is also available.
+Each alert maintains a bit indicating whether it has been ack'd or not.  That bit is reset each time the alert fires. Ack'ing is done by clicking a button in the UI (described below) or calling the `alert2.ack` action. Ack'ing stops reminder notifications (see below) and is indicated visually in the UI.  The `alert2.unack` and `alert2.toggle_ack` actions are also available.
 
 Each alert can specify a priority. Priority affects how the alert is displayed in the Alert2 UI Overview card.
 
@@ -297,7 +297,7 @@ The `defaults:` subsection specifies optional default values for parameters comm
 |---|---|---|
 | `reminder_frequency_mins` | float or list | Interval in minutes between reminders that a condition alert continues to fire. May be a list of floats in which case the delay between reminders follows successive values in the list. The last list value is used repeatedly when reached (i.e., it does not cycle like the `repeat` option of the old Alert integration). If it is the empty list then no reminders are sent.<br>Defaults to 60 minutes if not specified. Minimum is 0.01 min.<br>Also used to control ack reminders for event or condition alerts that have `ack_required` set. |
 | `reminder_message` | template | Template string evaluated each time a reminder notification will be sent. Variable `on_secs` contains float seconds alert has been on.  Variable `on_time_str` contains time alert has been on as a string. The function `get_message()` will produce the `message` field. <br>Defaults to: ` on for {{ on_time_str }}`<br><br>Any message specified here will be prepended with alert domain and name unless `annotate_messages` is false.
-| `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. If specifying a legacy notifier, the service called will be `"notify." + notifier`.  If specifying a notify entity, Alert2 calls `notify.send_message`. <br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers, an entity name whose state is a list of notifiers, a template that evaluates to either, or "null" to indicate no notification. See [Notifier Config](#notifier-config) section below for possibilities here.  |
+| `notifier` | template | Name of notifiers to use for sending notifications. Notifiers are declared with the [Notify](https://www.home-assistant.io/integrations/notify/) integration. If specifying a legacy notifier, the action invoked will be `"notify." + notifier`.  If specifying a notify entity, Alert2 calls `notify.send_message`. <br>Defaults to `persistent_notification` (shows up in the UI under "Notifications"). Can be list of notifiers, an entity name whose state is a list of notifiers, a template that evaluates to either, or "null" to indicate no notification. See [Notifier Config](#notifier-config) section below for possibilities here.  |
 | `summary_notifier` | bool or template | True to send summaries (see [Notifiers](#notifiers) section for detail) using the same notifier as other notifications.  False to not send summaries.  Or can be a template similar to `notifier` parameter to specify notifier to use for summaries. Default is `false`. |
 | `done_notifier` | bool or template | Controls notifier used to notify when a condition alert stops firing. True to use the `notifier` setting.  False or null to not send done notifications.  Or can be a template similar to `notifier` parameter to specify notifier to use for done notificaitons. Default is `true`. |
 | `annotate_messages` | bool | If true, add extra context information to notifications, like number of times alert has fired since last notification, how long it has been on, etc. You may want to set this to false if you want to set done_message to "clear_notification" for the `mobile_app` notification platform.<br>Defaults to true. |
@@ -305,7 +305,7 @@ The `defaults:` subsection specifies optional default values for parameters comm
 | `priority` | string | Can be "low", "medium", or "high". Affects display of alert in the Alert2 UI Overview card.  Active alerts are sorted by priority and medium and high-priority alerts have a badge colored orange and red, respectively. May be template when used with generators. Default is "low" |
 | `supersede_debounce_secs` | float | Suppress notifications of an alert if any superseding alert has fired within this many seconds of now. The purpose of this setting is to reduce extraneous notifications due to races between two alerts both turning on or off at almost the same time. Defaults to 0.5 seconds.  Can be any value >= 0. |
 | `icon` | string | Icon to display next to alert name in UI. Must be of form `prefix:name`. Defaults to `mdi:alert`. |
-| `data` | dict or string | Dictionary passed as the "data" parameter to the notify service call. May be either a dict or a template string that evaluates to a dict. Dict fields may be template strings. `data` may be overriden on a key-by-key basis for top-level keys. See doc in [Common alert features](#common-alert-features-1)  |
+| `data` | dict or string | Dictionary passed as the "data" parameter to the notify action. May be either a dict or a template string that evaluates to a dict. Dict fields may be template strings. `data` may be overriden on a key-by-key basis for top-level keys. See doc in [Common alert features](#common-alert-features-1)  |
 | `persistent_notifier_grouping` | string | Can be "separate", "collapse" or "collapse_and_dismiss". When the `persistent_notification` notifier is used, controls how multiple notification messages for the same alert are handled.  "separate" will keep each notification distinct. "collapse" will result in a single persistent notification (keeping only the most recent notification). "collapse_and_dismiss" is similar to "collapse" except the notification is also dismissed if the alert is a condition alert and it turns off.<br>Defaults to "separate". |
 
 Example:
@@ -351,8 +351,8 @@ Entity name related fields:
 | `condition_off` | string | optional | Template string or entity name. Alert stops firing if the template or entity state switches to truthy AND any optional `trigger_off` criteria is also satisfied. This is edge-triggered - no change in alert state happens when `condition_off` becomes falsey. |
 | `trigger_on` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Alert turns on when the trigger triggers, if also any `condition_on` specified is truthy. |
 | `trigger_off` | object | optional | A [trigger](https://www.home-assistant.io/docs/automation/trigger/) spec. Alert turns off when the trigger triggers, if also any `condition_off` specified is truthy. |
-| `manual_on` | boolean | optional | Enables the service call `alert2.manual_on` to turn the alert on. |
-| `manual_off` | boolean | optional | Enables the service call `alert2.manual_off` to turn the alert off. |
+| `manual_on` | boolean | optional | Enables the action `alert2.manual_on` to turn the alert on. |
+| `manual_off` | boolean | optional | Enables the action `alert2.manual_off` to turn the alert off. |
 | `threshold:` | dict | optional | Subsection specifying a threshold criteria with hysteresis. Alert is firing if the threshold value exceeds bounds AND any `condition` specified is truthy. Not available for event-based alerts. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`value` | string | required | A template or entity name that evaluates to a float to be compared to threshold limits. |
 | --&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;`hysteresis` | float | required | Compare `value` to limits using hysteresis. threshold is considered exceeded if value exceeds min/max, but does not reset until value increases past min+hysteresis or decreases past max-hysteresis. May be a (non-negative) float, template or entity name. (see description below) |
@@ -376,8 +376,8 @@ Entity name related fields:
 | `annotate_messages` | bool | optional | Override the default value of `annotate_messages`.  |
 | `ack_required` | bool | optional | If set to truthy, reminder notifications will be sent until an alert has been acked.  Reminders sent for events alert and condition alerts that have stopped firing. Default is false. |
 | `ack_reminders_only` | bool | optional | If set to truthy, an acked condition alert will still send a notification when the alert stops firing. Default is false. |
-| `title` | template | optional | Passed as the "title" parameter to the notify service call |
-| `target` | template | optional | Passed as the "target" parameter to the notify service call |
+| `title` | template | optional | Passed as the "title" parameter to the notify action |
+| `target` | template | optional | Passed as the "target" parameter to the notify action |
 | `data` | dict or string | optional | Dict or template string that evaluates to a dict. Overrides, on a key-by-key basis (for top-level keys), any default `data` dict specified. See doc in [Common alert features](#common-alert-features-1)  |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `persistent_notifier_grouping` | bool | optional | Override the default value of `persistent_notifier_grouping`.  |
@@ -671,7 +671,7 @@ An example of using an entity as an Alert2 native group.  Handles alerts fired d
 
 ### Tracked
 
-The `tracked` config subsection is for declaring event alerts that have no `trigger` specification and so can only be triggered by a service call to `alert2.report`. Declaring these alerts here avoids an "undeclared alert" alert when reporting, and also enables the system to restore the alert state when HomeAssistant restarts.
+The `tracked` config subsection is for declaring event alerts that have no `trigger` specification and so can only be triggered by invoking the action `alert2.report`. Declaring these alerts here avoids an "undeclared alert" alert when reporting, and also enables the system to restore the alert state when HomeAssistant restarts.
 
 Any of the above event alert parameters may be specified here except for `message` (since `alert2.report` specifies the message), `trigger` and `condition`.
 
@@ -951,11 +951,11 @@ We recommend setting `friendly_name` in your Alert2 config rather than editing t
 You may see old alert entities persist briefly with a state of "unavailable", particularly in the 10 seconds after HA startup if one of your generators changes the set of alerts it generates.  What going on is that the set of Alert2 entities in existence can fluctuate, as you adjust your Alert2 config or as generators update. If Alert2 stops creating an alert (eg on restart), then since the `unique_id` is set, the dead alert will persist with a state of "unavailable".  Alert2 strives to avoid this by updating the entity registry during Alert2 lifecycle changes.  And 10 seconds after HA starts up or Alert2 reloads, Alert2 it will go through and purge the entity registry of those dead alerts.
 
 
-## Service calls and events
+## Actions and events
 
-Alert2 defines a few new service calls.
+Alert2 defines a few new actions.
 
-`alert2.report` notifies the system that an event-based alert has fired. It takes two parameters, the "domain" and "name" of the alert that fired.  You can also pass an optional `message` argument specifying a template for a message to include with the firing notification. That domain/name should be declared in either the `tracked` or `alerts` section of your config (described above).  `alert2.report` overrides any `condition` and `trigger` specified in the event alert declaration.
+Action `alert2.report` notifies the system that an event-based alert has fired. It takes two parameters, the "domain" and "name" of the alert that fired.  You can also pass an optional `message` argument specifying a template for a message to include with the firing notification. That domain/name should be declared in either the `tracked` or `alerts` section of your config (described above).  `alert2.report` overrides any `condition` and `trigger` specified in the event alert declaration.
 
 You may also pass a `data` dictionary. This is merged with any default dictionary configured.
 
@@ -972,12 +972,13 @@ An example of using alert2.report in the action section of an automation:
               name: "fault_{{trigger.event.data.name}}"
               message: "code is {{ trigger.event.data.dData.Code }}"
 
-A few other service calls are used internally by [Alert2 UI](https://github.com/redstone99/hass-alert2-ui), but are available as well:
+A few other actions are available, some of which are used internally by [Alert2 UI](https://github.com/redstone99/hass-alert2-ui):
 
 `alert2.ack_all` acks all alerts.
 <br>`alert2.notification_control` adjust the notification settings.
 <br>`alert2.ack` acks a single alert.
 <br>`alert2.unack` unacks a single alert.
+<br>`alert2.toggle_ack` toggles an alert between acked and unacked.
 <br>`alert2.manual_on` turns on a condition alert that was configured with `manual_on: true`.
 <br>`alert2.manual_off` turns off a condition alert that was configured with `manual_off: true`.
 <br>`alert2.get_display_msg` renders the `display_msg` field for an alert and returns it.
