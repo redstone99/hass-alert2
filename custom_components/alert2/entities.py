@@ -1973,7 +1973,7 @@ class ConditionAlert(AlertBase):
                         # delay_on_secs template is evaluted.  So pretend we have an unbounded delay.
                         # Then, when the template is evaluted, delay_on_secs_changed will be called and
                         # update things
-                        pass #
+                        pass
                     else:
                         self.cond_true_task = create_background_task(self.hass, DOMAIN, self.dodelay(self.delay_on_secs))
                 # If cond_true_time is already set, it could just be that
@@ -1994,7 +1994,6 @@ class ConditionAlert(AlertBase):
                     self.cond_true_task = None
         return False
     def delay_on_secs_changed(self):
-        _LOGGER.info(f'{self.name}: delay_on_secs_changed 1')
         if self.cond_true_time == None:
             return
         if self.cond_true_task is not None:
@@ -2002,7 +2001,7 @@ class ConditionAlert(AlertBase):
             self.cond_true_task = None
         delayed_secs = (dt.now() - self.cond_true_time).total_seconds()
         remaining_secs = max(0, self.delay_on_secs - delayed_secs)
-        _LOGGER.info(f'{self.name}: delay_on_secs_changed to {self.delay_on_secs}. remaining_secs={remaining_secs}')
+        #_LOGGER.info(f'{self.name}: delay_on_secs_changed to {self.delay_on_secs}. remaining_secs={remaining_secs}')
         self.cond_true_task = create_background_task(self.hass, DOMAIN, self.dodelay(remaining_secs))
 
     # Throw exceptions on template errors
@@ -2137,7 +2136,6 @@ class ConditionAlert(AlertBase):
         return self.state == 'on' and (not self.last_ack_time or self.last_ack_time < self.last_on_time)
     
     def delay_on_secs_update(self, results):
-        _LOGGER.info(f'{self.name}: delay_on_secs_update called {results}')
         tmp_delay_on_secs = results.pop(0)
         if tmp_delay_on_secs is None:
             # The logic in delayed_on_check relies on delay_on_secs being None only at startup before the first
@@ -2149,7 +2147,6 @@ class ConditionAlert(AlertBase):
             self.delay_on_secs_changed()
         
     def cond_val_update(self, results):
-        _LOGGER.info(f'{self.name}: cond_val_update called {results}')
         # The order of entries in results should match the order appended to templ in initialization
         #
         condition_bool = thresh_val = hysteresis_val = min_val = max_val = None
