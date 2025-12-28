@@ -771,13 +771,6 @@ class AlertGenerator(AlertCommon, SensorEntity):
                         report(DOMAIN, 'error', f'{self.name} priority template returned err {err}')
                         sawError = True
                         break
-                #if 'delay_on_secs' in self.config:
-                #    try:
-                #        acfg['delay_on_secs'] = self.config['delay_on_secs'].async_render(variables=svars, parse_result=False)
-                #    except TemplateError as err:
-                #        report(DOMAIN, 'error', f'{self.name} delay_on_secs template returned err {err}')
-                #        sawError = True
-                #        break
                 #if 'friendly_name' in self.config:
                 #    try:
                 #        friendlyNameStr = self.config['friendly_name'].async_render(
