@@ -116,6 +116,8 @@ def floatLitOrTemplate(minZero=False):
             x = float(afloat)
         except (ValueError) as ex:
             return floatTemplate(afloat)
+        except (TypeError) as ex:
+            raise vol.Invalid(f'expected float or template. Got err: {ex}')
         if minZero and x < 0:
             raise vol.Invalid(f'float must be > 0, not {x}')
         return x
@@ -333,6 +335,7 @@ SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Optional('early_start'): cv.boolean,
     vol.Optional('supersede_debounce_secs'): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional('ack_reminders_only'): cv.boolean,
+    vol.Optional('delay_on_secs'): floatLitOrTemplate(minZero=True),
 })
 DOMAIN_NAME_DICT_GEN = {
     vol.Required('domain'): cv.template,
@@ -345,7 +348,6 @@ GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('generator'): jtemplate,
     vol.Required('generator_name'): jstringName,
     vol.Optional('supersedes'): SUPERSEDES_GEN,
-    vol.Optional('delay_on_secs'): cv.template,
     # Overrides 'priority'
     vol.Optional('priority'): cv.template,
 })
@@ -353,7 +355,6 @@ NO_GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): jDomain,
     vol.Required('name'): jstringName,
     vol.Optional('supersedes'): vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT ])),
-    vol.Optional('delay_on_secs'): vol.All(vol.Coerce(float), vol.Range(min=0)),
 })
 
 # If alert is a generator, then 'name' is a template, otherwise 'name' is a string

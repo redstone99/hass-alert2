@@ -1673,9 +1673,11 @@ async def test_unack(hass, service_calls):
     await hass.services.async_call('alert2', 'ack', {'entity_id': 'alert2.test_t40'})
     await hass.async_block_till_done()
     assert t40.extra_state_attributes['is_acked'] == True
+    assert t40.is_acked()
     await hass.services.async_call('alert2', 'unack', {'entity_id': 'alert2.test_t40'})
     await hass.async_block_till_done()
     assert t40.extra_state_attributes['is_acked'] == False
+    assert not t40.is_acked()
     assert service_calls.isEmpty()
 
     # reminder should happen after 0.9 secs more of sleeping + 1 sec bufer time
@@ -1801,6 +1803,42 @@ async def test_unack(hass, service_calls):
     await asyncio.sleep(2)
     assert service_calls.isEmpty()
 
+async def test_toggle_ack(hass, service_calls):
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a' },
+    ],  'tracked' : [
+        { 'domain': 'test', 'name': 't2' },
+    ] } }
+    await setAndWait(hass, 'sensor.a', 'off')
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+    t1 = gad.alerts['test']['t1']
+    t2 = gad.tracked['test']['t2']
+
+    assert not t1.is_acked()
+    await setAndWait(hass, 'sensor.a', 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't1: turned on')
+    assert not t1.is_acked()
+    await hass.services.async_call('alert2', 'toggle_ack', {'entity_id': 'alert2.test_t1'})
+    await hass.async_block_till_done()
+    assert t1.is_acked()
+    await hass.services.async_call('alert2', 'toggle_ack', {'entity_id': 'alert2.test_t1'})
+    await hass.async_block_till_done()
+    assert not t1.is_acked()
+
+    assert not t2.is_acked()
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'t2'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t2')
+    await hass.services.async_call('alert2', 'toggle_ack', {'entity_id': 'alert2.test_t2'})
+    await hass.async_block_till_done()
+    assert t2.is_acked()
+    await hass.services.async_call('alert2', 'toggle_ack', {'entity_id': 'alert2.test_t2'})
+    await hass.async_block_till_done()
+    assert not  t2.is_acked()
     
 async def test_grace(hass, service_calls):
     # Test some invalid value, no defer, so notify soon
@@ -2557,7 +2595,8 @@ async def test_generator5(hass, service_calls):
           'message': 'ee={{genRaw}} rr={{genEntityId}}',
           'condition': '{{ states(genEntityId) }}' },
         { 'domain': 'test', 'name': '{{ genGroups[0] }}_e', 'generator_name': 'g16',
-          'generator': "{{ states|entity_regex('sensor\.([^_]*)_foo')|list }}",
+          # All the \\\\ is just to get a literal '.' without generating warnings.
+          'generator': "{{ states|entity_regex('sensor\\\\.([^_]*)_foo')|list }}",
           'condition': 'off' },
         
     ]}}

@@ -293,14 +293,12 @@ class RenderValueView(HomeAssistantView):
                 else:
                     ttype = 'float'
             elif name in ['delay_on_secs']:
-                if extraVars:
-                    obj = { 'domain': 'foo', 'name': 'bar', 'generator':'f2', 'generator_name': 'f3' }
-                    obj[name] = ttxt
-                    tval = GENERATOR_SCHEMA(obj)[name]
-                    ttype = 'float'
-                else:
-                    tval = NO_GENERATOR_SCHEMA({ 'domain':'foo','name':'bar', name: ttxt })[name]
+                obj = { name: ttxt }
+                tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME(obj)[name]
+                if isinstance(tval, float):
                     simple = True
+                else:
+                    ttype = 'float'
             elif name in ['generator']:
                 obj = { 'domain': 'foo', 'name': 'bar', 'generator_name': 'ick', name: ttxt }
                 tval = GENERATOR_SCHEMA(obj)[name]

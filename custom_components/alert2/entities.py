@@ -771,13 +771,13 @@ class AlertGenerator(AlertCommon, SensorEntity):
                         report(DOMAIN, 'error', f'{self.name} priority template returned err {err}')
                         sawError = True
                         break
-                if 'delay_on_secs' in self.config:
-                    try:
-                        acfg['delay_on_secs'] = self.config['delay_on_secs'].async_render(variables=svars, parse_result=False)
-                    except TemplateError as err:
-                        report(DOMAIN, 'error', f'{self.name} delay_on_secs template returned err {err}')
-                        sawError = True
-                        break
+                #if 'delay_on_secs' in self.config:
+                #    try:
+                #        acfg['delay_on_secs'] = self.config['delay_on_secs'].async_render(variables=svars, parse_result=False)
+                #    except TemplateError as err:
+                #        report(DOMAIN, 'error', f'{self.name} delay_on_secs template returned err {err}')
+                #        sawError = True
+                #        break
                 #if 'friendly_name' in self.config:
                 #    try:
                 #        friendlyNameStr = self.config['friendly_name'].async_render(
@@ -1147,6 +1147,13 @@ class AlertBase(AlertCommon, RestoreEntity):
         self.hass.bus.async_fire(EVENT_ALERT2_UNACK, { 'entity_id': self.entity_id,
                                                        'domain': self.alDomain,
                                                        'name': self.alName })
+    async def async_toggle_ack(self):
+        if self.is_acked():
+            _LOGGER.info(f'Activity {self.entity_id} got toggle_ack. Will call unack')
+            await self.async_unack()
+        else:
+            _LOGGER.info(f'Activity {self.entity_id} got toggle_ack. Will call ack')
+            await self.async_ack()
 
     # Called directly from ackAll()
     def ack_int(self, now):
@@ -1758,7 +1765,14 @@ class ConditionAlert(AlertBase):
         self._supersede_debounce_secs = getField('supersede_debounce_secs', config, defaultCfg)
             
         # For hysteresis turning on
-        self.delay_on_secs = config['delay_on_secs'] if 'delay_on_secs' in config else 0
+        self.delay_on_secs = 0
+        self._delay_on_secs_template = None
+        if 'delay_on_secs' in config:
+            if isinstance(config['delay_on_secs'], template_helper.Template):
+                self.delay_on_secs = None # Mark it unknown until the template evaluates for the first time
+                self._delay_on_secs_template = config['delay_on_secs']
+            else:
+                self.delay_on_secs = config['delay_on_secs']
         # If delay_on_secs is set, we distinguish between when a condition turned true
         # and when the alert turns on.
         # We don't restore this parameter cuz we don't know that cond was true while HA was down.
@@ -1789,7 +1803,13 @@ class ConditionAlert(AlertBase):
             #self.threshold_hysteresis = config['threshold']['hysteresis'] if 'hysteresis' in config['threshold'] else None
             #self.threshold_exceeded = ThresholdExeeded.Init # to record if we crossed min or max
         self.condValTracker = Tracker(self, 'condition-value', hass, alertData, templs, self.cond_val_update, self.extraVariables)
-        
+
+        self.delayOnSecsTracker = None
+        if  self._delay_on_secs_template is not None:
+            self._delay_on_secs_template.hass = hass
+            templs2 = [ {'fieldName': 'delay_on_secs', 'type': Tracker.Type.NonnegativeFloat, 'template': self._delay_on_secs_template } ]
+            self.delayOnSecsTracker = Tracker(self, 'delay-on-secs', hass, alertData, templs2, self.delay_on_secs_update, self.extraVariables)
+
         self.onTracker = None
         if 'trigger_on' in config:
             self.onTracker = TriggerCond(self, 'trigger_on', hass, alertData, self.trigger_on, self.extraVariables,
@@ -1881,6 +1901,9 @@ class ConditionAlert(AlertBase):
         if self.offTracker:
             self.offTracker.shutdown()
             self.offTracker = None
+        if self.delayOnSecsTracker:
+            self.delayOnSecsTracker.shutdown()
+            self.delayOnSecsTracker = None
         
     async def async_added_to_hass(self) -> None:
         """Restore state and register callbacks."""
@@ -1923,26 +1946,36 @@ class ConditionAlert(AlertBase):
                 self.offTracker.startWatching()
             else:
                 await self.offTracker.startWatching()
+        if self.delayOnSecsTracker:
+            self.delayOnSecsTracker.startWatching()
         self.reminder_check() #???
     async def async_update(self) -> None:
         await super().async_update()
         self.condValTracker.refresh()
+        if self.delayOnSecsTracker:
+            self.delayOnSecsTracker.refresh()
         
+    async def dodelay(self, secs):
+        await asyncio.sleep(secs)
+        self.update_state_internal2(True)
+        self.cond_true_time = None
+        self.cond_true_task = None
     # Call when alert would otherwise be on
     # return True if will wait for delayed on
     def delayed_on_check(self, toState):
-        async def dodelay():
-            await asyncio.sleep(self.delay_on_secs)
-            self.update_state_internal2(True)
-            self.cond_true_time = None
-            self.cond_true_task = None
-            
         if toState:
             if self.state == "off":
                 if self.cond_true_time == None:
                     _LOGGER.debug(f'Activity {self.entity_id} starting delay of {self.delay_on_secs} until turning on')
                     self.cond_true_time = dt.now()
-                    self.cond_true_task = create_background_task(self.hass, DOMAIN, dodelay())
+                    if self.delay_on_secs is None:
+                        # delay_on_secs is None only during Alert startup, before the first time the
+                        # delay_on_secs template is evaluted.  So pretend we have an unbounded delay.
+                        # Then, when the template is evaluted, delay_on_secs_changed will be called and
+                        # update things
+                        pass #
+                    else:
+                        self.cond_true_task = create_background_task(self.hass, DOMAIN, self.dodelay(self.delay_on_secs))
                 # If cond_true_time is already set, it could just be that
                 # update_state_internal has been called twice for the same "on" state.
                 # E.g., if we exceeded a threshold, then exceed it a bit more.
@@ -1954,9 +1987,23 @@ class ConditionAlert(AlertBase):
             if self.cond_true_time != None:
                 _LOGGER.debug(f'Activity {self.entity_id} stopping turn-on delay')
                 self.cond_true_time = None
-                cancel_task(DOMAIN, self.cond_true_task)
-                self.cond_true_task = None
+                # self.cond_true_task could be None during startup if delay_on_secs template has not been
+                # evaluted yet.
+                if self.cond_true_task is not None:
+                    cancel_task(DOMAIN, self.cond_true_task)
+                    self.cond_true_task = None
         return False
+    def delay_on_secs_changed(self):
+        _LOGGER.info(f'{self.name}: delay_on_secs_changed 1')
+        if self.cond_true_time == None:
+            return
+        if self.cond_true_task is not None:
+            cancel_task(DOMAIN, self.cond_true_task)
+            self.cond_true_task = None
+        delayed_secs = (dt.now() - self.cond_true_time).total_seconds()
+        remaining_secs = max(0, self.delay_on_secs - delayed_secs)
+        _LOGGER.info(f'{self.name}: delay_on_secs_changed to {self.delay_on_secs}. remaining_secs={remaining_secs}')
+        self.cond_true_task = create_background_task(self.hass, DOMAIN, self.dodelay(remaining_secs))
 
     # Throw exceptions on template errors
     def get_message_or_exception(self, reason: NotificationReason):
@@ -1970,8 +2017,7 @@ class ConditionAlert(AlertBase):
         if not isinstance(state, bool):
             report(DOMAIN, 'error', f'{gAssertMsg} update_state_internal ignoring call with non-bool {state} type={type(state)} for {self.name}')
             return
-
-        if self.delay_on_secs > 0:
+        if self.delay_on_secs is None or self.delay_on_secs > 0:
             if self.delayed_on_check(state):
                 return
         return self.update_state_internal2(state)
@@ -2090,7 +2136,20 @@ class ConditionAlert(AlertBase):
     def sub_need_reminder(self):
         return self.state == 'on' and (not self.last_ack_time or self.last_ack_time < self.last_on_time)
     
+    def delay_on_secs_update(self, results):
+        _LOGGER.info(f'{self.name}: delay_on_secs_update called {results}')
+        tmp_delay_on_secs = results.pop(0)
+        if tmp_delay_on_secs is None:
+            # The logic in delayed_on_check relies on delay_on_secs being None only at startup before the first
+            # time the delay_on_secs template is evaluated.
+            report(DOMAIN, 'error', f'{gAssertMsg} {self.name}. delay_on_secs somehow rendered to None')
+            return
+        if self.delay_on_secs != tmp_delay_on_secs:
+            self.delay_on_secs = tmp_delay_on_secs
+            self.delay_on_secs_changed()
+        
     def cond_val_update(self, results):
+        _LOGGER.info(f'{self.name}: cond_val_update called {results}')
         # The order of entries in results should match the order appended to templ in initialization
         #
         condition_bool = thresh_val = hysteresis_val = min_val = max_val = None
@@ -2104,6 +2163,7 @@ class ConditionAlert(AlertBase):
                 else self._threshold_max_float_or_template
             min_val = results.pop(0) if isinstance(self._threshold_min_float_or_template, template_helper.Template) \
                 else self._threshold_min_float_or_template
+            
         if len(results) > 0:
             report(DOMAIN, 'error', f'{gAssertMsg} {self.name}.  wrong number of tracked condition/threshold parameters')
             return

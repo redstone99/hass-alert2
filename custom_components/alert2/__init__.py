@@ -653,6 +653,11 @@ class Alert2Data:
                 "async_unack",
             )
             self.component.async_register_entity_service(
+                'toggle_ack',
+                cv.make_entity_service_schema(EMPTY_SCHEMA),
+                "async_toggle_ack",
+            )
+            self.component.async_register_entity_service(
                 'manual_on',
                 cv.make_entity_service_schema(EMPTY_SCHEMA),
                 "async_manual_on",

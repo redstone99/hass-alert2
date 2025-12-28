@@ -73,6 +73,13 @@ unack:
     entity:
       domain: alert2
 
+toggle_ack:
+  name: Toggle ack
+  description: Toggle the ack status. If alert is acked then unack the alert, otherwise ack the alert.
+  target:
+    entity:
+      domain: alert2
+
 manual_on:
   name: Manual on
   description: Turns on a condition alert that was configured with manual_on enabled

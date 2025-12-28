@@ -927,16 +927,16 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
 
     # delay_on_secs
     rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': 'foo' })
-    assert re.search('expected float', rez['error'])
+    assert re.search('not a float', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': '-3' })
-    assert re.search('be at least', rez['error'])
+    assert re.search('float must be', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': '3' })
     assert rez == { 'rez': 3 }
     rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': '"3"' })
-    assert re.search('expected float', rez['error'])
+    assert re.search('float template is neither', rez['error'])
     #assert rez == { 'rez': 3 }
     rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': '{{ 5+6 }}' })
-    assert re.search('expected float', rez['error'])
+    assert rez == { 'rez': 11 }
     rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': '{{ 5+6 }}', 'extraVars': { 'foo': 3} })
     assert rez == { 'rez': 11 }
     rez = await tpost("/api/alert2/renderValue", {'name': 'delay_on_secs', 'txt': '{{ foo }}', 'extraVars': { 'foo': 12} })
