@@ -149,6 +149,16 @@ Now you need an automation to handle the resulting event. The automation below h
 
 ```
 
+And here's how you might specify that a mobile alert (at least on iOS) bypasses do-not-distrub.  Based on the HA Compaion app's [Critical Notifications](https://companion.home-assistant.io/docs/notifications/critical-notifications/) doc.
+````
+    - domain: ....
+      ...
+      notifier: mobile_app_pixel_12
+      data:
+        push:
+          interruption-level: critical
+````
+
 ## More advanced alerts
 
 Here's an example using the separate on/off conditions.  Suppose you want to alert when laundry needs to be emptied from the washer or dryer.  You have a power sensor measuring the power used by the washer and dryer, and both the washer and dryer have a door sensor.  You might set up the alert to turn on when the power usage spikes, and then turn off once either of the doors is opened.  That might look like:
