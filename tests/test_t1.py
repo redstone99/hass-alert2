@@ -7,11 +7,13 @@ from homeassistant.setup import async_setup_component
 import os
 import re
 import sys
+import orjson
 import asyncio
 import logging
 import pytest
 import datetime as rawdt
 _LOGGER = logging.getLogger(None) # get root logger
+#_LOGGER.setLevel(logging.DEBUG)
 if os.environ.get('JTESTDIR'):
     sys.path.insert(0, os.environ['JTESTDIR'])
 from custom_components.alert2 import (DOMAIN, Alert2Data)
@@ -28,16 +30,20 @@ from custom_components.alert2.util import (     GENERATOR_DOMAIN,
                                                 EVENT_ALERT2_UNACK,
                                            )
 import homeassistant.const
+from homeassistant.core import State
 from homeassistant import config as conf_util
 from   homeassistant.exceptions import HomeAssistantError
 import homeassistant.helpers.restore_state as rs
 import homeassistant.helpers.entity_registry as er
+import homeassistant.helpers.restore_state as restore_state
 import homeassistant.helpers.entity_platform as ep
+from homeassistant.util.dt import utcnow
 from homeassistant.util.yaml import parse_yaml
 import homeassistant.components.persistent_notification as pn
 from homeassistant.components.notify import NotifyEntity, NotifyEntityFeature
 #from tests.common import MockConfigEntry
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from unittest.mock import patch
 
 alert2.gGcDelaySecs = 0.1
 
@@ -2782,6 +2788,68 @@ async def test_generator8(hass, service_calls):
         #('test','t5'): set( [ ('test','t4') ] ),
     }
 
+async def test_generator9(hass, service_calls, monkeypatch):
+    # Test anonymous generators
+    await setAndWait(hass, "sensor.g", '[ "t1" ]')    
+    await setAndWait(hass, "sensor.g2", '[ "t2" ]')
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': '{{ states("sensor.g") }}','condition': 'off' },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': '{{ states("sensor.g2") }}','generator_name': 'g1', 'condition': 'off' },
+    ] } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    expectedEnts = set(['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception',
+                      'alert2.test_t1',
+                      'alert2.test_t2', 'sensor.alert2generator_g1',
+                      ])
+    entities = er.async_get(hass).entities
+    assert set(entities.keys()) == expectedEnts
+
+    # Add second anonymous ent
+    await setAndWait(hass, "sensor.g", '[ "t1", "t1a" ]')    
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    expectedEnts.add('alert2.test_t1a')
+    entities = er.async_get(hass).entities
+    assert set(entities.keys()) == expectedEnts
+
+    # Add second non-anonymous ent
+    await setAndWait(hass, "sensor.g2", '[ "t2", "t2a" ]')    
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    expectedEnts.add('alert2.test_t2a')
+    entities = er.async_get(hass).entities
+    assert set(entities.keys()) == expectedEnts
+
+    # test reload
+    async def fake_cfg(thass):
+        return cfg
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
+    entities = er.async_get(hass).entities
+    assert set(entities.keys()) == expectedEnts
+    
+    # decrease gen ents from two to one
+    await setAndWait(hass, "sensor.g2", '[ "t2a" ]')
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    expectedEnts.remove('alert2.test_t2')
+    entities = er.async_get(hass).entities
+    assert set(entities.keys()) == expectedEnts
+
+    # decrease gen ents from two to one
+    await setAndWait(hass, "sensor.g", '[ "t1a" ]')
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    expectedEnts.remove('alert2.test_t1')
+    entities = er.async_get(hass).entities
+    assert set(entities.keys()) == expectedEnts
     
     
 async def test_late_state(hass, service_calls):
@@ -4533,3 +4601,112 @@ async def test_intl(hass, service_calls):
     gad = hass.data[DOMAIN]
     for it in gad.alerts['döäü'].keys():
         _LOGGER.info(f'Key={it} id={gad.alerts["döäü"][it].entity_id}  uid={gad.alerts["döäü"][it].unique_id}')
+
+
+async def test_restore_state(hass, service_calls):
+    def createStoredState(entName, isOn, extraDict):
+        utc_now = utcnow()
+        time_on = utc_now - rawdt.timedelta(seconds=10)
+        time_off_late = utc_now - rawdt.timedelta(seconds=8)
+        stateDict = {'last_on_time': time_on,
+                     'last_notified_time': time_on if isOn else time_off_late,
+                     'last_tried_notify_time': time_on if isOn else time_off_late,
+                     'last_fired_time': time_on }
+        if not isOn:
+            stateDict['last_off_time'] = time_off_late
+        return restore_state.StoredState(
+            State(entName, 'on' if isOn else 'off', stateDict),
+            restore_state.RestoredExtraData(extraDict) if extraDict else None,
+            utc_now,
+        ).as_dict()
+    
+    data = restore_state.async_get(hass)
+    await data.store.async_save([
+        createStoredState('alert2.d_t', True, None),
+        createStoredState('alert2.d_t2', False, None),
+        # Now thresholds
+        createStoredState('alert2.d_t3', False, None),
+        createStoredState('alert2.d_t4', False, None),
+        createStoredState('alert2.d_t5', False, {'threshold_exceeded': a2Entities.ThresholdExeeded.Init}),
+        createStoredState('alert2.d_t6', False, {'threshold_exceeded': a2Entities.ThresholdExeeded.Init}),
+        
+        createStoredState('alert2.d_t7', True, None),
+        createStoredState('alert2.d_t8', True, None),
+        createStoredState('alert2.d_t9', True, None),
+        createStoredState('alert2.d_t10', True, {'threshold_exceeded': a2Entities.ThresholdExeeded.Max}),
+        createStoredState('alert2.d_t11', True, {'threshold_exceeded': a2Entities.ThresholdExeeded.Max}),
+        createStoredState('alert2.d_t12', True, {'threshold_exceeded': a2Entities.ThresholdExeeded.Max}),
+    ])
+    await data.async_load()
+
+    await setAndWait(hass, "sensor.tt3", '5')
+    await setAndWait(hass, "sensor.tt4", '11')
+    await setAndWait(hass, "sensor.tt5", '5')
+    await setAndWait(hass, "sensor.tt6", '11')
+    await setAndWait(hass, "sensor.tt7", '5')
+    await setAndWait(hass, "sensor.tt8", '9.5')
+    await setAndWait(hass, "sensor.tt9", '11')
+    await setAndWait(hass, "sensor.tt10", '9.5') # <-- Main test, that max is remembered so 9.5 stays on
+    await setAndWait(hass, "sensor.tt11", '11')
+    await setAndWait(hass, "sensor.tt12", '5')
+    cfg = { 'alert2' : { 'alerts': [
+        { 'domain': 'd', 'name': 't', 'manual_on': True, 'manual_off': True },
+        { 'domain': 'd', 'name': 't2', 'manual_on': True, 'manual_off': True },
+        { 'domain': 'd', 'name': 't3', 'threshold': { 'value': 'sensor.tt3', 'maximum': 10, 'minimum': 0, 'hysteresis': 2 } },
+        { 'domain': 'd', 'name': 't4', 'threshold': { 'value': 'sensor.tt4', 'maximum': 10, 'minimum': 0, 'hysteresis': 2 } },
+        { 'domain': 'd', 'name': 't5', 'threshold': { 'value': 'sensor.tt5', 'maximum': 10, 'minimum': 0, 'hysteresis': 2 } },
+        { 'domain': 'd', 'name': 't6', 'threshold': { 'value': 'sensor.tt6', 'maximum': 10, 'minimum': 0, 'hysteresis': 2 } },
+        { 'domain': 'd', 'name': 't7', 'threshold': { 'value': 'sensor.tt7', 'maximum': 10, 'minimum': 0, 'hysteresis': 2 } },
+        { 'domain': 'd', 'name': 't8', 'threshold': { 'value': 'sensor.tt8', 'maximum': 10, 'minimum': 0, 'hysteresis': 2 } },
+        { 'domain': 'd', 'name': 't9', 'threshold': { 'value': 'sensor.tt9', 'maximum': 10, 'minimum': 0, 'hysteresis': 2 } },
+        { 'domain': 'd', 'name': 't10', 'threshold': { 'value': 'sensor.tt10', 'maximum': 10, 'minimum': 0, 'hysteresis': 2 } },
+        { 'domain': 'd', 'name': 't11', 'threshold': { 'value': 'sensor.tt11', 'maximum': 10, 'minimum': 0, 'hysteresis': 2 } },
+        { 'domain': 'd', 'name': 't12', 'threshold': { 'value': 'sensor.tt12', 'maximum': 10, 'minimum': 0, 'hysteresis': 2 } },
+        ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    #service_calls.popNotifyEmpty('persistent_notification', 'One-time.*v1.16 changed the syntax')
+
+    assert hass.states.get('alert2.d_t').state == 'on' # stays on
+    assert hass.states.get('alert2.d_t2').state == 'off' # stays off
+    assert hass.states.get('alert2.d_t3').state == 'off' # stays off
+
+    service_calls.popNotifySearch('persistent_notification', 't4', 't4: turned on')
+    assert hass.states.get('alert2.d_t4').state == 'on'
+    assert hass.states.get('alert2.d_t5').state == 'off' # stays off
+    service_calls.popNotifySearch('persistent_notification', 't6', 't6: turned on')
+    assert hass.states.get('alert2.d_t6').state == 'on'
+    service_calls.popNotifySearch('persistent_notification', 't7', 't7: turned off')
+    assert hass.states.get('alert2.d_t7').state == 'off'
+    service_calls.popNotifySearch('persistent_notification', 't8', 't8: turned off')
+    assert hass.states.get('alert2.d_t8').state == 'off'
+    assert hass.states.get('alert2.d_t9').state == 'on' # stays on
+    assert hass.states.get('alert2.d_t10').state == 'on'
+    assert hass.states.get('alert2.d_t11').state == 'on' # stays on
+    service_calls.popNotifySearch('persistent_notification', 't12', 't12: turned off')
+    assert hass.states.get('alert2.d_t12').state == 'off'
+    assert service_calls.isEmpty()
+
+    # Now write out state and make sure we're writing out the extra data as well
+    with patch(
+        "homeassistant.helpers.restore_state.Store.async_save"
+    ) as mock_write_data:
+        await restore_state.RestoreStateData.async_save_persistent_states(hass)
+        await hass.async_block_till_done()
+    assert mock_write_data.called
+    assert len(mock_write_data.mock_calls) == 1
+    acall = mock_write_data.mock_calls[0]
+    slist = acall.args[0]
+    found = False
+    for astate in slist:
+        pstate = orjson.loads(orjson.dumps(astate['state']))
+        if pstate["entity_id"] == 'alert2.d_t10' and astate["extra_data"] == { 'threshold_exceeded': a2Entities.ThresholdExeeded.Max.value }:
+            found = True
+    assert found
+    found = False
+    for astate in slist:
+        pstate = orjson.loads(orjson.dumps(astate['state']))
+        if pstate["entity_id"] == 'alert2.d_t' and astate["extra_data"] == { 'threshold_exceeded': a2Entities.ThresholdExeeded.Init.value }:
+            found = True
+    assert found
