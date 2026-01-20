@@ -58,12 +58,22 @@ async def auto_check_empty_calls(hass, service_calls):
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations):
     yield
+
+async def do_reload(cfg, hass, monkeypatch):
+    async def fake_cfg(thass):
+        return cfg
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
+
     
 async def test_cfg1(hass):
     assert await async_setup_component(hass, DOMAIN, { 'alert2': {} })
     await hass.async_block_till_done()
     assert isinstance(hass.data[DOMAIN], Alert2Data)
-
+    
 async def test_badarg1(hass, service_calls):
     cfg = { 'alert2' : {
         'defaults' : {
@@ -2825,13 +2835,7 @@ async def test_generator9(hass, service_calls, monkeypatch):
     assert set(entities.keys()) == expectedEnts
 
     # test reload
-    async def fake_cfg(thass):
-        return cfg
-    with monkeypatch.context() as m:
-        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
-        await hass.services.async_call('alert2','reload', {})
-        await hass.async_block_till_done()
-    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
+    await do_reload(cfg, hass, monkeypatch)
     entities = er.async_get(hass).entities
     assert set(entities.keys()) == expectedEnts
     
@@ -2919,13 +2923,7 @@ async def test_reload(hass, service_calls, monkeypatch):
             { 'domain': 'test', 'name': 't82' },
         ]}}
     #gad.component.newCfg = cfg
-    async def fake_cfg(thass):
-        return cfg
-    with monkeypatch.context() as m:
-        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
-        await hass.services.async_call('alert2','reload', {})
-        await hass.async_block_till_done()
-    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
+    await do_reload(cfg, hass, monkeypatch)
     
     entids = hass.states.async_entity_ids()
     assert len(entids) == 10 # 1 is alert2_error, alert2_warning, alert2_global_exception, 1 is binary_sensor.alert2_ha_startup_done
@@ -2941,11 +2939,7 @@ async def test_reload(hass, service_calls, monkeypatch):
     assert t74.future_notification_info is None
     
     cfg = { 'alert2' : {}}
-    with monkeypatch.context() as m:
-        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
-        await hass.services.async_call('alert2','reload', {})
-        await hass.async_block_till_done()
-    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
+    await do_reload(cfg, hass, monkeypatch)
     entids = hass.states.async_entity_ids()
     assert len(entids) == 4 # 1 is alert2_error alert2_warning, alert2_global_exception
     for anid in entids:
@@ -2961,11 +2955,7 @@ async def test_reload(hass, service_calls, monkeypatch):
         ]}}
     assert hass.states.get('alert2.test_t72') == None
     #assert hass.states.get('alert2.test_t72').state == 'unavailable'
-    with monkeypatch.context() as m:
-        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
-        await hass.services.async_call('alert2','reload', {})
-        await hass.async_block_till_done()
-    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
+    await do_reload(cfg, hass, monkeypatch)
     assert hass.states.get('alert2.test_t72').state == 'off'
 
             
@@ -3031,13 +3021,7 @@ async def test_declare_event(hass, service_calls, monkeypatch):
     # Try a reload, should preserve the declareEventMulti
     gad = hass.data[DOMAIN]
     assert gad.tracked['test']['t88']
-    async def fake_cfg(thass):
-        return cfg
-    with monkeypatch.context() as m:
-        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
-        await hass.services.async_call('alert2','reload', {})
-        await hass.async_block_till_done()
-    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
+    await do_reload(cfg, hass, monkeypatch)
     assert gad.tracked['test']['t88']
     alert2.report('test', 't88', 'foo')
     await hass.async_block_till_done()
@@ -3771,13 +3755,7 @@ async def test_supersede_mgr2(hass, service_calls, monkeypatch):
     cfg['alert2']['alerts'].append(
         { 'domain': 'test', 'name': 't3', 'condition': 'sensor.t3', 'supersedes': [ {'domain':'test','name':'t1'} ] }
     )
-    async def fake_cfg(thass):
-        return cfg
-    with monkeypatch.context() as m:
-        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
-        await hass.services.async_call('alert2','reload', {})
-        await hass.async_block_till_done()
-    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
+    await do_reload(cfg, hass, monkeypatch)
     _LOGGER.info('reload done')
     # We will get a reminder because reminder freq is set for 0.6s, but when schedule reminders, we add a second.
     # So there was a reminder that was due but in that 1-second window.  When we reload, we see the reminder is
@@ -3978,13 +3956,7 @@ async def test_icon(hass, service_calls, monkeypatch):
         { 'domain': 'test', 'name': 't1', 'condition': 'off' },
         { 'domain': 'test', 'name': 't2', 'condition': 'off', 'icon': 'a:b' },
     ], } }
-    async def fake_cfg(thass):
-        return cfg
-    with monkeypatch.context() as m:
-        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
-        await hass.services.async_call('alert2','reload', {})
-        await hass.async_block_till_done()
-    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
+    await do_reload(cfg, hass, monkeypatch)
     assert service_calls.isEmpty()
     assert list(gad.alerts['test'].keys()) == [ 't1', 't2' ]
     assert gad.alerts['test']['t1']._icon == 'c:d'
@@ -4602,7 +4574,6 @@ async def test_intl(hass, service_calls):
     for it in gad.alerts['döäü'].keys():
         _LOGGER.info(f'Key={it} id={gad.alerts["döäü"][it].entity_id}  uid={gad.alerts["döäü"][it].unique_id}')
 
-
 async def test_restore_state(hass, service_calls):
     def createStoredState(entName, isOn, extraDict):
         utc_now = utcnow()
@@ -4710,3 +4681,60 @@ async def test_restore_state(hass, service_calls):
         if pstate["entity_id"] == 'alert2.d_t' and astate["extra_data"] == { 'threshold_exceeded': a2Entities.ThresholdExeeded.Init.value }:
             found = True
     assert found
+
+async def test_exception(hass, service_calls, monkeypatch):
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'xxx' } ] } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    gad = hass.data[DOMAIN]
+
+    # let's crash a task
+    async def gdie():
+        raise Exception('xoo')
+    def gdie2():
+        raise Exception('boo')
+    hass.loop.call_soon_threadsafe(gdie2)
+    await asyncio.sleep(0.25)
+    service_calls.popNotifyEmpty('persistent_notification', 'unhandled exception.*boo')
+
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'boo' } ] } }
+    await do_reload(cfg, hass, monkeypatch)
+    hass.loop.call_soon_threadsafe(gdie2)
+    await asyncio.sleep(0.25)
+    assert service_calls.isEmpty()
+
+    # Test that can match against both err msg and stack trace
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'unhandled exception.*most recent call last.*raise Exception' } ] } }
+    await do_reload(cfg, hass, monkeypatch)
+    hass.loop.call_soon_threadsafe(gdie2)
+    await asyncio.sleep(0.25)
+    assert service_calls.isEmpty()
+
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xxx',  'boo' ] } ] } }
+    await do_reload(cfg, hass, monkeypatch)
+    hass.loop.call_soon_threadsafe(gdie2)
+    await asyncio.sleep(0.25)
+    assert service_calls.isEmpty()
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'boo',  'xxx' ] } ] } }
+    await do_reload(cfg, hass, monkeypatch)
+    hass.loop.call_soon_threadsafe(gdie2)
+    await asyncio.sleep(0.25)
+    assert service_calls.isEmpty()
+
+    # Try alert2 version
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xxx' ] } ] } }
+    await do_reload(cfg, hass, monkeypatch)
+    alert2.create_task(hass, 'alert2', gdie())
+    await asyncio.sleep(0.25)
+    service_calls.popNotifyEmpty('persistent_notification', 'unhandled_exception.*xoo')
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xoo.*raise Exception' ] } ] } }
+    await do_reload(cfg, hass, monkeypatch)
+    alert2.create_task(hass, 'alert2', gdie())
+    await asyncio.sleep(0.25)
+    assert service_calls.isEmpty()
+    
+
+    
+
