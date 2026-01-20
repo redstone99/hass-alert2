@@ -1618,7 +1618,7 @@ async def test_err_args(hass, service_calls):
         raise Exception('boo')
     alert2.create_task(hass, 'alert2', gdie())
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'unhandled_exception.*boo')
+    service_calls.popNotifyEmpty('persistent_notification', 'Exception.*boo')
     
     gad = hass.data[DOMAIN]
     assert gad.tracked['alert2']['error'].movingSum is None
@@ -1643,7 +1643,7 @@ async def test_err_args1a(hass, service_calls):
         raise Exception('boo')
     alert2.create_task(hass, 'alert2', gdie())
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('foo', 'unhandled_exception.*boo')
+    service_calls.popNotifyEmpty('foo', 'Exception.*boo')
     assert service_calls.isEmpty()
     
 @pytest.mark.parametrize("cfg, errMsg", [
@@ -4728,13 +4728,21 @@ async def test_exception(hass, service_calls, monkeypatch):
     await do_reload(cfg, hass, monkeypatch)
     alert2.create_task(hass, 'alert2', gdie())
     await asyncio.sleep(0.25)
-    service_calls.popNotifyEmpty('persistent_notification', 'unhandled_exception.*xoo')
+    service_calls.popNotifyEmpty('persistent_notification', 'Exception.*xoo')
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xoo.*raise Exception' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
     alert2.create_task(hass, 'alert2', gdie())
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
     
-
-    
-
+    # Try custom domain
+    cfg = { 'alert2' : { 'tracked': [ { 'domain': 'foof', 'name': 'unhandled_exception', 'exception_ignore_regexes': [ 'xxx' ] } ] } }
+    await do_reload(cfg, hass, monkeypatch)
+    alert2.create_task(hass, 'foof', gdie())
+    await asyncio.sleep(0.25)
+    service_calls.popNotifyEmpty('persistent_notification', 'foof_unhandled_exception.*xoo')
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'foof', 'name': 'unhandled_exception', 'exception_ignore_regexes': [ 'xoo.*raise Exception' ] } ] } }
+    await do_reload(cfg, hass, monkeypatch)
+    alert2.create_task(hass, 'foof', gdie())
+    await asyncio.sleep(0.25)
+    assert service_calls.isEmpty()

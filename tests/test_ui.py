@@ -638,6 +638,16 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_frequency_mins', 'txt': '-3' })
     assert re.search('must be at least', rez['error'])
 
+    # exception_ignore_regexes
+    rez = await tpost("/api/alert2/renderValue", {'name': 'exception_ignore_regexes', 'txt': 'xx' })
+    assert rez == { 'rez': ['xx'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'exception_ignore_regexes', 'txt': '"xx"' })
+    assert rez == { 'rez': ['xx'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'exception_ignore_regexes', 'txt': '[xx, yy]' })
+    assert rez == { 'rez': ['xx','yy'] }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'exception_ignore_regexes', 'txt': '["xx"]' })
+    assert rez == { 'rez': ['xx'] }
+
     # supersede_debounce_secs
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersede_debounce_secs', 'txt': '3' })
     assert rez == { 'rez': 3 }
