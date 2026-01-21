@@ -11,6 +11,7 @@ import orjson
 import asyncio
 import logging
 import pytest
+import contextlib
 import datetime as rawdt
 _LOGGER = logging.getLogger(None) # get root logger
 #_LOGGER.setLevel(logging.DEBUG)
@@ -43,6 +44,8 @@ import homeassistant.components.persistent_notification as pn
 from homeassistant.components.notify import NotifyEntity, NotifyEntityFeature
 #from tests.common import MockConfigEntry
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.ignore_uncaught_exceptions import IGNORE_UNCAUGHT_EXCEPTIONS
+
 from unittest.mock import patch
 
 alert2.gGcDelaySecs = 0.1
@@ -52,6 +55,7 @@ alert2.gGcDelaySecs = 0.1
 # Make sure at end of each test there are no extra notifications we haven't processed
 @pytest.fixture(autouse=True)
 async def auto_check_empty_calls(hass, service_calls):
+    IGNORE_UNCAUGHT_EXCEPTIONS.append( ("tests.test_t1", "test_exception") )
     yield
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
@@ -4682,21 +4686,26 @@ async def test_restore_state(hass, service_calls):
             found = True
     assert found
 
+class TestException(Exception):
+    pass
+
+# NOTE - this test has ignore_uncaught_exceptions set.  Limit what's tested here.
+#
 async def test_exception(hass, service_calls, monkeypatch):
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'xxx' } ] } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    gad = hass.data[DOMAIN]
 
     # let's crash a task
-    async def gdie():
-        raise Exception('xoo')
     def gdie2():
-        raise Exception('boo')
+        raise TestException('boo')
+    # hass.create_task(gdie(), 'happy')  # No exception - I think it's swallowed.
+    # hass.async_create_background_task(gdie(), 'happy')  # No exception. Swallowed.
     hass.loop.call_soon_threadsafe(gdie2)
     await asyncio.sleep(0.25)
+    await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'unhandled exception.*boo')
 
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'boo' } ] } }
@@ -4706,7 +4715,7 @@ async def test_exception(hass, service_calls, monkeypatch):
     assert service_calls.isEmpty()
 
     # Test that can match against both err msg and stack trace
-    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'unhandled exception.*most recent call last.*raise Exception' } ] } }
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'unhandled exception.*most recent call last.*raise TestException' } ] } }
     await do_reload(cfg, hass, monkeypatch)
     hass.loop.call_soon_threadsafe(gdie2)
     await asyncio.sleep(0.25)
@@ -4723,13 +4732,27 @@ async def test_exception(hass, service_calls, monkeypatch):
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
 
+async def test_exception2(hass, service_calls, monkeypatch):
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'xxx' } ] } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    async def gdie():
+        raise TestException('xoo')
+
+    # Try regex that doesn't compile
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'foo(' } ] } }
+    await do_reload(cfg, hass, monkeypatch)
+    service_calls.popNotifyEmpty('persistent_notification', 'failed to compile')
+    
     # Try alert2 version
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xxx' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
     alert2.create_task(hass, 'alert2', gdie())
     await asyncio.sleep(0.25)
     service_calls.popNotifyEmpty('persistent_notification', 'Exception.*xoo')
-    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xoo.*raise Exception' ] } ] } }
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xoo.*raise TestException' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
     alert2.create_task(hass, 'alert2', gdie())
     await asyncio.sleep(0.25)
@@ -4741,7 +4764,7 @@ async def test_exception(hass, service_calls, monkeypatch):
     alert2.create_task(hass, 'foof', gdie())
     await asyncio.sleep(0.25)
     service_calls.popNotifyEmpty('persistent_notification', 'foof_unhandled_exception.*xoo')
-    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'foof', 'name': 'unhandled_exception', 'exception_ignore_regexes': [ 'xoo.*raise Exception' ] } ] } }
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'foof', 'name': 'unhandled_exception', 'exception_ignore_regexes': [ 'xoo.*raise TestException' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
     alert2.create_task(hass, 'foof', gdie())
     await asyncio.sleep(0.25)

@@ -578,8 +578,8 @@ class AlertCommon(Entity):
 
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
-        self.noteWillRemoveFromHass()
-    def noteWillRemoveFromHass(self):
+        await self.noteWillRemoveFromHass()
+    async def noteWillRemoveFromHass(self):
         self.hass.bus.async_fire(EVENT_ALERT2_DELETE, { 'entity_id': self.entity_id,
                                                          'domain': self.alDomain,
                                                          'name': self.alName })
@@ -667,10 +667,10 @@ class AlertGenerator(AlertCommon, SensorEntity):
         self.tracker.startWatching()
         
     async def async_will_remove_from_hass(self) -> None:
+        # super will call noteWillRemoveFromHass()
         await super().async_will_remove_from_hass()
-        await self.noteWillRemoveFromHass()
     async def noteWillRemoveFromHass(self):
-        super().noteWillRemoveFromHass()
+        await super().noteWillRemoveFromHass()
         await self.shutdown()
         for ent in self.idEntityMap.values():
             await self.alertData.undeclareAlert(ent.alDomain, ent.alName, removeFromRegistry=self._purgeRegistry) # destroys ent
@@ -1964,7 +1964,7 @@ class ConditionAlert(AlertBase):
                     if val in ThresholdExeeded:
                         self.threshold_exceeded = ThresholdExeeded(val)
                     else:
-                        _LOGGER.warning(f'{self.name}: during restart, saw threshold_exceeded value of {val} with type={type(val)} rather than known int')
+                        report(DOMAIN, 'error', f'{gAssertMsg} {self.name} during restart, saw threshold_exceeded value of {val} with type={type(val)} rather than known int')
         
         self.added_to_hass_called = True
         await self.addedToHassDone()

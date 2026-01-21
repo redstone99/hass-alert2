@@ -478,7 +478,7 @@ class Alert2Data:
         self.gcTask = None
         self.supersedeNotifyMgr = SupersedeNotifyMgr(self)
         self.entityIdMap = {} # to detect collisions in slugified domain+name combos
-        # Count of generators ever evaluated. Does not reset when a generator is deleted or config is reloaded
+        # Count of generators evaluated. Resets when config is reloaded
         self.anonymous_generator_count = 0
 
     def noteUiUpdate(self):
