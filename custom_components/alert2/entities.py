@@ -12,7 +12,7 @@ from   homeassistant.const import (
 )
 import homeassistant.helpers.config_validation as cv
 from   homeassistant.helpers.entity import Entity
-from   homeassistant.helpers.restore_state import RestoreEntity
+from   homeassistant.helpers.restore_state import RestoreEntity, ExtraStoredData, RestoredExtraData
 import homeassistant.const as haConst
 from   homeassistant.core import HomeAssistant, Context, callback, Event, EventStateChangedData
 from   homeassistant.exceptions import TemplateError, ServiceNotFound, HomeAssistantError
@@ -562,19 +562,24 @@ class AlertCommon(Entity):
                     count -= 1
                 if count == 0:
                     report(DOMAIN, 'error', f'{gAssertMsg} Entity {self.entity_id} has not appeared in hass.states after waiting 0.5 s')
-            self.hass.bus.async_fire(EVENT_ALERT2_CREATE, { 'entity_id': self.entity_id,
-                                                             'domain': self.alDomain,
-                                                             'name': self.alName })
-            if self.earlyStart or self.alertData.haStarted:
-                await self.startWatching()
-            else:
-                self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.startWatchingEv)
+            await self.noteAddToHassDone()
         create_task(self.hass, DOMAIN, waitForAdd())
+    async def noteAddToHassDone(self):
+        self.hass.bus.async_fire(EVENT_ALERT2_CREATE, { 'entity_id': self.entity_id,
+                                                         'domain': self.alDomain,
+                                                         'name': self.alName })
+        if self.earlyStart or self.alertData.haStarted:
+            await self.startWatching()
+        else:
+            self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.startWatchingEv)
+        
     async def startWatchingEv(self, event): # async so we run in event loop
         await self.startWatching()
 
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
+        self.noteWillRemoveFromHass()
+    def noteWillRemoveFromHass(self):
         self.hass.bus.async_fire(EVENT_ALERT2_DELETE, { 'entity_id': self.entity_id,
                                                          'domain': self.alDomain,
                                                          'name': self.alName })
@@ -622,15 +627,16 @@ def processSupersedes(cfgElem, svars):
 class AlertGenerator(AlertCommon, SensorEntity):
     _attr_device_class = SensorDeviceClass.DATA_SIZE #'problem'
     #_attr_available = True  defaults to True
-    def __init__(self, hass, alertData, config, rawConfig):
+    # Pass name explicitly cuz if it's not in config, then __init__ will have created a fake name
+    def __init__(self, hass, alertData, config, rawConfig, name):
         AlertCommon.__init__(self, hass, alertData, config)
         SensorEntity.__init__(self)
         # super().__init__()
         self.config = config
         self.rawConfig = rawConfig
-        self._attr_name = entNameFromDN(GENERATOR_DOMAIN, self.config["generator_name"])
+        self._attr_name = entNameFromDN(GENERATOR_DOMAIN, name)
         self.alDomain = GENERATOR_DOMAIN
-        self.alName = self.config["generator_name"]
+        self.alName = name
         self._attr_unique_id = f'generator-n={self.alName}'
         self._generator_template = self.config['generator']
         self.tracker = Tracker(self, 'generator', hass, alertData,
@@ -662,6 +668,9 @@ class AlertGenerator(AlertCommon, SensorEntity):
         
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
+        await self.noteWillRemoveFromHass()
+    async def noteWillRemoveFromHass(self):
+        super().noteWillRemoveFromHass()
         await self.shutdown()
         for ent in self.idEntityMap.values():
             await self.alertData.undeclareAlert(ent.alDomain, ent.alName, removeFromRegistry=self._purgeRegistry) # destroys ent
@@ -755,7 +764,8 @@ class AlertGenerator(AlertCommon, SensorEntity):
                 acfg['domain'] = domainStr
                 acfg['name'] = nameStr
                 del acfg['generator']
-                del acfg['generator_name']
+                if 'generator_name' in acfg:
+                    del acfg['generator_name']
 
                 if 'supersedes' in self.config:
                     (err, rez) = processSupersedes(self.config['supersedes'], svars)
@@ -813,7 +823,8 @@ class AlertGenerator(AlertCommon, SensorEntity):
                     await self.alertData.undeclareAlert(ent.alDomain, ent.alName, removeFromRegistry=True) # destroys ent
                     del self.idEntityMap[aId]
                     needWrite = True
-        if needWrite:
+        # If anonymous generator, don't try writing state
+        if needWrite and 'generator_name' in self.config:
             self.async_write_ha_state()
 
 
@@ -1436,7 +1447,7 @@ class AlertBase(AlertCommon, RestoreEntity):
 
         _LOGGER.warning(msg)
         #_LOGGER.warning(f'_notify_pre_debounce: {"".join(traceback.format_stack())}')
-\
+        
         last_fired_time = self.last_fired_time
         if reason == NotificationReason.Fire:
             self.last_fired_message = message
@@ -1650,7 +1661,16 @@ class EventAlert(AlertBase):
                                            config['trigger'], self._condition_template)
         else:
             pass # This is just a tracked alert, like alert2.error
-        
+
+        self.exception_ignore_regexes = []
+        if 'exception_ignore_regexes' in self.config:
+            for astr in self.config['exception_ignore_regexes']:
+                try:
+                    are = re.compile(astr, re.DOTALL)
+                    self.exception_ignore_regexes.append(are)
+                except re.error as ex:
+                    report(DOMAIN, 'error', f'{self.name}: failed to compile exception_ignore_regexes "{astr}": {ex}')
+    
     @property
     def state(self) -> str:
         if not self.last_fired_time:
@@ -1823,7 +1843,9 @@ class ConditionAlert(AlertBase):
         self.manualOnEnabled = config['manual_on'] if 'manual_on' in config else False
         self.manualOffEnabled = config['manual_off'] if 'manual_off' in config else False
         self.ackRemindersOnly = config['ack_reminders_only'] if 'ack_reminders_only' in config else False
-            
+
+        self.threshold_exceeded = ThresholdExeeded.Init
+        
     async def trigger_on(self, variables):
         self.update_state_internal(True)
     def cond_on_update(self, results):
@@ -1875,6 +1897,13 @@ class ConditionAlert(AlertBase):
         if 'supersedes' in self.config and self.config['supersedes']:
             rez['supersedes'] = self.config['supersedes']
         return rez
+
+    # State we'd like restored when HA restarts, but not expose as an attribute
+    @property
+    def extra_restore_state_data(self) -> ExtraStoredData | None:
+        return RestoredExtraData({
+            'threshold_exceeded': self.threshold_exceeded.value,
+        })
     
     async def async_will_remove_from_hass(self) -> None:
         await super().async_will_remove_from_hass()
@@ -1923,6 +1952,20 @@ class ConditionAlert(AlertBase):
                     self.last_off_time = tdate
             # We don't restore cond_true_time/task becaues we don't know the cond was true while HA was restarting.
 
+        if self._threshold_value_template is None:
+            # Not using threshold, so leave threshold_exceeded in the Init state
+            pass
+        else:
+            last_extra_data = await self.async_get_last_extra_data()
+            if last_extra_data:
+                extra_dict = last_extra_data.as_dict()
+                if 'threshold_exceeded' in extra_dict:
+                    val = extra_dict['threshold_exceeded']
+                    if val in ThresholdExeeded:
+                        self.threshold_exceeded = ThresholdExeeded(val)
+                    else:
+                        _LOGGER.warning(f'{self.name}: during restart, saw threshold_exceeded value of {val} with type={type(val)} rather than known int')
+        
         self.added_to_hass_called = True
         await self.addedToHassDone()
 

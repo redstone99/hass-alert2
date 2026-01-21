@@ -298,8 +298,23 @@ DOMAIN_NAME_DICT = {
     vol.Required('domain'): jDomain,
     vol.Required('name'): jstringName,
 }
+ALERT2_GLOBAL_DICT = {
+    vol.Required('domain'): 'alert2',
+    vol.Required('name'): 'global_exception',
+    vol.Optional('exception_ignore_regexes'): vol.All(cv.ensure_list, [ cv.string ])
+}
+UNHANDLED_EXCEPTION_DICT = {
+    vol.Required('domain'): jDomain,
+    vol.Required('name'): 'unhandled_exception',
+    vol.Optional('exception_ignore_regexes'): vol.All(cv.ensure_list, [ cv.string ])
+}
+
 # So if 'generator' is present, then 'name' is a template. Otherwise it's a string.
-SINGLE_TRACKED_SCHEMA = SINGLE_TRACKED_SCHEMA_PRE_NAME.extend(DOMAIN_NAME_DICT)
+SINGLE_TRACKED_SCHEMA = vol.Any(
+    SINGLE_TRACKED_SCHEMA_PRE_NAME.extend(ALERT2_GLOBAL_DICT),
+    SINGLE_TRACKED_SCHEMA_PRE_NAME.extend(UNHANDLED_EXCEPTION_DICT),
+    SINGLE_TRACKED_SCHEMA_PRE_NAME.extend(DOMAIN_NAME_DICT)
+)
 
 SINGLE_ALERT_SCHEMA_PRE_NAME = SINGLE_TRACKED_SCHEMA_PRE_NAME.extend({
     vol.Optional('message'): cv.template
@@ -346,7 +361,7 @@ GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
     vol.Required('domain'): cv.template,
     vol.Required('name'): cv.template,
     vol.Required('generator'): jtemplate,
-    vol.Required('generator_name'): jstringName,
+    vol.Optional('generator_name'): jstringName,
     vol.Optional('supersedes'): SUPERSEDES_GEN,
     # Overrides 'priority'
     vol.Optional('priority'): cv.template,

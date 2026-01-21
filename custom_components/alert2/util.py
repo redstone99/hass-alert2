@@ -1,7 +1,7 @@
 from   io import StringIO
 import logging
 import threading
-#import traceback
+import traceback
 #from homeassistant.core import async_get_hass_or_none
 _LOGGER = logging.getLogger(__name__)
 global_tasks = set()
@@ -29,7 +29,7 @@ class PersistantNotificationHelper:
 #
 # report() - report that an event alert has fired.
 # 
-def report(domain: str, name: str, message: str | None = None, isException: bool = False, escapeHtml: bool = True,
+def report(domain: str, name: str, message: str | None = None, isException: bool = False, withTraceback: str|None = None, escapeHtml: bool = True,
            data: dict = None) -> None:
     evdata = { 'domain' : domain, 'name' : name }
     if message is not None:
@@ -38,9 +38,12 @@ def report(domain: str, name: str, message: str | None = None, isException: bool
         evdata['message'] = message
     if data is not None:
         evdata['data'] = data
+    if withTraceback:
+        evdata['traceback'] = withTraceback
     if isException:
         _LOGGER.exception(f'Exception reported: {evdata}')
         #    _LOGGER.exception(f'Exception reported: {evdata}', exc_info=isException)
+        evdata['traceback'] = traceback.format_exc()
     else:
         #import traceback
         #_LOGGER.warning(f' err reported from: {"".join(traceback.format_stack())}')
@@ -52,7 +55,7 @@ def report(domain: str, name: str, message: str | None = None, isException: bool
     if shutting_down:
         _LOGGER.warning(f'   Not notifying or further processing alert because HA is shutting donw')
         return
-        
+    
     ghass = global_hass
     if ghass and ghass.loop.is_running():
         ghass.loop.call_soon_threadsafe(lambda: ghass.bus.async_fire(EVENT_TYPE, evdata))
@@ -107,10 +110,11 @@ def taskDone(domain, atask):
         atask.print_stack(file=output)
         astack = output.getvalue()
         _LOGGER.error(f'unhandled_exception with stack {astack}')
-        if domain == 'alert2':
-            report(domain, 'global_exception', f'unhandled_exception: {ex}')
+        excMsg = f'{ex.__class__}: {ex}. '
+        if domain == DOMAIN:
+            report(domain, 'global_exception', f'{excMsg}', withTraceback=astack)
         else:
-            report(domain, 'unhandled_exception', str(ex))
+            report(domain, 'unhandled_exception', f'domain={domain} {excMsg}', withTraceback=astack)
 
 def set_shutting_down(abool):
     global shutting_down

@@ -1072,9 +1072,9 @@ async def test_validate(hass, service_calls, hass_client, hass_storage):
     assert rez == {}
     
     # generator
-    rez = await tpost("/api/alert2/manageAlert", {'validate': { 'domain':'d', 'name':'n', 'condition':'on',
+    rez = await tpost("/api/alert2/manageAlert", {'validate': { 'domain':'d', 'name':'n',
                                                                 'generator': 'foo' } })
-    assert re.search('required key not provided', rez['error'])
+    assert re.search('Must specify either condition', rez['error'])
     rez = await tpost("/api/alert2/manageAlert", {'validate': { 'domain':'d', 'name':'n', 'condition':'on',
                                                                 'generator': 'foo', 'generator_name': 'ick' } })
     assert rez == {}

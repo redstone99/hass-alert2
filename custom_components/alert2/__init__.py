@@ -478,6 +478,8 @@ class Alert2Data:
         self.gcTask = None
         self.supersedeNotifyMgr = SupersedeNotifyMgr(self)
         self.entityIdMap = {} # to detect collisions in slugified domain+name combos
+        # Count of generators ever evaluated. Does not reset when a generator is deleted or config is reloaded
+        self.anonymous_generator_count = 0
 
     def noteUiUpdate(self):
         tmpUiConfig = copy.deepcopy(self.rawYamlBaseTopConfig)
@@ -712,7 +714,7 @@ class Alert2Data:
         if self.entityIdMap:
             repot(DOMAIN, 'error', f'{gAssertMsg} In unload_alerts, entityIdMap not empty after unloading alerts: {list(self.entityIdMap.keys())}')
             self.entityIdMap = {}
-        
+        self.anonymous_generator_count = 0
         # then condition alerts
         # need to unload them so an alert is not unloaded until any alert it transitively supersedes has
         # been unloaded. This is to prevent notificaitons getting sent out between the two unloadings.
@@ -849,6 +851,7 @@ class Alert2Data:
                     return None
                 if 'generator' in aCfg:
                     newEnt = self.declareGenerator(aCfg, rawConfig=obj)
+                    addGenerator = 'generator_name' in aCfg
                 else:
                     newEnt = self.declareCondition(aCfg, genVars)
         except (vol.Invalid, HomeAssistantError) as v:
@@ -861,7 +864,12 @@ class Alert2Data:
         #_LOGGER.info(f'declareAlert: {isBulk} {newEnt}')
         if isinstance(newEnt, Entity):
             if isinstance(newEnt, AlertGenerator):
-                await self.sensorComponent.async_add_entities([newEnt])
+                if addGenerator:
+                    await self.sensorComponent.async_add_entities([newEnt])
+                else:
+                    # If ent is added for real, then addedToHassDone is eventually called.
+                    # Otherwise we call the internal housekeeping explicitly here
+                    await newEnt.noteAddToHassDone()
             else:
                 await self.component.async_add_entities([newEnt])
             if genVars is None:
@@ -902,7 +910,12 @@ class Alert2Data:
                 ent.setRegistryPurge()
             del self.generators[name]
             _LOGGER.debug(f'Lifecycle undeclareAlert {ent.entity_id}')
-            await self.sensorComponent.async_remove_entity(ent.entity_id)
+            if 'generator_name' in ent.config:
+                await self.sensorComponent.async_remove_entity(ent.entity_id)
+            else:
+                # If entity is in hass, then async_remove_entity eventally calls async_will_remove_from_hass
+                # But if not, then we gotta call the internal housekeeping function individually
+                await ent.noteWillRemoveFromHass()
         else:
             errMsg = f'Trying to remove unknown alert domain={domain} name={name}'
             if doReport:
@@ -1104,11 +1117,15 @@ class Alert2Data:
     # so don't add any other error return paths here.
     def declareGenerator(self, config, rawConfig):
         domain = GENERATOR_DOMAIN
-        name = config['generator_name']
+        if 'generator_name' in config:
+            name = config['generator_name']
+        else:
+            name = f'anonymous_{self.anonymous_generator_count}'
+            self.anonymous_generator_count += 1
         errMsg = self.checkNewName(domain, name)
         if errMsg:
             return errMsg
-        entity = AlertGenerator(self._hass, self, config, rawConfig)
+        entity = AlertGenerator(self._hass, self, config, rawConfig, name=name)
         self.generators[name] = entity
         self.entityIdMap[getPreferredEntityId(domain, name)] = entity
         return entity
@@ -1187,6 +1204,17 @@ class Alert2Data:
                 report(DOMAIN, 'error', f'Malformed call {tmsg} non-string "message" {evdata}')
                 return
             message = evdata['message']
+
+        if alertObj.exception_ignore_regexes:
+            for aregex in alertObj.exception_ignore_regexes:
+                fullstr = message
+                if 'traceback' in evdata:
+                    fullstr += evdata['traceback']
+                #_LOGGER.info(f'process exception with fullstr={fullstr}')
+                if aregex.search(fullstr):
+                    _LOGGER.info(f'Skipping report due to message match to exception_ignore_regexes regex {aregex}')
+                    return
+            
         data = None
         if 'data' in evdata:
             if not isinstance(evdata['data'], dict):

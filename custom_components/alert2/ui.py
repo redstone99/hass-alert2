@@ -121,7 +121,7 @@ def prepStrConfigField(fname, tval, doReport=True):
         if stripped_tval.startswith('{%') or stripped_tval.startswith('{{') or stripped_tval.startswith('{#') :
             return tval
         return parse_yaml(tval)
-    elif fname in [ 'trigger', 'trigger_on', 'trigger_off' ]:
+    elif fname in [ 'trigger', 'trigger_on', 'trigger_off', 'exception_ignore_regexes' ]:
         return parse_yaml(tval)
     elif fname in [ 'annotate_messages', 'ack_required', 'manual_off', 'manual_on', 'priority', 'icon', 'friendly_name',
                     'title', 'target', 'domain', 'name', 'message', 'done_message',
@@ -192,6 +192,9 @@ class RenderValueView(HomeAssistantView):
                 addNotificationVars = True
                 if isinstance(tval, bool):
                     simple = True
+            elif name in ['exception_ignore_regexes']:
+                tval = SINGLE_TRACKED_SCHEMA({ 'domain': 'alert2', 'name': 'global_exception', name: ttxt })[name]
+                simple = True
             elif name in ['annotate_messages', 'reminder_frequency_mins', 'throttle_fires_per_mins',
                           'supersede_debounce_secs', 'icon', 'persistent_notifier_grouping']:
                 tval = DEFAULTS_SCHEMA({ name: ttxt })[name]
