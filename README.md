@@ -243,7 +243,7 @@ Notifiers may be either legacy notifiers or the newer notify entities (entities 
 
 Alert2 automatically defines a few event alerts that fire internally:
 
-* `alert2.alert2_global_exception` - This event alert fires if an HA task crashes due to an unhandled exception. This includes tasks for components outside Alert2.  For this alert, `throttle_fires_per_mins` defaults to `[20,60]` to limit alerts if some component goes into a crash loop. `exception_ignore_regexes` is also available to limit notifications from faulty components.
+* `alert2.alert2_global_exception` - This event alert fires if an HA task crashes due to an unhandled exception. This includes tasks for components outside Alert2.  For this alert, `throttle_fires_per_mins` defaults to `[20,60]` to limit alerts if some component goes into a crash loop. `exception_ignore_regexes` is also available to limit notifications from faulty components. See [Tracked](#tracked) section for an example.
 
 * `alert2.alert2_warning` - This event alert fires if the config contains something that is likely wrong but not an error (for example setting `clear_notification` without setting `annotate_messages` to false).  It fires at most once for each type of warning over the lifetime of your HA install.
 
@@ -381,7 +381,7 @@ Entity name related fields:
 | `data` | dict or string | optional | Dict or template string that evaluates to a dict. Overrides, on a key-by-key basis (for top-level keys), any default `data` dict specified. See doc in [Common alert features](#common-alert-features-1)  |
 | `throttle_fires_per_mins` | [int, float] | optional | Override the default value of `throttle_fires_per_mins` |
 | `persistent_notifier_grouping` | bool | optional | Override the default value of `persistent_notifier_grouping`.  |
-| `exception_ignore_regexes` | string or list | Only available for alerts with domain=alert2 name=global_exception, or tracked alert with name=unhandled_exception. When an exception occurs, the exception message concatenated with the stack trace is tested against the list of regexes.  If a regex matches, no notification is sent, though the exception is still logged. Testing is done using re.search with re.DOTALL set, so the test searches within the regex and '.' matches any character including newlines. |
+| `exception_ignore_regexes` | string or list | optional | Only available for alerts with domain=alert2 name=global_exception, or tracked alert with name=unhandled_exception. When an exception occurs, the exception message concatenated with the stack trace is tested against the list of regexes.  If a regex matches, no notification is sent, though the exception is still logged. Testing is done using re.search with re.DOTALL set, so the test searches within the regex and '.' matches any character including newlines. See [Tracked](#tracked) section for an example. |
 
 <br>Generator-related fields:
 
