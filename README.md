@@ -247,7 +247,7 @@ Alert2 automatically defines a few event alerts that fire internally:
 
 * `alert2.alert2_warning` - This event alert fires if the config contains something that is likely wrong but not an error (for example setting `clear_notification` without setting `annotate_messages` to false).  It fires at most once for each type of warning over the lifetime of your HA install.
 
-* `alert2.alert2_error` - This event alert fires on config errors and errors in Alert2 itself. If you specify a notifier that doesn't exist for `alert2.error` itself, then it falls back to `persistent_notification`.
+* `alert2.alert2_error` - This event alert fires on config errors and errors in Alert2 itself. If you specify a notifier that doesn't exist for `alert2_error` itself, then it falls back to `persistent_notification`.
 
 Each of these alerts can be configured in your config, either YAML or via the UI.  To disable notifications for an alert, you can set the notifier to `null`. See example in the [Tracked](#tracked) section, below.
 
@@ -276,7 +276,7 @@ The following are all optional.
 
 | Key | Type | Description |
 |---|---|---|
-|`skip_internal_errors` | bool | If true, an entity for `alert2.error` will not be created, you will not receive any notifications for problems with your config file or Alert2 internal errors, and such errors won't show up in the Alert2 UI card.  Errors will still appear in the log file. Default is `false` |
+|`skip_internal_errors` | bool | If true, an entity for `alert2_error` will not be created, you will not receive any notifications for problems with your config file or Alert2 internal errors, and such errors won't show up in the Alert2 UI card.  Errors will still appear in the log file. Default is `false` |
 | `notifier_startup_grace_secs` | float | Time to wait after HA starts for a notifier to be defined. See [Notifiers](#notifiers) section above for detailed explanation. Default is 30 seconds |
 | `defer_startup_notifications` | bool or list | True means no notifications are sent until `notifier_startup_grace_secs` passes after startup. False means send notifications as soon as the notifier is defined in HA.  Or this parameter can be name of a single notifier or list of notifiers for those to defer during startup. Useful for notify groups. See [Notifiers](#notifiers) section above for more details |
 
@@ -672,11 +672,9 @@ An example of using an entity as an Alert2 native group.  Handles alerts fired d
 
 ### Tracked
 
-The `tracked` config subsection is for declaring event alerts that have no `trigger` specification and so can only be triggered by invoking the action `alert2.report`. Declaring these alerts here avoids an "undeclared alert" alert when reporting, and also enables the system to restore the alert state when HomeAssistant restarts.
+Alert2 internal alerts such as `alert2_error` or `alert2_global_exception` may be configured and support similar config fields as other alerts.
 
-Any of the above event alert parameters may be specified here except for `message` (since `alert2.report` specifies the message), `trigger` and `condition`.
-
-The `alert2.error` alert may be configured here.
+They may be configured via YAML or via the UI.  In a YAML config, they are configured in a separate `tracked` section of the config.  This section is for programatically triggered alerts and does not support the `message`, `trigger` or `condition` fields.
 
 Example:
 
@@ -689,7 +687,7 @@ Example:
       tracked:
         - domain: alert2
           name: error
-          reminder_frequency_mins: 20
+          notifier: foo
           
         - domain: alert2
           name: global_exception
@@ -701,9 +699,14 @@ Example:
           exception_ignore_regexes: [ "a_flaky_component", "bar" ]
           ...
 
+
+To configure an alert2 internal alert via the "Alert Manager" card in the UI, create an alert in the UI with domain `alert2` and the corresponding name.  E.g. domain `alert2` and name `global_exception`.  Then customize the fields you want. In the "Alert Manager" UI, the "Create" and "Delete" buttons create or delete a config entry for the internal alert; they don't create or delete the internal alert itself.
+
+Lastly, the `tracked` config subsection is also for declaring your own event alerts that will only be triggered by invoking the action `alert2.report`. Declaring these alerts here avoids an "undeclared alert" alert when reporting, and also enables the system to restore the alert state when HomeAssistant restarts.
+
 ### Alert recommendations
 
-We recommend setting a value for the default notifier or configuring `alert2.error` in the `tracked` section of the config so that alert2 error notifications will go somewhere you wish.
+We recommend setting a value for the default notifier or configuring `alert2_error` in the `tracked` section of the config so that alert2 error notifications will go somewhere you wish.
 
 As described above in `early_start`, alerts by default don't start being monitored until HA fully starts.  This is to reduce template errors during startup due to entities not being defined yet.  However, the downside is that if some problem prevents HA from fully starting, none of your alerts will be monitored.  To prevent this, we provide a binary_sensor entity, `binary_sensor.alert2_ha_startup_done`, that turns on when HA has fully started. That entity also has an attribute, `start_time`, that is the time the module loaded. Together you can use them to alert if HA startup takes too long as follows:
 
