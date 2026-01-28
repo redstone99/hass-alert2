@@ -25,6 +25,7 @@ from   homeassistant.helpers import template as template_helper
 from homeassistant import config as conf_util
 import homeassistant.components.websocket_api as wsapi
 import homeassistant.util.dt as dt
+import homeassistant.helpers.entity_registry as er
 import pycares
 
 a2Ui.SAVE_DELAY = 0
@@ -1885,8 +1886,7 @@ async def test_internal(hass, service_calls, hass_storage):
     assert gad.tracked['alert2']['global_exception']._friendly_name == 'f3'
 
 async def test_internal2(hass, service_calls, hass_storage, hass_client):
-    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
-        ]}}
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [ ]}}
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
     rez = await tpost("/api/alert2/manageAlert", {'create': {
         'domain':'alert2', 'name':'warning', 'notifier': "[ 4" } })
@@ -2073,3 +2073,32 @@ async def test_reminder_msg(hass, service_calls, hass_storage, hass_client):
     assert service_calls.isEmpty()
     gad = hass.data[DOMAIN]
     assert gad.alerts['d']['t1']._reminder_message_template == None
+
+async def test_anon_gen(hass, service_calls, hass_storage, hass_client):
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : []}}
+    anonCfg = { 'domain': 'd2-{{ genElem }}', 'name': 'n2-{{ genElem }}', 'condition': 'off', 'generator' : '[ "y" ]' }
+    uiCfg = { 'defaults' : { },
+              'alerts' : [
+                  { 'domain': 'd1-{{ genElem }}', 'name': 'n1-{{ genElem }}', 'condition': 'off',
+                    'generator_name': 'g1', 'generator' : '[ "z" ]' },
+                  anonCfg,
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+
+    anonCfg['condition'] = 'no'
+    rez = await tpost("/api/alert2/manageAlert", {'update': anonCfg })
+    assert rez == {}
+    #assert re.search('can not find existing', rez['error'])
+    assert service_calls.isEmpty()
+
+    
+    entities = er.async_get(hass).entities
+    _LOGGER.info(list(entities.keys()))
+
+
+    
+async def test_internal_alert(hass, service_calls, hass_storage, hass_client):
+    pass

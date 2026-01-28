@@ -695,7 +695,7 @@ async def test_notifiers6(hass, service_calls):
     assert service_calls.isEmpty()
     # List all entities known
     #   entities = er.async_get(hass).entities
-    #   _LOGGER.info(list(entities.key()))
+    #   _LOGGER.info(list(entities.keys()))
     await hass.services.async_call('notify','send_message', {'entity_id': 'notify.notify_happy3', 'message': 'amsg', 'title': 'atitle' })
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('send_message', f'amsg')
