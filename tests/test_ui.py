@@ -2094,10 +2094,15 @@ async def test_anon_gen(hass, service_calls, hass_storage, hass_client):
     #assert re.search('can not find existing', rez['error'])
     assert service_calls.isEmpty()
 
+    assert set(gad.alerts['d1-z'].keys()) == set([ 'n1-z'])
     
     entities = er.async_get(hass).entities
     _LOGGER.info(list(entities.keys()))
 
+
+check load ui when no ui storage at all
+make sure can not create condition alert with same name as internal
+    
 
     
 async def test_internal_alert(hass, service_calls, hass_storage, hass_client):
