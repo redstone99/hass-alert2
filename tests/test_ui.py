@@ -590,6 +590,40 @@ async def test_migrate2(hass, service_calls, hass_storage, hass_client, monkeypa
                                        'data': { 'config': uiCfg } }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
     assert gad.alerts['d']['t2']
+# UI with two alerts
+async def test_migrate2a(hass, service_calls, hass_storage, hass_client, monkeypatch):
+    cfg = { 'alert2' : {
+        'defaults' : { 'supersede_debounce_secs': 5 },
+        'alerts': [
+            { 'domain': 'd', 'name': 't1', 'condition': 'off' }
+        ] } }
+    uiCfg = { 'defaults' : { },
+              'alerts': [
+                  { 'domain': 'd', 'name': 't2', 'condition':'off' },
+                  { 'domain': 'd', 'name': 't3', 'condition':'off' }
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    assert gad.alerts['d']['t2']
+    assert set(gad.alerts['d'].keys()) == set([ 't1', 't2', 't3' ])
+# UI with two alerts, no yaml alerts
+async def test_migrate2b(hass, service_calls, hass_storage, hass_client, monkeypatch):
+    cfg = { 'alert2' : {
+        'defaults' : { }, } }
+    uiCfg = { 'defaults' : { },
+              'alerts': [
+                  { 'domain': 'd', 'name': 't2', 'condition':'off' },
+                  { 'domain': 'd', 'name': 't3', 'condition':'off' }
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    assert gad.alerts['d']['t2']
+    assert set(gad.alerts['d'].keys()) == set([ 't2', 't3' ])
+    
 # UI with single default
 async def test_migrate3(hass, service_calls, hass_storage, hass_client, monkeypatch):
     cfg = { 'alert2' : {
@@ -1527,7 +1561,7 @@ async def test_conflict2(hass, service_calls, hass_client, hass_storage):
 
     rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'' } })
     assert rez == { 'results': [
-        { 'uiId':1, 'domain':'d', 'name':'n1', 'id':'alert2.d_n3' },
+        { 'uiId':1, 'domain':'d', 'name':'n1', 'id':'alert2.d_n1', 'failedToLoad': True },
     ]}
 
     
@@ -1825,7 +1859,7 @@ async def test_event(hass, service_calls, hass_client, hass_storage):
     await setAndWait(hass, 'sensor.a', 'off')
     rez = await tpost("/api/alert2/manageAlert", {'create': {
         'domain':'d', 'name':'n1', 'trigger': "[{'platform':'state','entity_id':'sensor.a'}]" } })
-    assert rez == {}
+    assert rez == { 'uiId': 1 }
     assert service_calls.isEmpty()
     n1 = gad.tracked['d']['n1']
 
@@ -1835,16 +1869,16 @@ async def test_event(hass, service_calls, hass_client, hass_storage):
 async def test_uicfg(hass, service_calls, hass_storage):
     # Check null values for display_msg
     cfg = { 'alert2': { } }
-    uiCfg = { 'defaults' : { },
-              'alerts': [
-                  { 'domain': 'd', 'name': 'n1', 'condition':'off', 'priority': '{{ ["high"][genIdx]}}',
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'nextAlertUiId': 3, 'alertInfos': [
+        { 'uiId': 1, 'cfg': { 'domain': 'd', 'name': 'n1', 'condition':'off', 'priority': '{{ ["high"][genIdx]}}',
                     'delay_on_secs': '{{ [33][genIdx] }}',
-                    'generator': 'hh', 'generator_name': 'g1' },
-                  { 'domain': 'd', 'name': 'n2', 'condition':'off', 'supersedes': '{ "domain": "d", "name":"{{genElem}}" }', 'generator': 'hh', 'generator_name': 'g2' },
+                    'generator': 'hh', 'generator_name': 'g1' } },
+        { 'uiId': 2, 'cfg': { 'domain': 'd', 'name': 'n2', 'condition':'off', 'supersedes': '{ "domain": "d", "name":"{{genElem}}" }', 'generator': 'hh', 'generator_name': 'g2' } },
               ]
-             }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
+             })
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': uiCfg }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -1890,6 +1924,7 @@ async def test_supersede(hass, service_calls, hass_storage):
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'extra keys.*\'x\'')
     gad = hass.data[DOMAIN]
+    #_LOGGER.info(set(gad.alerts['d'].keys()))
     assert gad.supersedeMgr.supersedesMap == {
         ('d','n17'): set( ),
         ('d','n16'): set( [ ('d','n1') ] ),
@@ -1978,15 +2013,13 @@ async def test_unknown(hass, service_calls, hass_storage):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
         { 'domain': 'd', 'name': 'v', 'condition': '{{ states("sensor.foo") in ["unknown","unavailable"] }}', 'message': 'state became {{ states("sensor.foo") }}' },
         ]}}
-    uiCfg = { 'defaults' : { },
-              'alerts': [
-                  { 'domain': 'd', 'name': 'tt', 'trigger':
-                    "[{'platform':'state','entity_id':'sensor.foo','to': None},{'platform':'state','entity_id':'sensor.foo','to':'unavailable'}]" },
-                    #"[{'platform':'state','entity_id':'sensor.foo','to':'unavailable'}]" },
-              ]
-             }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'nextAlertUiId': 2, 'alertInfos': [
+        { 'uiId': 1, 'cfg': { 'domain': 'd', 'name': 'tt', 'trigger':
+                    "[{'platform':'state','entity_id':'sensor.foo','to': None},{'platform':'state','entity_id':'sensor.foo','to':'unavailable'}]" }},
+        #"[{'platform':'state','entity_id':'sensor.foo','to':'unavailable'}]" },
+    ] })
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -2015,27 +2048,49 @@ async def test_unknown(hass, service_calls, hass_storage):
     # NOTE - the trigger won't fire. I can't figure out a way to get the trigger to fire when a sensor is unknown
     # actually, it'd probably fire with an all state trigger and a condition
 
-async def test_internal(hass, service_calls, hass_storage):
+async def test_internal(hass, service_calls, hass_client, hass_storage, monkeypatch):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
         ]}}
-    uiCfg = { 'defaults' : { },
-              'tracked' : [
-                  { 'domain': 'alert2', 'name': 'warning', 'friendly_name': 'f1' },
-                  { 'domain': 'alert2', 'name': 'error', 'friendly_name': 'f2' },
-                  { 'domain': 'alert2', 'name': 'global_exception', 'friendly_name': 'f3' },
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'nextAlertUiId': 4, 'alertInfos': [
+        { 'uiId': 1, 'cfg': { 'domain': 'alert2', 'name': 'warning', 'friendly_name': 'f1' }},
+        { 'uiId': 2, 'cfg': { 'domain': 'alert2', 'name': 'error', 'friendly_name': 'f2' }},
+        { 'uiId': 3, 'cfg': { 'domain': 'alert2', 'name': 'global_exception', 'friendly_name': 'f3' }},
               ]
-             }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
-    assert await async_setup_component(hass, DOMAIN, cfg)
-    await hass.async_start()
-    await hass.async_block_till_done()
-    assert service_calls.isEmpty()
-    gad = hass.data[DOMAIN]
+                  })
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
     assert gad.tracked['alert2']['error']._friendly_name == 'f2'
     assert gad.tracked['alert2']['warning']._friendly_name == 'f1'
     assert gad.tracked['alert2']['global_exception']._friendly_name == 'f3'
 
+    # Try updating
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'uiId':1, 'cfg': {
+        'domain':'alert2', 'name':'warning', 'friendly_name': 'f1a' } }})
+    assert rez == {}
+    
+    assert gad.tracked['alert2']['warning']._friendly_name == 'f1'
+    await do_reload(cfg, hass, monkeypatch)
+    assert gad.tracked['alert2']['warning']._friendly_name == 'f1a'
+    
+    # Delete tracked
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'uiId':1 } })
+    assert rez == {}
+    await do_reload(cfg, hass, monkeypatch)
+    assert gad.tracked['alert2']['warning']._friendly_name == None
+
+    # Try create duplicate
+    rez = await tpost("/api/alert2/manageAlert", {'create': {
+        'domain':'alert2', 'name':'error', 'friendly_name': 'f2z' } })
+    assert re.search('UI alert already exists', rez['error'])
+
+    # Create warning again
+    rez = await tpost("/api/alert2/manageAlert", {'create': {
+        'domain':'alert2', 'name':'warning', 'friendly_name': 'f1b' } })
+    assert rez == { 'uiId': 4 }
+    await do_reload(cfg, hass, monkeypatch)
+    assert gad.tracked['alert2']['warning']._friendly_name == 'f1b'
+    
 async def test_internal2(hass, service_calls, hass_storage, hass_client):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [ ]}}
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
@@ -2047,14 +2102,13 @@ async def test_internal2(hass, service_calls, hass_storage, hass_client):
 async def test_data(hass, service_calls, hass_storage):
     await setAndWait(hass, "sensor.a", 'off')
     cfg = { 'alert2': { } }
-    uiCfg = { 'defaults' : { },
-              'alerts': [
-                  { 'domain': 'd', 'name': 'n1', 'condition':'sensor.a',
-                    'data': "{ 'actions': [ { 'action': 'foo', 'title': '{{ notify_reason }}' } ] }" },
-              ]
-             }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'nextAlertUiId': 2, 'alertInfos': [
+        { 'uiId': 1, 'cfg': { 'domain': 'd', 'name': 'n1', 'condition':'sensor.a',
+                    'data': "{ 'actions': [ { 'action': 'foo', 'title': '{{ notify_reason }}' } ] }" } },
+    ]})
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': uiCfg }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -2066,15 +2120,15 @@ async def test_data(hass, service_calls, hass_storage):
 async def test_data2(hass, service_calls, hass_storage):
     await setAndWait(hass, "sensor.a", 'off')
     cfg = { 'alert2': { 'defaults': { 'data': { 'a': 1 } } } }
-    uiCfg = { 'defaults' : { 'data': '{{ { "b":2 } }}' },
-              'alerts': [
-                  { 'domain': 'd', 'name': 'n1', 'condition':'sensor.a' },
-                  { 'domain': 'd', 'name': 'n2', 'condition':'sensor.a', 'data': "{ 'c': 3 }" },
-                  { 'domain': 'd', 'name': 'n3', 'condition':'sensor.a', 'data': '{{ { "d": 4 } }}' },
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'defaults' : { 'data': '{{ { "b":2 } }}' },
+                   'nextAlertUiId': 4, 'alertInfos': [
+                       { 'uiId': 1, 'cfg': { 'domain': 'd', 'name': 'n1', 'condition':'sensor.a' }},
+                       { 'uiId': 2, 'cfg': { 'domain': 'd', 'name': 'n2', 'condition':'sensor.a', 'data': "{ 'c': 3 }" }},
+                       { 'uiId': 3, 'cfg': { 'domain': 'd', 'name': 'n3', 'condition':'sensor.a', 'data': '{{ { "d": 4 } }}' }},
               ]
-             }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
+                  })
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -2088,10 +2142,11 @@ async def test_data2(hass, service_calls, hass_storage):
 async def test_data3(hass, service_calls, hass_storage):
     await setAndWait(hass, "sensor.a", 'off')
     cfg = { 'alert2': { 'defaults': { 'data': '{{ { "a": 1 } }}' } } }
-    uiCfg = { 'defaults' : { 'data': '{{ { "b":2 } }}' },
-              'alerts': [   { 'domain': 'd', 'name': 'n1', 'condition':'sensor.a', 'data': "{ 'c': 3 }" },  ] }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'defaults' : { 'data': '{{ { "b":2 } }}' }, 'nextAlertUiId': 2,
+                   'alertInfos': [
+                       {'uiId': 1, 'cfg': { 'domain': 'd', 'name': 'n1', 'condition':'sensor.a', 'data': "{ 'c': 3 }" }},  ] })
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -2103,11 +2158,12 @@ async def test_data3(hass, service_calls, hass_storage):
 async def test_data4(hass, service_calls, hass_storage):
     await setAndWait(hass, "sensor.a", 'off')
     cfg = { 'alert2': { 'defaults': { 'data': { 'a': 1 } } } }
-    uiCfg = { 'defaults' : { 'data': "{ 'b':2 }" },
-              'alerts': [   { 'domain': 'd', 'name': 'n1', 'condition':'sensor.a', 'data': "{ 'c': 3 }" }, 
-                            { 'domain': 'd', 'name': 'n2', 'condition':'sensor.a', 'data': "{{ { 'c': 3 } }}" },  ] }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'defaults' : { 'data': "{ 'b':2 }" }, 'nextAlertUiId': 3,
+                   'alertInfos': [
+                       {'uiId':1,'cfg':{ 'domain': 'd', 'name': 'n1', 'condition':'sensor.a', 'data': "{ 'c': 3 }" }}, 
+                       {'uiId':2,'cfg':{ 'domain': 'd', 'name': 'n2', 'condition':'sensor.a', 'data': "{{ { 'c': 3 } }}" }},  ] })
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -2122,66 +2178,65 @@ async def test_conflict(hass, service_calls, hass_storage, hass_client):
     # Was bug where conflicting alert definitions made manageAlert:search to die
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
         { 'domain': 'd', 'name': 't1', 'condition': 'off' },
+        { 'domain': 'd', 'name': 't3', 'condition': 'off' },
         ]}}
-    uiCfg = { 'defaults' : { },
-              'alerts' : [
-                  { 'domain': 'd', 'name': 't1', 'condition': 'off' },
-              ]
-             }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
-    assert await async_setup_component(hass, DOMAIN, cfg)
-    await hass.async_start()
-    await hass.async_block_till_done()
+    uiCfg = getInitUiCfg()
+    uiCfg.update({'nextAlertUiId': 3, 'alertInfos' : [
+        {'uiId':1,'cfg': { 'domain': 'd', 'name': 't1', 'condition': 'off' }},
+        {'uiId':2,'cfg': { 'domain': 'd', 'name': 't3', 'condition': 'off' }},
+    ]})
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg, noErrors=False)
+    service_calls.popNotifySearch('persistent_notification', 't3', 'Duplicate declaration.*name=t3')
     service_calls.popNotifyEmpty('persistent_notification', 'Duplicate declaration.*name=t1')
-    gad = hass.data[DOMAIN]
     assert gad.alerts['d']['t1']
-
-    client = await hass_client()
-    async def tpost(url, adict):
-        resp = await client.post(url, json=adict)
-        assert resp.status == 200
-        rez = await resp.json()
-        await hass.async_block_till_done()
-        return rez
     
     rez = await tpost("/api/alert2/manageAlert", {'search': { 'str': '' } } )
-    assert rez == { 'results': [{'id': 'alert2.d_t1', 'domain': 'd', 'name': 't1', 'failedToLoad': True}] }
+    assert rez == { 'results': [
+        {'uiId': 1, 'id': 'alert2.d_t1', 'domain': 'd', 'name': 't1', 'failedToLoad': True},
+        {'uiId': 2, 'id': 'alert2.d_t3', 'domain': 'd', 'name': 't3', 'failedToLoad': True},
+    ] }
     assert service_calls.isEmpty()
 
     rez = await tpost("/api/alert2/manageAlert", {'search': { 'str': 'd_t1' } } )
-    assert rez == { 'results': [{'id': 'alert2.d_t1', 'domain': 'd', 'name': 't1', 'failedToLoad': True}] }
+    assert rez == { 'results': [{'uiId':1,'id': 'alert2.d_t1', 'domain': 'd', 'name': 't1', 'failedToLoad': True}] }
     assert service_calls.isEmpty()
 
     # Working with ok alert should be fine
     rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'t2', 'condition': "off" } })
+    assert rez == { 'uiId': 3 }
+    assert service_calls.isEmpty()
+    assert gad.alerts['d']['t2']
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'uiId': 3, 'cfg': {'domain':'d', 'name':'t2', 'condition': "no" } }})
     assert rez == { }
     assert service_calls.isEmpty()
     assert gad.alerts['d']['t2']
-    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'t2', 'condition': "no" } })
-    assert rez == { }
-    assert service_calls.isEmpty()
-    assert gad.alerts['d']['t2']
-    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'t2' } })
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'uiId': 3 } })
     assert rez == { }
     assert service_calls.isEmpty()
     assert not 't2' in gad.alerts['d']
 
     # Create dup or update of invalid alert should fail
     rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'t1', 'condition': "no" } })
-    assert re.search('Duplicate declaration', rez['error'])
+    assert re.search('already exists', rez['error'])
     assert service_calls.isEmpty()
-    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'t1', 'condition': "no" } })
-    assert re.search('can not find existing', rez['error'])
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'uiId':1, 'cfg': { 'domain':'d', 'name':'t1', 'condition': "no" } }})
+    assert re.search('Duplicate declaration', rez['error'])
     assert service_calls.isEmpty()
 
     # Delete of invalid alert should be fine
-    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'t1' } })
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'uiId': 1 } })
     assert rez == { }
     assert service_calls.isEmpty()
     # YAML alert continues to exist
     assert gad.alerts['d']['t1']
 
+    # Convert of invalid alert to valid one, should be fine
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'uiId':2, 'cfg': { 'domain':'d', 'name':'t4', 'condition': "no" } }})
+    assert rez == { }
+    assert service_calls.isEmpty()
+    assert set(gad.alerts['d'].keys()) == set(['t1','t3', 't4'])
+    
 
 async def test_intl(hass, service_calls, hass_storage, hass_client):
     # Was bug where conflicting alert definitions made manageAlert:search to die
@@ -2189,14 +2244,12 @@ async def test_intl(hass, service_calls, hass_storage, hass_client):
         { 'domain': 'd', 'name': 't1_ö', 'condition': 'off' },
         { 'domain': 'd', 'name': 't1_a', 'condition': 'off' },
         ]}}
-    uiCfg = { 'defaults' : { },
-              'alerts' : [
-                  { 'domain': 'd', 'name': 't1_o', 'condition': 'off' },
-                  { 'domain': 'd', 'name': 't1_ä', 'condition': 'off' },
-              ]
-             }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'nextAlertUiId': 3, 'alertInfos': [
+        {'uiId':1,'cfg':{ 'domain': 'd', 'name': 't1_o', 'condition': 'off' }},
+        {'uiId':2,'cfg':{ 'domain': 'd', 'name': 't1_ä', 'condition': 'off' }},
+    ] })
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -2210,14 +2263,13 @@ async def test_reminder_msg(hass, service_calls, hass_storage, hass_client):
     cfg = { 'alert2' : { 'defaults': {
         'reminder_message': 'foo'
     }, 'alerts' : []}}
-    uiCfg = { 'defaults' : { },
-              'alerts' : [
-                  # null overrides default, restoring to native default
-                  { 'domain': 'd', 'name': 't1', 'condition': 'off', 'reminder_message': 'null' },
-              ]
-             }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
+    uiCfg = getInitUiCfg()
+    uiCfg.update({'nextAlertUiId':2, 'alertInfos' : [
+        # null overrides default, restoring to native default
+        {'uiId':1,'cfg':{ 'domain': 'd', 'name': 't1', 'condition': 'off', 'reminder_message': 'null' }},
+    ] })
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': uiCfg }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -2228,19 +2280,18 @@ async def test_reminder_msg(hass, service_calls, hass_storage, hass_client):
 async def test_anon_gen(hass, service_calls, hass_storage, hass_client):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : []}}
     anonCfg = { 'domain': 'd2-{{ genElem }}', 'name': 'n2-{{ genElem }}', 'condition': 'off', 'generator' : '[ "y" ]' }
-    uiCfg = { 'defaults' : { },
-              'alerts' : [
-                  { 'domain': 'd1-{{ genElem }}', 'name': 'n1-{{ genElem }}', 'condition': 'off',
-                    'generator_name': 'g1', 'generator' : '[ "z" ]' },
-                  anonCfg,
+    uiCfg = getInitUiCfg()
+    uiCfg.update({'nextAlertUiId':3, 'alertInfos' : [
+        {'uiId':1,'cfg':{ 'domain': 'd1-{{ genElem }}', 'name': 'n1-{{ genElem }}', 'condition': 'off',
+                          'generator_name': 'g1', 'generator' : '[ "z" ]' }},
+        {'uiId':2,'cfg':anonCfg},
               ]
-             }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
+             })
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
 
     anonCfg['condition'] = 'no'
-    rez = await tpost("/api/alert2/manageAlert", {'update': anonCfg })
+    rez = await tpost("/api/alert2/manageAlert", {'update': {'uiId':2, 'cfg':anonCfg }})
     assert rez == {}
     #assert re.search('can not find existing', rez['error'])
     assert service_calls.isEmpty()
