@@ -50,11 +50,12 @@ async def setAndWait(hass, eid, state):
     await asyncio.sleep(0.05)
     await hass.async_block_till_done()
 
-async def startAndTpost(hass, service_calls, hass_client, cfg):
+async def startAndTpost(hass, service_calls, hass_client, cfg, noErrors=True):
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
-    assert service_calls.isEmpty()
+    if noErrors:
+        assert service_calls.isEmpty()
     client = await hass_client()
     async def tpost(url, adict):
         resp = await client.post(url, json=adict)
@@ -64,14 +65,30 @@ async def startAndTpost(hass, service_calls, hass_client, cfg):
         return rez
     gad = hass.data[DOMAIN]
     return (tpost, client, gad)
+
+async def do_reload(cfg, hass, monkeypatch):
+    async def fake_cfg(thass):
+        return cfg
+    with monkeypatch.context() as m:
+        m.setattr(conf_util, 'async_hass_config_yaml', fake_cfg)
+        await hass.services.async_call('alert2','reload', {})
+        await hass.async_block_till_done()
+    await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
     
+def getInitUiCfg():
+    return { 'nextAlertUiId': 1,
+             'defaults': {},
+             'alertInfos': [],
+             'topLevelOptions': {},
+             'oneTime': {},
+            }
+
 async def test_defaults(hass, service_calls, hass_client, hass_storage):
-    cfg = { 'alert2' : { } }
-    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
-    await hass.async_stop()
-    await hass.async_block_till_done()
-    await asyncio.sleep(0.3)
-    return
+    #cfg = { 'alert2' : { } }
+    #(tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    #await hass.async_stop()
+    #await hass.async_block_till_done()
+    #await asyncio.sleep(0.3)
     
     cfg = { 'alert2' : {
         'defaults' : {
@@ -93,7 +110,6 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
         'defer_startup_notifications': True,
     } }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
-    return
 
     # Test top-level flags were set
     assert hass.states.get('alert2.error') == None # skip_internal_errors
@@ -116,13 +132,12 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     resp = await client.post("/api/alert2/loadTopConfig", json={})
     assert resp.status == 200
     rez = await resp.json()
-    _LOGGER.warning(rez)
     topParams = [ 'skip_internal_errors', 'notifier_startup_grace_secs', 'defer_startup_notifications' ]
     for p in topParams:
         assert rez['rawYaml'][p] == cfga[p]
     for p in cfga['defaults'].keys():
         assert rez['rawYaml']['defaults'][p] == cfga['defaults'][p]
-    assert rez['rawUi'] == {'defaults': {}}
+    assert rez['rawUi'] == {'defaults': {} }
     assert rez['raw'] == rez['rawYaml']
 
     # Try some bad requests
@@ -146,18 +161,18 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'skip_internal_errors': 'on   ' }})
     assert not 'error' in rez
     assert rez['rawUi']['skip_internal_errors'] == 'on'
-    assert hass_storage['alert2.storage']['data']['config']['skip_internal_errors'] == 'on'
+    assert hass_storage['alert2.storage']['data']['topLevelOptions']['skip_internal_errors'] == 'on'
     assert gad.topConfig['skip_internal_errors'] == True
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'skip_internal_errors': 'off' }})
     assert gad.topConfig['skip_internal_errors'] == False
     # all values must be strings. for cv.boolean, that's fine, true/false work as expected
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'skip_internal_errors': 'true' }})
     assert rez['rawUi']['skip_internal_errors'] == 'true'
-    assert hass_storage['alert2.storage']['data']['config']['skip_internal_errors'] == 'true'
+    assert hass_storage['alert2.storage']['data']['topLevelOptions']['skip_internal_errors'] == 'true'
     assert gad.topConfig['skip_internal_errors'] == True
     # empty things out
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { }})
-    assert 'skip_internal_errors' not in hass_storage['alert2.storage']['data']['config']
+    assert 'skip_internal_errors' not in hass_storage['alert2.storage']['data']['topLevelOptions']
     
     # notifier_startup_grace_secs
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'notifier_startup_grace_secs': 'gg' }})
@@ -167,7 +182,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'notifier_startup_grace_secs': '3' }})
     assert rez['raw']['notifier_startup_grace_secs'] == '3'
     assert rez['rawUi']['notifier_startup_grace_secs'] == '3'
-    assert hass_storage['alert2.storage']['data']['config']['notifier_startup_grace_secs'] == '3'
+    assert hass_storage['alert2.storage']['data']['topLevelOptions']['notifier_startup_grace_secs'] == '3'
     assert gad.topConfig['notifier_startup_grace_secs'] == 3
  
     # defer_startup_notifications
@@ -175,16 +190,16 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert re.search('non-string value', rez['error'])
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defer_startup_notifications': 'false' }})
     assert rez['rawUi']['defer_startup_notifications'] == 'false'
-    assert hass_storage['alert2.storage']['data']['config']['defer_startup_notifications'] == 'false'
+    assert hass_storage['alert2.storage']['data']['topLevelOptions']['defer_startup_notifications'] == 'false'
     assert gad.topConfig['defer_startup_notifications'] == False
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defer_startup_notifications': 'foo' }})
     assert rez['rawUi']['defer_startup_notifications'] == 'foo'
     assert rez['raw']['defer_startup_notifications'] == 'foo'
-    assert hass_storage['alert2.storage']['data']['config']['defer_startup_notifications'] == 'foo'
+    assert hass_storage['alert2.storage']['data']['topLevelOptions']['defer_startup_notifications'] == 'foo'
     assert gad.topConfig['defer_startup_notifications'] == ['foo']
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defer_startup_notifications': '[  "foo"]' }})
     assert rez['rawUi']['defer_startup_notifications'] == '[  "foo"]'
-    assert hass_storage['alert2.storage']['data']['config']['defer_startup_notifications'] == '[  "foo"]'
+    assert hass_storage['alert2.storage']['data']['topLevelOptions']['defer_startup_notifications'] == '[  "foo"]'
     assert gad.topConfig['defer_startup_notifications'] == ['foo']
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defer_startup_notifications': 'foo,bar' }})
     assert re.search('invalid boolean value', rez['error'])
@@ -198,14 +213,14 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert re.search('non-string value', rez['error'])
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': { 'notifier': 'foo2' }}})
     assert rez['rawUi']['defaults']['notifier'] == 'foo2'
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['notifier'] == 'foo2'
+    assert hass_storage['alert2.storage']['data']['defaults']['notifier'] == 'foo2'
     assert isinstance(gad.topConfig['defaults']['notifier'], template_helper.Template)
     # foo2,foo3 ends up being interpreted as a single "notifier" with a funny name here.
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': { 'notifier': 'foo2,foo3' }}})
     assert isinstance(gad.topConfig['defaults']['notifier'], template_helper.Template)
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': { 'notifier': '[foo4,foo5 ]' }}})
     assert rez['rawUi']['defaults']['notifier'] == '[foo4,foo5 ]'
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['notifier'] == '[foo4,foo5 ]'
+    assert hass_storage['alert2.storage']['data']['defaults']['notifier'] == '[foo4,foo5 ]'
     assert gad.topConfig['defaults']['notifier'] == ['foo4', 'foo5']
     rez = await tpost("/api/alert2/loadTopConfig", {})
     assert rez['raw']['defaults']['notifier'] == ['foo4','foo5']
@@ -221,7 +236,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert re.search('non-string value', rez['error'])
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'summary_notifier': 'false'} }})
     assert rez['rawUi']['defaults']['summary_notifier'] == 'false'
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['summary_notifier'] == 'false'
+    assert hass_storage['alert2.storage']['data']['defaults']['summary_notifier'] == 'false'
     assert gad.topConfig['defaults']['summary_notifier'] == False
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'summary_notifier': 'ick'} }})
     assert rez['rawUi']['defaults']['summary_notifier'] == 'ick'
@@ -238,7 +253,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert re.search('non-string value', rez['error'])
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'done_notifier': 'false'} }})
     assert rez['rawUi']['defaults']['done_notifier'] == 'false'
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['done_notifier'] == 'false'
+    assert hass_storage['alert2.storage']['data']['defaults']['done_notifier'] == 'false'
     assert gad.topConfig['defaults']['done_notifier'] == False
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'done_notifier': 'ick'} }})
     assert rez['rawUi']['defaults']['done_notifier'] == 'ick'
@@ -255,21 +270,22 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert re.search('non-string value', rez['error'])
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'reminder_message': 'foo'} }})
     assert rez['rawUi']['defaults']['reminder_message'] == 'foo'
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['reminder_message'] == 'foo'
-    assert gad.topConfig['defaults']['reminder_message'] == 'foo'
+    assert hass_storage['alert2.storage']['data']['defaults']['reminder_message'] == 'foo'
+    assert gad.rawTopConfig['defaults']['reminder_message'] == 'foo'
+    assert gad.topConfig['defaults']['reminder_message'].template == 'foo'
     assert isinstance(gad.topConfig['defaults']['reminder_message'], template_helper.Template)
 
     # annotate_messages
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'annotate_messages': 'FAlse'} }})
     assert rez['rawUi']['defaults']['annotate_messages'] == 'FAlse'
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['annotate_messages'] == 'FAlse'
+    assert hass_storage['alert2.storage']['data']['defaults']['annotate_messages'] == 'FAlse'
     assert gad.topConfig['defaults']['annotate_messages'] == False
 
     # persistent_notifier_grouping
     if False:
         rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'persistent_notifier_grouping': 'collapse'} }})
         assert rez['rawUi']['defaults']['persistent_notifier_grouping'] == 'collapse'
-        assert hass_storage['alert2.storage']['data']['config']['defaults']['persistent_notifier_grouping'] == 'collapse'
+        assert hass_storage['alert2.storage']['data']['defaults']['persistent_notifier_grouping'] == 'collapse'
         assert gad.topConfig['defaults']['persistent_notifier_grouping'] == PersistantNotificationHelper.Collapse
 
     # reminder_frequency_mins
@@ -277,7 +293,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert re.search('non-string value', rez['error'])
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'reminder_frequency_mins': '4'} }})
     assert rez['rawUi']['defaults']['reminder_frequency_mins'] == '4'
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['reminder_frequency_mins'] == '4'
+    assert hass_storage['alert2.storage']['data']['defaults']['reminder_frequency_mins'] == '4'
     assert gad.topConfig['defaults']['reminder_frequency_mins'] == [4]
     rez = await tpost("/api/alert2/loadTopConfig", {})
     assert rez['raw']['defaults']['reminder_frequency_mins'] == 4
@@ -286,11 +302,11 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert re.search('be at least 0.01', rez['error'])
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'reminder_frequency_mins': '[5,6]'} }})
     assert rez['rawUi']['defaults']['reminder_frequency_mins'] == '[5,6]'
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['reminder_frequency_mins'] == '[5,6]'
+    assert hass_storage['alert2.storage']['data']['defaults']['reminder_frequency_mins'] == '[5,6]'
     assert gad.topConfig['defaults']['reminder_frequency_mins'] == [5,6]
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'reminder_frequency_mins': '["5","7"]'} }})
     assert rez['rawUi']['defaults']['reminder_frequency_mins'] == '["5","7"]'
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['reminder_frequency_mins'] == '["5","7"]'
+    assert hass_storage['alert2.storage']['data']['defaults']['reminder_frequency_mins'] == '["5","7"]'
     assert gad.topConfig['defaults']['reminder_frequency_mins'] == [5,7]
 
     # supersede_debounce_secs
@@ -298,7 +314,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert re.search('non-string value', rez['error'])
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'supersede_debounce_secs': '4'} }})
     assert rez['rawUi']['defaults']['supersede_debounce_secs'] == '4'
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['supersede_debounce_secs'] == '4'
+    assert hass_storage['alert2.storage']['data']['defaults']['supersede_debounce_secs'] == '4'
     assert gad.topConfig['defaults']['supersede_debounce_secs'] == 4
     rez = await tpost("/api/alert2/loadTopConfig", {})
     assert rez['raw']['defaults']['supersede_debounce_secs'] == '4'
@@ -312,11 +328,11 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert rez['raw']['defaults']['throttle_fires_per_mins'] == [1,2]
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'throttle_fires_per_mins': 'null'} }})
     assert rez['rawUi']['defaults']['throttle_fires_per_mins'] == 'null'
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['throttle_fires_per_mins'] == 'null'
+    assert hass_storage['alert2.storage']['data']['defaults']['throttle_fires_per_mins'] == 'null'
     assert rez['raw']['defaults']['throttle_fires_per_mins'] == None
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'throttle_fires_per_mins': '[3,5.2]'} }})
     assert rez['rawUi']['defaults']['throttle_fires_per_mins'] == '[3,5.2]'
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['throttle_fires_per_mins'] == '[3,5.2]'
+    assert hass_storage['alert2.storage']['data']['defaults']['throttle_fires_per_mins'] == '[3,5.2]'
     assert rez['raw']['defaults']['throttle_fires_per_mins'] == [3, 5.2]
 
     # priority
@@ -325,7 +341,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert rez['raw']['defaults']['priority'] == 'medium'
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'priority': 'high'} }})
     assert rez['rawUi']['defaults']['priority'] == 'high'
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['priority'] == 'high'
+    assert hass_storage['alert2.storage']['data']['defaults']['priority'] == 'high'
     assert rez['raw']['defaults']['priority'] == 'high'
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'priority': 'foo'} }})
     assert re.search('must be one of', rez['error'])
@@ -336,7 +352,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert rez['raw']['defaults']['icon'] == 'mdi:alert'
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'icon': 'a:b'} }})
     assert rez['rawUi']['defaults']['icon'] == 'a:b'
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['icon'] == 'a:b'
+    assert hass_storage['alert2.storage']['data']['defaults']['icon'] == 'a:b'
     assert rez['raw']['defaults']['icon'] == 'a:b'
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'icon': 'xxx'} }})
     assert re.search('prefix:name', rez['error'])
@@ -347,7 +363,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert rez['raw']['defaults']['data'] == {'a': 1, 'b': 2}
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'data': "{ 'a': 3 }" }}})
     assert rez['rawUi']['defaults']['data'] == "{ 'a': 3 }"
-    assert hass_storage['alert2.storage']['data']['config']['defaults']['data'] == "{ 'a': 3 }"
+    assert hass_storage['alert2.storage']['data']['defaults']['data'] == "{ 'a': 3 }"
     assert rez['raw']['defaults']['data'] == {"a": 3}
     # Try template string
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'data': "{{ { 'a': 5 } }}" }}})
@@ -355,7 +371,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     assert rez['raw']['defaults']['data'] == [ {'a': 1 }, "{{ { 'a': 5 } }}" ]
    
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': { 'defaults': {'data': 'xxx'} }})
-    assert re.search('must be a dict', rez['error'])
+    assert re.search('must be either a dict', rez['error'])
 
     
     ########################
@@ -374,9 +390,12 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
               'notifier_startup_grace_secs': '5',
               'defer_startup_notifications': 'True',
              }
+    expectedTopLevel = dict(uiCfg)
+    del expectedTopLevel['defaults']
     rez = await tpost("/api/alert2/saveTopConfig", {'topConfig': uiCfg })
     assert rez['rawUi'] == uiCfg
-    assert hass_storage['alert2.storage']['data']['config'] == uiCfg
+    assert hass_storage['alert2.storage']['data']['defaults'] == uiCfg['defaults']
+    assert hass_storage['alert2.storage']['data']['topLevelOptions'] == expectedTopLevel
     rez = await tpost("/api/alert2/loadTopConfig", {})
     assert rez['rawUi'] == uiCfg
     # And remove all fields and make sure config shrinks down
@@ -409,22 +428,25 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
         'defer_startup_notifications': True, # yaml comes through
     } }
     cfga = cfg['alert2']
-    uiCfg = { 'defaults' : { 'reminder_frequency_mins': '[4]',
-                              'throttle_fires_per_mins': '[5,6]',
-                             'supersede_debounce_secs': '6',
-                             'data': "{'a': 3}",
-                             },
-               'skip_internal_errors': 'true',
-               'notifier_startup_grace_secs': '7',
-              }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'defaults' : { 'reminder_frequency_mins': '[4]',
+                                  'throttle_fires_per_mins': '[5,6]',
+                                  'supersede_debounce_secs': '6',
+                                  'data': "{'a': 3}",
+                                 },
+                   'topLevelOptions': {
+                       'skip_internal_errors': 'true',
+                       'notifier_startup_grace_secs': '7',
+                   }
+                  })
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': uiCfg }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
     
     # Test top-level flags were set
     assert hass.states.get('alert2.alert2_error') is None # skip_internal_errors
     cfga = cfg['alert2']
-    assert gad.delayedNotifierMgr.notifier_startup_grace_secs == float(uiCfg['notifier_startup_grace_secs'])
+    assert gad.delayedNotifierMgr.notifier_startup_grace_secs == float(uiCfg['topLevelOptions']['notifier_startup_grace_secs'])
     assert gad.delayedNotifierMgr.defer_startup_notifications == cfga['defer_startup_notifications']
     t1 = gad.alerts['test']['t1']
     # and check all the defaults
@@ -444,7 +466,7 @@ async def test_defaults2(hass, service_calls, hass_client, hass_storage):
     
     # Check how defaults are sent to UI
     rez = await tpost("/api/alert2/loadTopConfig", {})
-    _LOGGER.warning(rez)
+    #_LOGGER.warning(rez)
     assert rez == {'rawYaml': {'defaults': {'reminder_frequency_mins': [60], 'notifier': 'n',
                                             'supersede_debounce_secs': 0.5,
                                             'summary_notifier': False, 'done_notifier': True, 'annotate_messages': True,
@@ -486,9 +508,10 @@ async def test_defaults3(hass, service_calls, hass_storage, hass_client, monkeyp
             { 'domain': 'test', 'name': 't5', 'condition': 'off', 'data': { 'a': 5, 'b': 6 } },
             { 'domain': 'test', 'name': 't6', 'condition': 'off', 'data': { 'a': 5, 'b': 6, 'c': 7 } },
         ] } }
-    uiCfg = { 'defaults' : { 'data': "{'b': 4}" }  }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'defaults' : { 'data': "{'b': 4}" }  })
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': uiCfg }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
     assert gad.alerts['test']['t1']._data == { 'a': 3, 'b': 4, 'c': 5 }
     assert gad.alerts['test']['t2']._data == { 'a': 3, 'b': 5 }
@@ -540,6 +563,88 @@ async def test_defaults3(hass, service_calls, hass_storage, hass_client, monkeyp
     assert gad.alerts['test']['t10']._data == { 'a': 12 }
     assert set(gad.alerts['test']['t11']._data.keys()) == set(['a'])
     assert gad.alerts['test']['t11']._data['a'].template == '{{ 33 }}'
+
+
+# No UI config
+async def test_migrate1(hass, service_calls, hass_storage, hass_client, monkeypatch):
+    cfg = { 'alert2' : {
+        'defaults' : { 'supersede_debounce_secs': 5 },
+        'alerts': [
+            { 'domain': 'd', 'name': 't1', 'condition': 'off' }
+        ] } }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    assert gad.alerts['d']['t1']._supersede_debounce_secs == 5
+# UI with a single alert
+async def test_migrate2(hass, service_calls, hass_storage, hass_client, monkeypatch):
+    cfg = { 'alert2' : {
+        'defaults' : { 'supersede_debounce_secs': 5 },
+        'alerts': [
+            { 'domain': 'd', 'name': 't1', 'condition': 'off' }
+        ] } }
+    uiCfg = { 'defaults' : { },
+              'alerts': [
+                  { 'domain': 'd', 'name': 't2', 'condition':'off' }
+              ]
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    assert gad.alerts['d']['t2']
+# UI with single default
+async def test_migrate3(hass, service_calls, hass_storage, hass_client, monkeypatch):
+    cfg = { 'alert2' : {
+        'defaults' : { 'supersede_debounce_secs': 5 },
+        'alerts': [
+            { 'domain': 'd', 'name': 't1', 'condition': 'off' }
+        ] } }
+    uiCfg = { 'defaults' : { 'supersede_debounce_secs': '6'  },
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    assert gad.alerts['d']['t1']._supersede_debounce_secs == 6
+# UI with single top level
+async def test_migrate4(hass, service_calls, hass_storage, hass_client, monkeypatch):
+    cfg = { 'alert2' : {
+        'defaults' : { 'supersede_debounce_secs': 5 },
+        'alerts': [
+            { 'domain': 'd', 'name': 't1', 'condition': 'off' }
+        ] } }
+    uiCfg = { #'defaults' : {  },
+              'skip_internal_errors': 'true',
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': { 'config': uiCfg } }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    assert hass.states.get('alert2.error') == None # skip_internal_errors
+# Bit of everything
+async def test_migrate5(hass, service_calls, hass_storage, hass_client, monkeypatch):
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2' : {
+        'defaults' : { 'supersede_debounce_secs': 5 },
+        'alerts': [
+            { 'domain': 'd', 'name': 't1', 'condition': 'off' }
+        ] } }
+    uiCfg = { 'config': { 'defaults' : { 'supersede_debounce_secs': '6' },
+                          'skip_internal_errors': 'true',
+                          'alerts': [
+                              { 'domain': 'test', 'name': 't2', 'condition': 'sensor.a', 'done_message': 'clear_notification' },
+                          ],
+                         },
+              'oneTime': { 'set_annotate_messages_for_commands': dt.now().isoformat() },
+             }
+    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': uiCfg }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    assert hass.states.get('alert2.error') == None # skip_internal_errors
+    assert gad.alerts['d']['t1']._supersede_debounce_secs == 6
+
+    # No warning about using clear_notification without setting annotate_messages to False
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't2: turned on')
+    await setAndWait(hass, "sensor.a", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't2.*clear_notification')
+
     
 async def test_render_v(hass, service_calls, hass_client, hass_storage):
     cfg = { 'alert2': {} }
@@ -722,7 +827,7 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{{ { "a": 5 } }}' })
     assert rez == { 'rez': { 'a': 5 } }
     rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '"{ e:f}"' })
-    assert re.search('failed to produce a dict', rez['error'])
+    assert re.search('must be either a dict', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'data', 'txt': '{}' })
     assert rez == { 'rez': {} }
     uiCfg = { 'defaults' : { 'data': "{'a': 12 }" }  }
@@ -1092,10 +1197,11 @@ async def test_create(hass, service_calls, hass_client, hass_storage):
 
     await setAndWait(hass, 'sensor.a', 'off')
     rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n1', 'condition':'sensor.a' } })
-    assert rez == {}
+    assert rez == { 'uiId': 1 }
     n1 = gad.alerts['d']['n1']
     assert hass.states.get('alert2.d_n1').state == 'off'
-    assert hass_storage['alert2.storage']['data']['config']['alerts'][0]['name'] == 'n1'
+    assert hass_storage['alert2.storage']['data']['alertInfos'][0]['uiId'] == 1
+    assert hass_storage['alert2.storage']['data']['alertInfos'][0]['cfg']['name'] == 'n1'
     assert service_calls.isEmpty()
     await setAndWait(hass, 'sensor.a', 'on')
     service_calls.popNotifyEmpty('persistent_notification', 'd.n1: turned on')
@@ -1104,7 +1210,7 @@ async def test_create(hass, service_calls, hass_client, hass_storage):
 
     # Create dup should fail
     rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n1', 'condition':'sensor.a' } })
-    assert re.search('Duplicate declaration', rez['error'])
+    assert re.search('already exists', rez['error'])
     # validation fails
     rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n2' } })
     assert re.search('Must specify', rez['error'])
@@ -1112,29 +1218,33 @@ async def test_create(hass, service_calls, hass_client, hass_storage):
     resp = await client.post("/api/alert2/manageAlert", json={'delete': { 'domain':'d' } })
     assert resp.status == 400
     # delete nonexistent
-    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'n3' } })
-    assert re.search('can not find existing', rez['error'])
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'uiId': 2 } })
+    assert re.search('no longer exists - can\'t delete', rez['error'])
     assert service_calls.isEmpty()
 
     # load
-    rez = await tpost("/api/alert2/manageAlert", {'load': { 'domain':'d', 'name':'n3' } })
+    rez = await tpost("/api/alert2/manageAlert", {'load': { 'uiId': 2 } })
     assert re.search('alert not found', rez['error'])
-    rez = await tpost("/api/alert2/manageAlert", {'load': { 'domain':'d', 'name':'n1' } })
+    rez = await tpost("/api/alert2/manageAlert", {'load': { 'uiId': 1 } })
     assert rez == {'condition': 'sensor.a', 'domain': 'd', 'name': 'n1'} 
     assert service_calls.isEmpty()
     
     # delete alert
-    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'n1' } })
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'uiId': 1 } })
     assert rez == {}
     assert gad.alerts == {}
+    assert hass_storage['alert2.storage']['data']['alertInfos'] == []
     assert hass.states.get('alert2.d_n1') == None
-    assert 'alerts' not in hass_storage['alert2.storage']['data']['config']
     assert service_calls.isEmpty()
 
+    # delete again should fail
+    rez = await tpost("/api/alert2/manageAlert", {'load': { 'uiId': 1 } })
+    assert re.search('alert not found', rez['error'])
+    
     rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n1', 'condition':'sensor.a' } })
-    assert rez == {}
+    assert rez == { 'uiId': 2 }
     rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n2', 'condition':'sensor.a' } })
-    assert rez == {}
+    assert rez == { 'uiId': 3 }
     assert service_calls.isEmpty()
     assert hass.states.get('alert2.d_n1').state == 'off'
     assert hass.states.get('alert2.d_n2').state == 'off'
@@ -1142,26 +1252,26 @@ async def test_create(hass, service_calls, hass_client, hass_storage):
     # Search
     rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'' } })
     assert rez == { 'results': [
-        { 'domain':'d', 'name':'n1', 'id':'alert2.d_n1' },
-        { 'domain':'d', 'name':'n2', 'id':'alert2.d_n2' }
+        { 'uiId':2, 'domain':'d', 'name':'n1', 'id':'alert2.d_n1' },
+        { 'uiId':3, 'domain':'d', 'name':'n2', 'id':'alert2.d_n2' }
     ]}
     rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'d_n' } })
     assert rez == { 'results': [
-        { 'domain':'d', 'name':'n1', 'id':'alert2.d_n1' },
-        { 'domain':'d', 'name':'n2', 'id':'alert2.d_n2' }
+        { 'uiId':2, 'domain':'d', 'name':'n1', 'id':'alert2.d_n1' },
+        { 'uiId':3, 'domain':'d', 'name':'n2', 'id':'alert2.d_n2' }
     ]}
     rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'alert2.d_n' } })
     assert rez == { 'results': [
-        { 'domain':'d', 'name':'n1', 'id':'alert2.d_n1' },
-        { 'domain':'d', 'name':'n2', 'id':'alert2.d_n2' }
+        { 'uiId':2, 'domain':'d', 'name':'n1', 'id':'alert2.d_n1' },
+        { 'uiId':3, 'domain':'d', 'name':'n2', 'id':'alert2.d_n2' }
     ]}
     rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'d_n1' } })
     assert rez == { 'results': [
-        { 'domain':'d', 'name':'n1', 'id':'alert2.d_n1' },
+        { 'uiId':2, 'domain':'d', 'name':'n1', 'id':'alert2.d_n1' },
     ]}
     rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'d_n2' } })
     assert rez == { 'results': [
-        { 'domain':'d', 'name':'n2', 'id':'alert2.d_n2' },
+        { 'uiId':3, 'domain':'d', 'name':'n2', 'id':'alert2.d_n2' },
     ]}
     rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'d_n3' } })
     assert rez == { 'results': [] }
@@ -1171,34 +1281,46 @@ async def test_create(hass, service_calls, hass_client, hass_storage):
     assert hass.states.get('alert2.d_n1').state == 'off'
     assert hass.states.get('alert2.d_n2').state == 'off'
     # Redo an alert
-    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'n1', 'condition':'off', 'delay_on_secs':'4', 'threshold': { 'value': '4', 'hysteresis': '5', 'minimum': '6' } } })
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'uiId':2, 'cfg': {'domain':'d', 'name':'n1', 'condition':'off', 'delay_on_secs':'4', 'threshold': { 'value': '4', 'hysteresis': '5', 'minimum': '6' } } }})
     assert rez == {}
     assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])
     assert hass.states.get('alert2.d_n1').state == 'off'
-    rez = await tpost("/api/alert2/manageAlert", {'load': { 'domain':'d', 'name':'n1' } })
+    rez = await tpost("/api/alert2/manageAlert", {'load': { 'uiId': 2 } })
     assert rez == {'condition': 'off', 'domain': 'd', 'name': 'n1', 'delay_on_secs':'4',
                    'threshold': { 'value': '4', 'hysteresis': '5', 'minimum': '6' }}
     # delay_on_secs goes away when deleted
-    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'n1', 'condition':'off',
-                                                              'threshold': { 'value': '4', 'hysteresis': '5', 'maximum': '6' }} })
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'uiId':2, 'cfg': {'domain':'d', 'name':'n1', 'condition':'off',
+                                                                                'threshold': { 'value': '4', 'hysteresis': '5', 'maximum': '6' }} }})
     assert rez == {}
     assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])
     assert hass.states.get('alert2.d_n1').state == 'off'
-    rez = await tpost("/api/alert2/manageAlert", {'load': { 'domain':'d', 'name':'n1' } })
+    rez = await tpost("/api/alert2/manageAlert", {'load': { 'uiId':2 } })
     assert rez == {'condition': 'off', 'domain': 'd', 'name': 'n1',
                    'threshold': { 'value': '4', 'hysteresis': '5', 'maximum': '6' }}
     # threshold also disappears
-    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'n1', 'condition':'false' } })
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'uiId':2, 'cfg': { 'domain':'d', 'name':'n1', 'condition':'false' }} })
     assert rez == {}
     assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])
     assert hass.states.get('alert2.d_n1').state == 'off'
-    rez = await tpost("/api/alert2/manageAlert", {'load': { 'domain':'d', 'name':'n1' } })
+    rez = await tpost("/api/alert2/manageAlert", {'load': { 'uiId':2 } })
     assert rez == {'condition': 'false', 'domain': 'd', 'name': 'n1' }
     
-    # can't create new alert via update
-    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'n3', 'condition':'off' } })
-    assert re.search('can not find existing', rez['error'])
+    # Refer to nonexisting alert
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'uiId':4, 'cfg': { 'domain':'d', 'name':'n3', 'condition':'off' } }})
+    assert re.search('no longer exists', rez['error'])
 
+    # Can change alert ids via update
+    # Here we replace n1 with n3
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'uiId':2, 'cfg': { 'domain':'d', 'name':'n3', 'condition':'off' } }})
+    assert rez == {}
+    assert set(gad.alerts['d'].keys()) == set([ 'n3', 'n2' ])
+    assert hass.states.get('alert2.d_n1') == None
+    rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'' } })
+    assert rez == { 'results': [
+        { 'uiId':2, 'domain':'d', 'name':'n3', 'id':'alert2.d_n3' },
+        { 'uiId':3, 'domain':'d', 'name':'n2', 'id':'alert2.d_n2' }
+    ]}
+    
 async def test_create2(hass, service_calls, hass_client, hass_storage):
     cfg = { 'alert2': {} }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
@@ -1208,14 +1330,14 @@ async def test_create2(hass, service_calls, hass_client, hass_storage):
     # Create should do data prep
     rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n2', 'condition':'sensor.a',
                                                               'throttle_fires_per_mins': '[3,4]'} })
-    assert rez == {}
+    assert rez == {'uiId':1}
     assert hass.states.get('alert2.d_n2').state == 'off'
     # Update should do data prep
-    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'n2', 'condition':'sensor.a',
-                                                              'throttle_fires_per_mins': '[3,5]'} })
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'uiId':1, 'cfg':{'domain':'d', 'name':'n2', 'condition':'sensor.a',
+                                                                               'throttle_fires_per_mins': '[3,5]'} }})
     assert rez == {}
     assert hass.states.get('alert2.d_n2').state == 'off'
-    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'n2' } })
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'uiId':1 } })
     assert rez == {}
     assert hass.states.get('alert2.d_n2') is None
 
@@ -1224,27 +1346,27 @@ async def test_create2(hass, service_calls, hass_client, hass_storage):
     #
     rez = await tpost("/api/alert2/manageAlert", {'create':
             { 'domain':'d', 'name':'{{genElem}}', 'condition':'sensor.a', 'generator_name':'g1', 'generator': 'n5' } })
-    assert rez == {}
+    assert rez == {'uiId':2}
     n5 = gad.alerts['d']['n5']
     g1 = gad.generators['g1']
     assert set(gad.alerts['d'].keys()) == set([ 'n5' ])
     assert hass.states.get('alert2.d_n5').state == 'off'
     assert hass.states.get('sensor.alert2generator_g1').state == '1'
-    assert hass_storage['alert2.storage']['data']['config']['alerts'][0]['name'] == '{{genElem}}'
+    assert hass_storage['alert2.storage']['data']['alertInfos'][0]['cfg']['name'] == '{{genElem}}'
     assert service_calls.isEmpty()
 
     # try load
-    rez = await tpost("/api/alert2/manageAlert", {'load': { 'domain': GENERATOR_DOMAIN, 'name':'g1' } })
+    rez = await tpost("/api/alert2/manageAlert", {'load': { 'uiId':2 } })
     assert rez == { 'domain':'d', 'name':'{{genElem}}', 'condition':'sensor.a', 'generator_name':'g1', 'generator': 'n5' }
     
     # same gen is duplicate
     rez = await tpost("/api/alert2/manageAlert", {'create':
             { 'domain':'d', 'name':'{{genElem}}2', 'condition':'sensor.a', 'generator_name':'g1', 'generator': 'n5' } })
-    assert re.search('Duplicate generator', rez['error'])
+    assert re.search('already exists', rez['error'])
 
     # Update to different name doesn't leave behind n5 entity from first generation
     rez = await tpost("/api/alert2/manageAlert", {'update':
-            { 'domain':'d', 'name':'{{genElem}}z', 'condition':'sensor.a', 'generator_name':'g1', 'generator': 'n5' } })
+                                                  { 'uiId':2, 'cfg':{'domain':'d', 'name':'{{genElem}}z', 'condition':'sensor.a', 'generator_name':'g1', 'generator': 'n5' } }})
     assert rez == {}
     await asyncio.sleep(alert2.gGcDelaySecs + 0.1)
     assert set(gad.alerts['d'].keys()) == set([ 'n5z' ])
@@ -1253,53 +1375,83 @@ async def test_create2(hass, service_calls, hass_client, hass_storage):
 
     # can't delete non-existent
     rez = await tpost("/api/alert2/manageAlert", {'update':
-            { 'domain':'d', 'name':'{{genElem}}z', 'condition':'sensor.a', 'generator_name':'g2', 'generator': 'n5' } })
-    assert re.search('can not find existing', rez['error'])
+                                                  { 'uiId':3, 'cfg': {'domain':'d', 'name':'{{genElem}}z', 'condition':'sensor.a', 'generator_name':'g2', 'generator': 'n5' } }})
+    assert re.search('no longer exists', rez['error'])
 
     # delete generator removes alerts with it
-    assert 'alerts' in hass_storage['alert2.storage']['data']['config']
     assert hass.states.get('sensor.alert2generator_g1').state == '1'
-    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain': 'xxx', 'name': 'yyy', 'generator_name': 'g1' } })
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'uiId':2 } })
     assert rez == {}
     assert hass.states.get('sensor.alert2generator_g1') == None
     assert hass.states.get('alert2.d_n5z') == None
     assert gad.generators == {}
     assert gad.alerts == {}
-    assert not 'alerts' in hass_storage['alert2.storage']['data']['config']
-
+    assert gad.uiMgr.alerts == []
+    assert gad.uiMgr.storeData['alertInfos'] == []
+    
 async def test_create3(hass, service_calls, hass_client, hass_storage):
     cfg = { 'alert2': {} }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
 
     # create n1
     rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n1', 'condition':'off' } })
-    assert rez == {}
+    assert rez == { 'uiId': 1 }
     n1 = gad.alerts['d']['n1']
     assert hass.states.get('alert2.d_n1').state == 'off'
 
     # do update that fails validate.  Alert should still exist
-    rez = await tpost("/api/alert2/manageAlert", {'update': { 'domain':'d', 'name':'n1', 'condition':'{{ick' } })
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'uiId':1, 'cfg': {'domain':'d', 'name':'n1', 'condition':'{{ick' } }})
     assert re.search('invalid template', rez['error'])
     n1 = gad.alerts['d']['n1']
     assert hass.states.get('alert2.d_n1').state == 'off'
+    assert len(gad.uiMgr.alerts) == 1
+    assert gad.uiMgr.alerts[0]['ent']
     
+async def test_bad1(hass, service_calls, hass_client, hass_storage, monkeypatch):
+    # Alert has uiId too high
+    cfg = { 'alert2' : { } }
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'alertInfos': [
+        { 'uiId': 1, 'cfg': { 'domain': 'd', 'name': 'n1', 'condition':'off' } }
+    ]})
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    gad = hass.data[DOMAIN]
+    service_calls.popNotifyEmpty('persistent_notification', 'ui load maxUid')
+
+async def test_bad2(hass, service_calls, hass_client, hass_storage, monkeypatch):
+    # Alert has dup uiId 
+    cfg = { 'alert2' : { } }
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'nextAlertUiId': 3, 'alertInfos': [
+        { 'uiId': 1, 'cfg': { 'domain': 'd', 'name': 'n1', 'condition':'off' } },
+        { 'uiId': 1, 'cfg': { 'domain': 'd', 'name': 'n2', 'condition':'off' } }
+    ]})
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    gad = hass.data[DOMAIN]
+    service_calls.popNotifyEmpty('persistent_notification', 'duplicate uiId')
     
 async def test_reload(hass, service_calls, hass_client, hass_storage, monkeypatch):
     cfg = { 'alert2' : { } }
-    uiCfg = { 'defaults' : { },
-              'alerts': [
-                  { 'domain': 'd', 'name': 'n1', 'condition':'off', 'throttle_fires_per_mins': '[3,4]' }
-              ]
-             }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'nextAlertUiId': 2, 'alertInfos': [
+        { 'uiId': 1, 'cfg': { 'domain': 'd', 'name': 'n1', 'condition':'off', 'throttle_fires_per_mins': '[3,4]' } }
+    ]})
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
     assert hass.states.get('alert2.d_n1').state == 'off'
     assert set(gad.alerts['d'].keys()) == set([ 'n1' ])
 
     rez = await tpost("/api/alert2/manageAlert", {'create':
             { 'domain':'d', 'name':'n2', 'condition':'off', 'throttle_fires_per_mins': '[4,5]' } })
-    assert rez == {}
+    assert rez == { 'uiId': 2 }
     assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])
     assert service_calls.isEmpty()
 
@@ -1314,13 +1466,11 @@ async def test_reload(hass, service_calls, hass_client, hass_storage, monkeypatc
 
 async def test_reload2(hass, service_calls, hass_client, hass_storage, monkeypatch):
     cfg = { }
-    uiCfg = { 'defaults' : { },
-              'alerts': [
-                  { 'domain': 'd', 'name': 'n1', 'condition':'off', 'throttle_fires_per_mins': '[3,4]' }
-              ]
-             }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
+    uiCfg = getInitUiCfg()
+    uiCfg.update({  'nextAlertUiId': 2, 'alertInfos': [
+                 { 'uiId': 1, 'cfg': { 'domain': 'd', 'name': 'n1', 'condition':'off', 'throttle_fires_per_mins': '[3,4]' }},
+              ] })
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
     assert hass.states.get('alert2.d_n1').state == 'off'
     assert set(gad.alerts['d'].keys()) == set([ 'n1' ])
@@ -1344,19 +1494,18 @@ async def test_conflict1(hass, service_calls, hass_client, hass_storage):
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
     rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'n1', 'condition':'on' } })
     assert re.search('Duplicate declaration.*name=n1', rez['error'])
-    n1 = gad.alerts['d']['n1']
+    assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])
     assert hass.states.get('alert2.d_n1').state == 'off'
 
     rez = await tpost("/api/alert2/manageAlert", {'create': {
         'domain':'d', 'name':'{{genElem}}', 'condition':'on', 'generator_name': 'g1', 'generator': 'n2' } })
-    assert rez == {}
+    assert rez == { 'uiId': 1 }
     service_calls.popNotifyEmpty('persistent_notification', 'Duplicate declaration.*name=n2')
-    n1 = gad.alerts['d']['n2']
+    assert set(gad.alerts['d'].keys()) == set([ 'n1', 'n2' ])
     assert hass.states.get('alert2.d_n2').state == 'off'
 
-    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'domain':'d', 'name':'n1' } })
-    assert re.search('can not find', rez['error'])
-    n1 = gad.alerts['d']['n1']
+    rez = await tpost("/api/alert2/manageAlert", {'update': { 'uiId':1, 'cfg': {'domain':'d', 'name':'n1', 'condition':'on' } }})
+    assert re.search('Duplicate declaration', rez['error'])
     assert hass.states.get('alert2.d_n1').state == 'off'
     
 async def test_conflict2(hass, service_calls, hass_client, hass_storage):
@@ -1365,22 +1514,23 @@ async def test_conflict2(hass, service_calls, hass_client, hass_storage):
         'alerts': [
             { 'domain': 'd', 'name': 'n1', 'condition':'off' }
         ] } }
-    uiCfg = { 'defaults' : { },
-              'alerts': [
-                  { 'domain': 'd', 'name': 'n1', 'condition':'on' }
-              ]
-             }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': uiCfg } }
-    assert await async_setup_component(hass, DOMAIN, cfg)
-    await hass.async_start()
-    await hass.async_block_till_done()
-    await asyncio.sleep(0.05)
-    gad = hass.data[DOMAIN]
+    uiCfg = getInitUiCfg()
+    uiCfg.update({  'nextAlertUiId': 2, 'alertInfos': [
+        {'uiId': 1, 'cfg': { 'domain': 'd', 'name': 'n1', 'condition':'on' } },
+    ]})
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': uiCfg }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg, noErrors=False)
     service_calls.popNotifyEmpty('persistent_notification', 'Duplicate declaration.*name=n1')
     n1 = gad.alerts['d']['n1']
     assert hass.states.get('alert2.d_n1').state == 'off'
 
+    rez = await tpost("/api/alert2/manageAlert", {'search': { 'str':'' } })
+    assert rez == { 'results': [
+        { 'uiId':1, 'domain':'d', 'name':'n1', 'id':'alert2.d_n3' },
+    ]}
+
+    
 async def checkNoMsg(aclient):
     with pytest.raises(TimeoutError) as excinfo:
         async with asyncio.timeout(0.05):
@@ -1808,9 +1958,10 @@ async def test_one_time3(hass, service_calls, hass_storage):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
         { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a', 'done_message': 'clear_notification' },
     ], } }
-    hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': { 'config': { 'defaults': {} },
-                                                 'oneTime': { 'set_annotate_messages_for_commands': dt.now().isoformat() } } }
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'oneTime' : { 'set_annotate_messages_for_commands': dt.now().isoformat() }})
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': uiCfg }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -2100,10 +2251,10 @@ async def test_anon_gen(hass, service_calls, hass_storage, hass_client):
     _LOGGER.info(list(entities.keys()))
 
 
-check load ui when no ui storage at all
-make sure can not create condition alert with same name as internal
-    
 
     
 async def test_internal_alert(hass, service_calls, hass_storage, hass_client):
-    pass
+    assert False
+    #check load ui when no ui storage at all
+    #make sure can not create condition alert with same name as internal
+    #and test that anon generators list generated ents in UI    
