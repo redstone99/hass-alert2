@@ -2815,49 +2815,53 @@ async def test_generator9(hass, service_calls, monkeypatch):
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
 
-    expectedEnts = set(['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception',
+    assert hass.states.get('sensor.alert2generator_g1').state == '1'
+    assert hass.states.get('sensor.alert2generator_anonymous_0').state == '1'
+    
+    registeredEnts = set(['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception',
                       'alert2.test_t1',
-                      'alert2.test_t2', 'sensor.alert2generator_g1',
+                      'alert2.test_t2', 'sensor.alert2generator_g1'
                       ])
     entities = er.async_get(hass).entities
-    assert set(entities.keys()) == expectedEnts
+    _LOGGER.warning(list(entities.keys()))
+    assert set(entities.keys()) == registeredEnts
 
     # Add second anonymous ent
     await setAndWait(hass, "sensor.g", '[ "t1", "t1a" ]')    
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    expectedEnts.add('alert2.test_t1a')
+    registeredEnts.add('alert2.test_t1a')
     entities = er.async_get(hass).entities
-    assert set(entities.keys()) == expectedEnts
+    assert set(entities.keys()) == registeredEnts
 
     # Add second non-anonymous ent
     await setAndWait(hass, "sensor.g2", '[ "t2", "t2a" ]')    
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    expectedEnts.add('alert2.test_t2a')
+    registeredEnts.add('alert2.test_t2a')
     entities = er.async_get(hass).entities
-    assert set(entities.keys()) == expectedEnts
+    assert set(entities.keys()) == registeredEnts
 
     # test reload
     await do_reload(cfg, hass, monkeypatch)
     entities = er.async_get(hass).entities
-    assert set(entities.keys()) == expectedEnts
+    assert set(entities.keys()) == registeredEnts
     
     # decrease gen ents from two to one
     await setAndWait(hass, "sensor.g2", '[ "t2a" ]')
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    expectedEnts.remove('alert2.test_t2')
+    registeredEnts.remove('alert2.test_t2')
     entities = er.async_get(hass).entities
-    assert set(entities.keys()) == expectedEnts
+    assert set(entities.keys()) == registeredEnts
 
     # decrease gen ents from two to one
     await setAndWait(hass, "sensor.g", '[ "t1a" ]')
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    expectedEnts.remove('alert2.test_t1')
+    registeredEnts.remove('alert2.test_t1')
     entities = er.async_get(hass).entities
-    assert set(entities.keys()) == expectedEnts
+    assert set(entities.keys()) == registeredEnts
     
     
 async def test_late_state(hass, service_calls):
@@ -4686,7 +4690,7 @@ async def test_restore_state(hass, service_calls):
             found = True
     assert found
 
-class TestException(Exception):
+class ZTestException(Exception):
     pass
 
 # NOTE - this test has ignore_uncaught_exceptions set.  Limit what's tested here.
@@ -4700,7 +4704,7 @@ async def test_exception(hass, service_calls, monkeypatch):
 
     # let's crash a task
     def gdie2():
-        raise TestException('boo')
+        raise ZTestException('boo')
     # hass.create_task(gdie(), 'happy')  # No exception - I think it's swallowed.
     # hass.async_create_background_task(gdie(), 'happy')  # No exception. Swallowed.
     hass.loop.call_soon_threadsafe(gdie2)
@@ -4715,7 +4719,7 @@ async def test_exception(hass, service_calls, monkeypatch):
     assert service_calls.isEmpty()
 
     # Test that can match against both err msg and stack trace
-    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'unhandled exception.*most recent call last.*raise TestException' } ] } }
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'unhandled exception.*most recent call last.*raise ZTestException' } ] } }
     await do_reload(cfg, hass, monkeypatch)
     hass.loop.call_soon_threadsafe(gdie2)
     await asyncio.sleep(0.25)
@@ -4739,7 +4743,7 @@ async def test_exception2(hass, service_calls, monkeypatch):
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     async def gdie():
-        raise TestException('xoo')
+        raise ZTestException('xoo')
 
     # Try regex that doesn't compile
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'foo(' } ] } }
@@ -4752,7 +4756,7 @@ async def test_exception2(hass, service_calls, monkeypatch):
     alert2.create_task(hass, 'alert2', gdie())
     await asyncio.sleep(0.25)
     service_calls.popNotifyEmpty('persistent_notification', 'Exception.*xoo')
-    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xoo.*raise TestException' ] } ] } }
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xoo.*raise ZTestException' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
     alert2.create_task(hass, 'alert2', gdie())
     await asyncio.sleep(0.25)
@@ -4764,7 +4768,7 @@ async def test_exception2(hass, service_calls, monkeypatch):
     alert2.create_task(hass, 'foof', gdie())
     await asyncio.sleep(0.25)
     service_calls.popNotifyEmpty('persistent_notification', 'foof_unhandled_exception.*xoo')
-    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'foof', 'name': 'unhandled_exception', 'exception_ignore_regexes': [ 'xoo.*raise TestException' ] } ] } }
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'foof', 'name': 'unhandled_exception', 'exception_ignore_regexes': [ 'xoo.*raise ZTestException' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
     alert2.create_task(hass, 'foof', gdie())
     await asyncio.sleep(0.25)

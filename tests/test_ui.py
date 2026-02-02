@@ -1253,7 +1253,7 @@ async def test_create(hass, service_calls, hass_client, hass_storage):
     assert resp.status == 400
     # delete nonexistent
     rez = await tpost("/api/alert2/manageAlert", {'delete': { 'uiId': 2 } })
-    assert re.search('no longer exists - can\'t delete', rez['error'])
+    assert re.search('does not exist - can\'t delete', rez['error'])
     assert service_calls.isEmpty()
 
     # load
@@ -1341,7 +1341,7 @@ async def test_create(hass, service_calls, hass_client, hass_storage):
     
     # Refer to nonexisting alert
     rez = await tpost("/api/alert2/manageAlert", {'update': { 'uiId':4, 'cfg': { 'domain':'d', 'name':'n3', 'condition':'off' } }})
-    assert re.search('no longer exists', rez['error'])
+    assert re.search('does not exist', rez['error'])
 
     # Can change alert ids via update
     # Here we replace n1 with n3
@@ -1410,7 +1410,7 @@ async def test_create2(hass, service_calls, hass_client, hass_storage):
     # can't delete non-existent
     rez = await tpost("/api/alert2/manageAlert", {'update':
                                                   { 'uiId':3, 'cfg': {'domain':'d', 'name':'{{genElem}}z', 'condition':'sensor.a', 'generator_name':'g2', 'generator': 'n5' } }})
-    assert re.search('no longer exists', rez['error'])
+    assert re.search('does not exist', rez['error'])
 
     # delete generator removes alerts with it
     assert hass.states.get('sensor.alert2generator_g1').state == '1'
@@ -2324,7 +2324,7 @@ async def test_anon_gen(hass, service_calls, hass_storage, hass_client):
     rez = await tpost("/api/alert2/manageAlert", {'search': { 'str': '' } } )
     assert rez == { 'results': [
         {'uiId': 1, 'id': 'sensor.alert2generator_g1', 'domain': 'alert2generator', 'name': 'g1'},
-        {'uiId': 2, 'id': 'alert2.alert2generator_anonymous_1', 'domain': 'alert2generator', 'name': 'anonymous_1'},
+        {'uiId': 2, 'id': 'sensor.alert2generator_anonymous_1', 'domain': 'alert2generator', 'name': 'anonymous_1'},
     ] }
 
     rez = await tpost("/api/alert2/manageAlert", {'delete': {'uiId':2 }})

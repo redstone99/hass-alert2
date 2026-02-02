@@ -388,7 +388,7 @@ Entity name related fields:
 | Key | Type | Required | Description |
 |---|---|---|---|
 | `generator` | template | optional | If specified, this alert is a [generator pattern](#generator-patterns). |
-| `generator_name` | string | optional | Each generator creates a sensor entity with the name `sensor.alert2generator_[generator_name]`. See [generator patterns](#generator-patterns). |
+| `generator_name` | string | optional | Each generator creates a sensor entity with the name `sensor.alert2generator_[generator_name]`. See [generator patterns](#generator-patterns).<br>If `generator_name` is not specified, a name like "anonymous_nnn", where "nnn" is a positive integer, will be used. |
 
 <br>Extra settings:
  
