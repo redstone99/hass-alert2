@@ -56,7 +56,15 @@ class FakeStore:
         return self.data
     def async_delay_save(self, data_to_save, delaytime):
         pass
-    
+
+def getInitUiCfg():
+    return { 'nextAlertUiId': 1,
+             'defaults': {},
+             'alertInfos': [],
+             'topLevelOptions': {},
+             'oneTime': {},
+            }
+
 class JTestView(HomeAssistantView):
     def __init__(self, hass, hass_storage, monkeypatch):
         self.hass = hass
@@ -73,25 +81,25 @@ class JTestView(HomeAssistantView):
         if 'stage' in data:
             if data['stage'] == 'getUiData':
                 await self.hass.async_block_till_done()
-                return self.json(gad.uiMgr.data)
+                return self.json(gad.uiMgr.storeData)
             elif data['stage'] == 'reset':
                 await self.hass.async_block_till_done()
-                uiCfg = { 'defaults': {} }
-                if 'uiYaml' in data and isinstance(data['uiYaml'], dict):
+                uiCfg = getInitUiCfg()
+                if 'uiCfg' in data and isinstance(data['uiCfg'], dict):
                     # There's one test that uses uiYaml to set up an invalid config.
                     # We need to temporarily override the store used inside uiMgr to make it work.
                     # So we keep around the original store used in the var realStore to restore things afterwards so subsequent tests work.
-                    uiCfg = data['uiYaml']
+                    uiCfg = data['uiCfg']
                     _LOGGER.info(f'Setting uiCfg to {uiCfg}')
                     assert self.realStore == None
                     self.realStore = gad.uiMgr._store
-                    gad.uiMgr._store = FakeStore({ 'config': uiCfg })
+                    gad.uiMgr._store = FakeStore(uiCfg)
                 else:
                     if self.realStore != None:
                         gad.uiMgr._store = self.realStore
                         self.realStore = None
-                self.hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
-                                                        'data': { 'config': uiCfg } }
+                self.hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage',
+                                                        'data': uiCfg }
                 #if 'uiYaml' in data and isinstance(data['uiYaml'], dict):
                 #gad.uiMgr.saveTopConfig({ 'defaults': {} })
                 cfg = {'alert2': {}}

@@ -2064,6 +2064,17 @@ async def test_internal(hass, service_calls, hass_client, hass_storage, monkeypa
     assert gad.tracked['alert2']['warning']._friendly_name == 'f1'
     assert gad.tracked['alert2']['global_exception']._friendly_name == 'f3'
 
+    rez = await tpost("/api/alert2/manageAlert", {'search': { 'str': '' } } )
+    assert rez == { 'results': [
+        {'uiId': 1, 'id': 'alert2.alert2_warning', 'domain': 'alert2', 'name': 'warning'},
+        {'uiId': 2, 'id': 'alert2.alert2_error', 'domain': 'alert2', 'name': 'error'},
+        {'uiId': 3, 'id': 'alert2.alert2_global_exception', 'domain': 'alert2', 'name': 'global_exception'},
+    ] }
+    rez = await tpost("/api/alert2/manageAlert", {'search': { 'str': 'glob' } } )
+    assert rez == { 'results': [
+        {'uiId': 3, 'id': 'alert2.alert2_global_exception', 'domain': 'alert2', 'name': 'global_exception'},
+    ] }
+    
     # Try updating
     rez = await tpost("/api/alert2/manageAlert", {'update': { 'uiId':1, 'cfg': {
         'domain':'alert2', 'name':'warning', 'friendly_name': 'f1a' } }})
@@ -2099,6 +2110,20 @@ async def test_internal2(hass, service_calls, hass_storage, hass_client):
     assert re.search('parsing a flow sequence', rez['error'])
     assert service_calls.isEmpty()
 
+async def test_internal3(hass, service_calls, hass_client, hass_storage, monkeypatch):
+    cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [ ]}}
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'nextAlertUiId': 2, 'alertInfos': [
+        { 'uiId': 1, 'cfg': { 'domain': 'alert2', 'name': 'warning', 'condition': 'on' }},
+    ]})
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg, noErrors=False)
+    service_calls.popNotifyEmpty('persistent_notification', 'not a valid value') # ugh, crappy error message
+
+    rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'alert2', 'name':'warning', 'condition': "off" } })
+    assert re.search('not a valid value', rez['error'])
+
+    
 async def test_data(hass, service_calls, hass_storage):
     await setAndWait(hass, "sensor.a", 'off')
     cfg = { 'alert2': { } }
@@ -2268,8 +2293,7 @@ async def test_reminder_msg(hass, service_calls, hass_storage, hass_client):
         # null overrides default, restoring to native default
         {'uiId':1,'cfg':{ 'domain': 'd', 'name': 't1', 'condition': 'off', 'reminder_message': 'null' }},
     ] })
-    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage',
-                                       'data': uiCfg }
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -2279,33 +2303,36 @@ async def test_reminder_msg(hass, service_calls, hass_storage, hass_client):
 
 async def test_anon_gen(hass, service_calls, hass_storage, hass_client):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : []}}
-    anonCfg = { 'domain': 'd2-{{ genElem }}', 'name': 'n2-{{ genElem }}', 'condition': 'off', 'generator' : '[ "y" ]' }
+    anonCfg = { 'domain': 'd-{{ "d" }}', 'name': 'n2-{{ genElem }}', 'condition': 'off', 'generator' : '[ "y" ]' }
     uiCfg = getInitUiCfg()
     uiCfg.update({'nextAlertUiId':3, 'alertInfos' : [
-        {'uiId':1,'cfg':{ 'domain': 'd1-{{ genElem }}', 'name': 'n1-{{ genElem }}', 'condition': 'off',
+        {'uiId':1,'cfg':{ 'domain': 'd-{{ "d" }}', 'name': 'n1-{{ genElem }}', 'condition': 'off',
                           'generator_name': 'g1', 'generator' : '[ "z" ]' }},
         {'uiId':2,'cfg':anonCfg},
-              ]
-             })
+    ]})
     hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+    assert set(gad.alerts['d-d'].keys()) == set([ 'n2-y', 'n1-z'])
 
-    anonCfg['condition'] = 'no'
+    gad.alerts['d-d']['n2-y']._friendly_name == None
+    anonCfg['friendly_name'] = 'ff'
     rez = await tpost("/api/alert2/manageAlert", {'update': {'uiId':2, 'cfg':anonCfg }})
     assert rez == {}
-    #assert re.search('can not find existing', rez['error'])
+    gad.alerts['d-d']['n2-y']._friendly_name == 'ff'
     assert service_calls.isEmpty()
 
-    assert set(gad.alerts['d1-z'].keys()) == set([ 'n1-z'])
+    rez = await tpost("/api/alert2/manageAlert", {'search': { 'str': '' } } )
+    assert rez == { 'results': [
+        {'uiId': 1, 'id': 'sensor.alert2generator_g1', 'domain': 'alert2generator', 'name': 'g1'},
+        {'uiId': 2, 'id': 'alert2.alert2generator_anonymous_1', 'domain': 'alert2generator', 'name': 'anonymous_1'},
+    ] }
+
+    rez = await tpost("/api/alert2/manageAlert", {'delete': {'uiId':2 }})
+    assert rez == {}
+    rez = await tpost("/api/alert2/manageAlert", {'search': { 'str': '' } } )
+    assert rez == { 'results': [
+        {'uiId': 1, 'id': 'sensor.alert2generator_g1', 'domain': 'alert2generator', 'name': 'g1'},
+    ] }
+    assert set(gad.alerts['d-d'].keys()) == set([ 'n1-z'])
     
-    entities = er.async_get(hass).entities
-    _LOGGER.info(list(entities.keys()))
-
-
-
-    
-async def test_internal_alert(hass, service_calls, hass_storage, hass_client):
-    assert False
-    #check load ui when no ui storage at all
-    #make sure can not create condition alert with same name as internal
-    #and test that anon generators list generated ents in UI    
+#and test that anon generators list generated ents in UI    
