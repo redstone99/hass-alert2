@@ -58,7 +58,9 @@ from .util import (
     get_global_hass,
     set_shutting_down,
     global_tasks,
-    gAssertMsg
+    gAssertMsg,
+    isAlert2Internal,
+    #getDNToUse
 )
 
 # Need to define CONFIG_SCHEMA here to make hacs github validator happy
@@ -454,7 +456,7 @@ def updateConfigDict(currConfig, newConfig):
         currConfig['data'] = newData
     else:
         currConfig.update(newConfig)
-        
+
 class Alert2Data:
     def __init__(self, hass, config):
         # Call set_shutting_down mostly for unittests which create sequentially multiple Alert2Data
@@ -486,8 +488,7 @@ class Alert2Data:
         cfg = self.uiMgr.getPreppedConfig()
         if cfg is None:
             return None
-        if 'defaults' in cfg:
-            updateConfigDict(tmpUiConfig['defaults'], cfg['defaults'])
+        updateConfigDict(tmpUiConfig['defaults'], cfg['defaults'])
         if 'skip_internal_errors' in cfg:
             tmpUiConfig['skip_internal_errors'] = cfg['skip_internal_errors']
         if 'notifier_startup_grace_secs' in cfg:
@@ -573,30 +574,24 @@ class Alert2Data:
             
         if not self.topConfig['skip_internal_errors']:
             for internalType in ['error', 'warning', 'global_exception']:
-                errCfg = None
-                try:
-                    cfgObj = None
-                    if 'tracked' in self._rawYamlConfig:
-                        for obj in self._rawYamlConfig['tracked']:
-                            if obj['domain'] == DOMAIN and obj['name'] == internalType:
-                                cfgObj = obj
-                                break
-                    if cfgObj is None:
-                        cfgObj = self.uiMgr.getEarlyInternalRawConfig(internalType)
-                    if cfgObj:
-                        errCfg = SINGLE_TRACKED_SCHEMA(cfgObj)
-                except (vol.Invalid, HomeAssistantError, TypeError, KeyError):
-                    pass # Handled below in loadAlertBlock
-                if errCfg:
-                    errorEnt = self.declareEventInt(errCfg)
+                cfgObj = None
+                if 'tracked' in self._rawYamlConfig and isinstance(self._rawYamlConfig['tracked'], list):
+                    for obj in self._rawYamlConfig['tracked']:
+                        if isinstance(obj, dict) and 'domain' in obj and obj['domain'] == DOMAIN and \
+                           'name' in obj and obj['name'] == internalType:
+                            cfgObj = obj
+                            break
+                if cfgObj is None:
+                    cfgObj = self.uiMgr.getEarlyInternalRawConfig(internalType)
+                if cfgObj is None:
+                    cfgObj = { 'domain' : DOMAIN, 'name': internalType }
+                # First just check for validation errors
+                rez = await self.declareAlert(cfgObj, doReport=False, isTracked=True, checkForUpdate=True)
+                if rez == True:
+                    # No validation errors. Now do for real. If is other error somehow, we try to report
+                    rez = await self.declareAlert(cfgObj, isTracked=True)
                 else:
-                    errorEnt = self.declareEvent(DOMAIN, internalType)
-                if isinstance(errorEnt, Entity):
-                    await self.component.async_add_entities([ errorEnt ])
-                    _LOGGER.debug(f'Lifecycle create alert {errorEnt.entity_id}')
-                else:
-                    report(DOMAIN, 'error', errorEnt) # errMsg
-
+                    pass # validation error.  It will be handled below in loadAlertBlock
 
         if isFirstInit:
             self.delayedNotifierMgr = DelayedNotifierMgr(self._hass,
@@ -771,8 +766,9 @@ class Alert2Data:
             else:
                 report(DOMAIN, 'error', msg)
 
-        (ents, failedEnts) = await self.loadAlertBlock(self._rawYamlConfig)
-        _LOGGER.info(f'Lifecycle created {len(ents)} alerts from YAML config')
+        #(ents, failedEnts) = await self.loadAlertBlock(self._rawYamlConfig)
+        numCreated = await self.loadAlertBlock(self._rawYamlConfig)
+        _LOGGER.info(f'Lifecycle created {numCreated} alerts from YAML config')
         await self.uiMgr.declareAlerts()
 
         # If user has removed an alert from their YAML and reloaded/restarted,
@@ -784,62 +780,61 @@ class Alert2Data:
 
     # stage 1 is for supersedes.  Stage 2 is to declare the alerts
     # loadAlertBlock returns entities that loaded successfully and psuedo-ents that failed to load
-    async def loadAlertBlock(self, aRawCfg, fromUI=False):
-        failedEnts = []
-        entities = []
+    # failedEnts are fake objects with just domain/name.
+    async def loadAlertBlock(self, aRawCfg):
+        fromUI = False # TODO - remove as arg to declareAlert(), below
+        # TODO - I think this func no longer needs to return anything. Can simplify.
+        #failedEnts = []
+        #entities = []
+        #def addToQueue(obj, newEnt):
+        #    if isinstance(newEnt, Entity):
+        #        entities.append(newEnt)
+        #    elif newEnt is True:
+        #        pass
+        #    else:  # newEnt is False or errMsg
+        #        (domain, name) = getDNToUse(obj, assumeOK=False)
+        #        failedEnts.append({ 'domain': domain, 'name': name })
+        numCreated = 0
+        def note(newEnt):
+            nonlocal numCreated
+            if isinstance(newEnt, Entity):
+                numCreated += 1
         if 'tracked' in aRawCfg and isinstance(aRawCfg['tracked'], list):
             for obj in aRawCfg['tracked']:
-                newEnt = None
-                skipReport = False
-                aCfg = None
-                try:
-                    aCfg = SINGLE_TRACKED_SCHEMA(obj)
-                    if aCfg['domain'] == DOMAIN and aCfg['name'] in ['error', 'warning','global_exception']:
-                        skipReport = True # already handled above
-                    else:
-                        newEnt = self.declareEventInt(aCfg)
-                except vol.Invalid as v:
-                    report(DOMAIN, 'error', f'tracked section of config: {v}. Relevant section: {obj}')
-                    if 'domain' in obj and 'name' in obj:
-                        failedEnts.append({ 'domain': obj['domain'], 'name': obj['name'] })
-                    continue
-                if isinstance(newEnt, Entity):
-                    entities.append(newEnt)
+                if isAlert2Internal(obj):
+                    # We processed alert already, above, so here we just want to report any vol.invalid errors
+                    newEnt = await self.declareAlert(obj, isTracked=True, checkForUpdate=True, fromUI=fromUI)
                 else:
-                    if not skipReport:
-                        fullMsg = f'{newEnt}.' + (' UI Alert failed to load due to duplicate, so will not appear in Alert Manager' if fromUI else '')
-                        report(DOMAIN, 'error', fullMsg) # newEnt has errMsg
-                    failedEnts.append({ 'domain': obj['domain'], 'name': obj['name'] })
-                    
-        await self.component.async_add_entities(entities)
-        for newEnt in entities:
-            _LOGGER.debug(f'Lifecycle created alert {newEnt.entity_id}')
-
+                    newEnt = await self.declareAlert(obj, isTracked=True, fromUI=fromUI)
+                note(newEnt)
+            
         if 'alerts' in aRawCfg and isinstance(aRawCfg['alerts'], list):
             for obj in aRawCfg['alerts']:
-                newEnt = await self.declareAlert(obj)
-                if isinstance(newEnt, Entity):
-                    entities.append(newEnt)
-                else:
-                    if 'domain' in obj and 'name' in obj:
-                        failedEnts.append({ 'domain': obj['domain'], 'name': obj['name'] })
-                    
-        return (entities, failedEnts)
-        
-    # if doReport then return ent or None
-    # if not doReport then return ent or errMsg string
+                newEnt = await self.declareAlert(obj, fromUI=fromUI)
+                note(newEnt)
+        return numCreated
+        #return (entities, failedEnts)
+    
+    # On success, return True if checkForUpdate=True, otherwise returns entity
+    # On failure, returns False if doReport==True or errMsg as string
     #
     # isBulk True means that either this is called during HA startup, or it's part of a reload and
     # someone will update last_reload_time
-    async def declareAlert(self, obj, genVars=None, doReport=True, checkForUpdate=False):
+    async def declareAlert(self, obj, genVars=None, doReport=True, checkForUpdate=False, isTracked=False, fromUI=False):
         newEnt = None
         try:
-            if 'trigger' in obj:
+            if isTracked:
+                #_LOGGER.info(f'validated tracked alert: {obj}')
+                aCfg = SINGLE_TRACKED_SCHEMA(obj)
+                if checkForUpdate:
+                    return True
+                newEnt = self.declareEventInt(aCfg)
+            elif 'trigger' in obj:
                 aCfg = SINGLE_ALERT_SCHEMA_EVENT(obj)
                 atrig = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger'])
                 aCfg['trigger'] = atrig
                 if checkForUpdate:
-                    return None
+                    return True
                 newEnt = self.declareEventInt(aCfg)
             else:
                 aCfg = SINGLE_ALERT_SCHEMA_CONDITION(obj)
@@ -848,41 +843,50 @@ class Alert2Data:
                 if 'trigger_off' in aCfg:
                     aCfg['trigger_off'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger_off'])
                 if checkForUpdate:
-                    return None
+                    return True
                 if 'generator' in aCfg:
                     newEnt = self.declareGenerator(aCfg, rawConfig=obj)
-                    addGenerator = 'generator_name' in aCfg
+                    #addGenerator = 'generator_name' in aCfg
                 else:
                     newEnt = self.declareCondition(aCfg, genVars)
         except (vol.Invalid, HomeAssistantError) as v:
+            #if isinstance(v, vol.MultipleInvalid):
+            #    _LOGGER.warning(v.errors)
             errMsg = f'alerts section of config: {v}. Relevant section: {obj}'
             if doReport:
                 report(DOMAIN, 'error', errMsg)
-                return None
+                return False
             else:
                 return errMsg
         #_LOGGER.info(f'declareAlert: {isBulk} {newEnt}')
         if isinstance(newEnt, Entity):
             if isinstance(newEnt, AlertGenerator):
-                if addGenerator:
-                    await self.sensorComponent.async_add_entities([newEnt])
-                else:
-                    # If ent is added for real, then addedToHassDone is eventually called.
-                    # Otherwise we call the internal housekeeping explicitly here
-                    await newEnt.noteAddToHassDone()
+                #if addGenerator:
+                await self.sensorComponent.async_add_entities([newEnt])
+                #else:
+                #    # If ent is added for real, then addedToHassDone is eventually called.
+                #    # Otherwise we call the internal housekeeping explicitly here
+                #    await newEnt.noteAddToHassDone()
             else:
                 await self.component.async_add_entities([newEnt])
+            msg = f'Lifecycle created {"tracked " if isTracked else ""} alert {newEnt.entity_id}' \
+                + (' via UI' if fromUI else '')
             if genVars is None:
-                _LOGGER.debug(f'Lifecycle created alert {newEnt.entity_id}')
+                _LOGGER.debug(msg)
             else:
-                _LOGGER.info(f'Lifecycle created alert {newEnt.entity_id}')
+                _LOGGER.info(msg)
             # notify uiMgr so can update display_msg watcher if appropriate
             #_LOGGER.warning(f'will call alertCreated: {"".join(traceback.format_stack())}')
             self.uiMgr.alertCreated(newEnt.alDomain, newEnt.alName)
-        elif doReport:
-            # Must be error message
-            report(DOMAIN, 'error', newEnt)
-            return None
+        else:
+            if not isinstance(newEnt, str):
+                report(DOMAIN, 'error', f'{gAssertMsg} declareAlert, ended up with newEnt={newEnt}, type={type(newEnt)}')
+            if doReport:
+                # newEnt must be error message
+                fullMsg = f'{newEnt}' + ('. UI Alert failed to load due to duplicate, so will not appear in Alert Manager' if fromUI else '')
+                report(DOMAIN, 'error', fullMsg)
+                return False
+            
         return newEnt
 
     # Returns err if alert does not exist
@@ -910,12 +914,12 @@ class Alert2Data:
                 ent.setRegistryPurge()
             del self.generators[name]
             _LOGGER.debug(f'Lifecycle undeclareAlert {ent.entity_id}')
-            if 'generator_name' in ent.config:
-                await self.sensorComponent.async_remove_entity(ent.entity_id)
-            else:
-                # If entity is in hass, then async_remove_entity eventally calls async_will_remove_from_hass
-                # But if not, then we gotta call the internal housekeeping function individually
-                await ent.noteWillRemoveFromHass()
+            #if 'generator_name' in ent.config:
+            await self.sensorComponent.async_remove_entity(ent.entity_id)
+            #else:
+            #    # If entity is in hass, then async_remove_entity eventally calls async_will_remove_from_hass
+            #    # But if not, then we gotta call the internal housekeeping function individually
+            #    await ent.noteWillRemoveFromHass()
         else:
             errMsg = f'Trying to remove unknown alert domain={domain} name={name}'
             if doReport:
@@ -1183,7 +1187,7 @@ class Alert2Data:
         domain = evdata['domain']
         name = evdata['name']
         if self.topConfig['skip_internal_errors']:
-            if domain == DOMAIN and name in ['error', 'warning', 'global_exception']:
+            if isAlert2Internal(evdata): # This is treating evdata is if it is part of an alert config so we can test for domain/name
                 # The internal error was logged back up in report(), so no need to log again
                 return
         

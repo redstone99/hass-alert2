@@ -1,4 +1,5 @@
 import ast
+import copy
 import asyncio
 import logging
 import types
@@ -24,7 +25,8 @@ from .util import (
     cancel_task,
     report,
     DOMAIN,
-    gAssertMsg
+    gAssertMsg,
+    isAlert2Internal
 )
 from .config import ( TOP_LEVEL_SCHEMA, DEFAULTS_SCHEMA, SINGLE_TRACKED_SCHEMA_PRE_NAME,
                       SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME, SINGLE_TRACKED_SCHEMA,
@@ -32,17 +34,19 @@ from .config import ( TOP_LEVEL_SCHEMA, DEFAULTS_SCHEMA, SINGLE_TRACKED_SCHEMA_P
                       GENERATOR_SCHEMA, NO_GENERATOR_SCHEMA, SUPERSEDES_GEN )
 from .util import (     GENERATOR_DOMAIN )
 from .entities import (notifierTemplateToList, renderResultToList, generatorElemToVars, AlertGenerator, Tracker,
-                       processSupersedes, getField, expandDataDict, NotificationReason, entNameFromDN, AlertBase)
+                       processSupersedes, getField, expandDataDict, NotificationReason, entNameFromDN, AlertBase,
+                       getPreferredEntityId)
 from homeassistant.components.websocket_api import (decorators, async_register_command)
 _LOGGER = logging.getLogger(__name__)
 
 def prepLoadTopConfig(uiMgr):
     # Extract dict with just top config keys from data
-    rawUiTopConfig = {key: uiMgr.data['config'][key]
-                      for key in uiMgr._alertData.rawYamlBaseTopConfig.keys() if key in uiMgr.data['config'] }
+    #rawUiTopConfig = dict(uiMgr.storeData['topLevelOptions']) # shallow copy
+    uiCfg = uiMgr.getRawTopConfig()
+    #rawUiTopConfig = { key: uiCfg[key] for key in uiMgr._alertData.rawYamlBaseTopConfig.keys() if key in uiCfg }
     resp = { 'rawYaml': uiMgr._alertData.rawYamlBaseTopConfig,
              'raw':     uiMgr._alertData.rawTopConfig,
-             'rawUi': rawUiTopConfig }
+             'rawUi': uiCfg }
     return resp
 
 class ManageAlertView(HomeAssistantView):
@@ -51,29 +55,32 @@ class ManageAlertView(HomeAssistantView):
     url = "/api/alert2/manageAlert"
     name = "api:alert2:manageAlert"
     @RequestDataValidator(vol.Schema({
-        vol.Exclusive('load', 'op'): { vol.Required('domain'): cv.string, vol.Required('name'): cv.string },
-        vol.Exclusive('delete', 'op'): { vol.Required('domain'): cv.string, vol.Required('name'): cv.string },
+        vol.Exclusive('load', 'op'): { vol.Required('uiId'): int },
+        vol.Exclusive('delete', 'op'): { vol.Required('uiId'): int },
         vol.Exclusive('validate', 'op'): dict,
-        vol.Exclusive('update', 'op'): vol.Schema({ vol.Required('domain'): cv.string, vol.Required('name'): cv.string }, extra=vol.ALLOW_EXTRA),
+        vol.Exclusive('update', 'op'): { vol.Required('uiId'): int, vol.Required('cfg'): dict },
         vol.Exclusive('create', 'op'): dict,
         vol.Exclusive('search', 'op'): { vol.Required('str'): cv.string },
     }, extra=vol.ALLOW_EXTRA))
     async def post(self, request: web.Request, data: dict[str, Any]) -> web.Response:
         if 'load' in data: 
-            rez = self.uiMgr.loadAlert(data['load']['domain'], data['load']['name'])
+            rez = self.uiMgr.loadAlert(data['load']['uiId'])
             return self.json(rez)
         if 'create' in data:
             rez = await self.uiMgr.createAlert(data['create'])
             return self.json(rez)
         if 'delete' in data:
-            rez = await self.uiMgr.deleteAlert(data['delete'])
+            rez = await self.uiMgr.deleteAlert(data['delete']['uiId'])
             return self.json(rez)
         if 'update' in data:
-            rez = await self.uiMgr.updateAlert(data['update'])
+            rez = await self.uiMgr.updateAlert(data['update']['uiId'], data['update']['cfg'])
             return self.json(rez)
         if 'validate' in data:
             rez = await self.uiMgr.validateAlert(data['validate'])
-            return self.json(rez)
+            if isinstance(rez, str):
+                return self.json({ 'error': rez })
+            else:
+                return self.json({})
         if 'search' in data:
             return self.json({'results': self.uiMgr.search(data['search']['str'])})
         msg = f'{gAssertMsg} unknown manageAlert op "{data}"'
@@ -388,15 +395,7 @@ class RenderValueView(HomeAssistantView):
             return self.json({ 'error': msg})
         return self.json({ 'rez': result })
 
-STORAGE_KEY = f"{DOMAIN}.storage"
-STORAGE_VERSION = 1
-SAVE_DELAY = 10
-# Looks like Store handles writing before HA shuts down if there are outstanding writes
-# "data" is a dict de-serialized from JSON
-class MigratableStore(Store):
-    async def _async_migrate_func(self, old_version, data: dict):
-        return data
-# stips all values. removes empty string keys, but leaves empty dicts
+# strips all values. removes empty string keys, but leaves empty dicts
 def removeEmpty(adict):
     keys = list(adict.keys())
     for key in keys:
@@ -594,6 +593,66 @@ class DisplayMsgSocketMgr:
         return subscriptionEntry
 
 
+# Guess name, may be inaccurate
+def getAlertName(ainfo):
+    if ainfo['ent']:
+        return ainfo['ent'].entity_id
+    acfg = ainfo['info']['cfg']
+    if 'generator_name' in acfg:
+        domain = GENERATOR_DOMAIN
+        name = acfg['generator_name']
+    elif 'generator' in acfg:
+        domain = GENERATOR_DOMAIN
+        name = 'anonymous-generator'
+    else:
+        domain = acfg['domain'] if 'domain' in acfg else '[missing domain]'
+        name = acfg['name'] if 'name' in acfg else '[missing name]'
+    return f'domain={domain} name={name}'
+    
+STORAGE_KEY = f"{DOMAIN}.storage"
+STORAGE_VERSION = 2
+SAVE_DELAY = 10
+# Looks like Store handles writing before HA shuts down if there are outstanding writes
+# "data" is a dict de-serialized from JSON
+class MigratableStore(Store):
+    async def _async_migrate_func(self, old_version, data: dict):
+        if old_version == 1:
+            # Storage was { 'config': { defaults, alerts, tracked } }
+            # Now we switch to
+            #   { nextAlertUiId,
+            #     defaults
+            #     alertInfos: [ { alert_ui_id, cfg } ]
+            #   }
+            nextUiId = 1
+            alertInfos = []
+            if 'alerts' in data['config']:
+                for acfg in data['config']['alerts']:
+                    alertInfos.append({ 'uiId': nextUiId, 'cfg': copy.deepcopy(acfg) })
+                    nextUiId += 1
+            topLevelOptions = {}
+            for fname in [ 'skip_internal_errors', 'notifier_startup_grace_secs', 'defer_startup_notifications' ]:
+                if fname in data:
+                    topLevelOptions[fname] = data[fname]
+            newData = { 'nextAlertUiId': nextUiId,
+                        'defaults': data['config']['defaults'] if 'defaults' in data['config'] else {},
+                        'alertInfos': alertInfos,
+                        'topLevelOptions': topLevelOptions,
+                        'oneTime': data['oneTime'] if 'oneTime' in data else {},
+                       }
+            _LOGGER.info(f'alertInfos = {alertInfos}')
+            return newData
+        else:
+            assert old_version == 2, f'{gAssertMsg} UI alert store has unexpected version {old_version}'
+            assert isinstance(data, dict)
+            return data
+
+class InternalAlertPlaceholder(Entity):
+    def __init__(self, domain, name):
+        super().__init__()
+        self.alDomain = domain
+        self.alName = name
+        self.entity_id = getPreferredEntityId(domain, name)
+        
 class UiMgr:
     def __init__(self, hass, alertData):
         self._hass = hass
@@ -604,19 +663,32 @@ class UiMgr:
             self.views.append(aview)
             hass.http.register_view(aview)
         self._store = MigratableStore(hass, STORAGE_VERSION, STORAGE_KEY)
-        self.data = None
-        self.entities = [] # Entities that loaded and results in an alert created in self._alertData
-        self.failedEnts = [] # Entities that failed to load, eg due to duplicate in YAML
+        self.storeData = None
+        self.alerts = [] # { ent (may be None), info }
         self.displayMsgWsMgr = DisplayMsgSocketMgr(hass, alertData)
         
     async def startup(self):
         # Store handles the case where there may be a write pending
-        self.data = None # reset in case load throw exception
-        self.data = await self._store.async_load()
-        _LOGGER.info(f'UI in startup - got data={self.data}')
-        if self.data is None:
-            self.data = { 'config': { 'defaults': {} } }
-            
+        self.storeData = None # reset in case load throw exception
+        self.storeData = await self._store.async_load()
+        #_LOGGER.warning(f'foo storeData={self.storeData}')
+        if self.storeData is None:
+            self.storeData = { 'nextAlertUiId': 1,
+                               'defaults': {},
+                               'alertInfos': [],
+                               'topLevelOptions': {},
+                               'oneTime': {} }
+        self.alerts = [ {'ent': None, 'info': xx } for xx in self.storeData['alertInfos'] ]
+        if self.storeData['alertInfos']:
+            uids = [ aa['uiId'] for aa in self.storeData['alertInfos'] ]
+            maxUid = max(uids)
+            if maxUid >= self.storeData['nextAlertUiId']:
+                report(DOMAIN, 'error', f'{gAssertMsg} ui load maxUid={maxUid} but nextAlertUiId={self.storeData["nextAlertUiId"]}')
+                self.storeData['nextAlertUiId'] = maxUid + 1
+            if len(uids) != len(set(uids)):
+                report(DOMAIN, 'error', f'{gAssertMsg} ui load appears to be duplicate uiId: {uids}')
+                
+        
     def shutdown(self):
         #create_task(self._hass, DOMAIN, self.async_shutdown())
         self.displayMsgWsMgr.shutdown()
@@ -624,18 +696,44 @@ class UiMgr:
         #for aview in self.views:
         #    await aview.shutdown()
 
-    def getEarlyInternalRawConfig(self, internalType):
-        cfg = self.data['config'] if 'config' in self.data else {}
-        if 'tracked' in self.data['config']:
-            for obj in self.data['config']['tracked']:
-                # can raise HomeAssistantError
-                pobj = prepStrConfig(obj, doReport=False)
-                if pobj['domain'] == DOMAIN and pobj['name'] == internalType:
-                    return pobj
+    def uiAlertAlreadyExists(self, acfg):
+        if 'generator' in acfg and 'generator_name' not in acfg:
+            return None # anonymous generator, no way to tell if existing ones match or not
+        for ali in self.alerts:
+            tcfg = ali['info']['cfg']
+            if 'generator_name' in acfg:
+                if 'generator_name' in tcfg and tcfg['generator_name'] == acfg['generator_name']:
+                    return f'generator {acfg["generator_name"]}'
+            else: # not a generator
+                if acfg['domain'] == tcfg['domain'] and acfg['name'] == tcfg['name']:
+                    return f'domain={acfg["domain"]} name={acfg["name"]}'
         return None
         
+    def getEarlyInternalRawConfig(self, internalType):
+        for ae in self.storeData['alertInfos']:
+            obj = ae['cfg']
+            # can raise HomeAssistantError
+            pobj = prepStrConfig(obj, doReport=False)
+            if pobj['domain'] == DOMAIN and pobj['name'] == internalType:
+                return pobj
+        return None
+        
+    def getRawTopConfig(self):
+        cfg = { 'defaults': self.storeData['defaults'] }
+        cfg.update(self.storeData['topLevelOptions'])
+        return cfg
     def getPreppedConfig(self):
-        cfg = self.data['config'] if 'config' in self.data else {}
+        alerts = []
+        tracked = []
+        for ae in self.storeData['alertInfos']:
+            cfg = ae['cfg']
+            isTracked = isAlert2Internal(cfg)
+            if isTracked:
+                tracked.append(cfg)
+            else:
+                alerts.append(cfg)
+        cfg = { 'defaults': self.storeData['defaults'], 'alerts': alerts, 'tracked': tracked }
+        cfg.update(self.storeData['topLevelOptions'])
         try:
             preppedConfig = prepStrConfig(cfg)
         except HomeAssistantError as ex:
@@ -645,12 +743,25 @@ class UiMgr:
         return preppedConfig
 
     async def declareAlerts(self):
-        cfg = self.getPreppedConfig()
-        _LOGGER.info(f'Got prepped config of {cfg}')
-       
-        if cfg is not None:
-            (self.entities, self.failedEnts) = await self._alertData.loadAlertBlock(cfg, fromUI=True)
-            _LOGGER.info(f'Lifecycle created {len(self.entities)} alerts from UI config')
+        numSuccess = 0
+        for ali in self.alerts:
+            preppedConfig = await self.validateAlert(ali['info']['cfg'])
+            if isinstance(preppedConfig, str):
+                report(DOMAIN, 'error', preppedConfig)
+                newEnt = None
+            else:
+                if isAlert2Internal(preppedConfig):
+                    # Alert already declared in __init__, so just report validation errors here
+                    newEnt = await self.declareInternalAlert(preppedConfig)
+                else:
+                    newEnt = await self._alertData.declareAlert(preppedConfig, fromUI=True)
+            if isinstance(newEnt, Entity):
+                ali['ent'] = newEnt
+                numSuccess += 1
+            else:
+                ali['ent'] = None
+        
+        _LOGGER.info(f'Lifecycle created {numSuccess} alerts from UI config')
         
     def saveTopConfig(self, topConfig):
         try:
@@ -666,102 +777,109 @@ class UiMgr:
             return { 'error': f'validation failed: {v}' }
 
         if 'defaults' in topConfig:
-            self.data['config']['defaults'] = topConfig['defaults']
+            self.storeData['defaults'] = topConfig['defaults']
         else:
-            self.data['config']['defaults'] = {}
+            self.storeData['defaults'] = {}
         for fname in [ 'skip_internal_errors', 'notifier_startup_grace_secs', 'defer_startup_notifications' ]:
             if fname in topConfig:
-                self.data['config'][fname] = topConfig[fname]
-            elif fname in self.data['config']:
-                del self.data['config'][fname]
+                self.storeData['topLevelOptions'][fname] = topConfig[fname]
+            elif fname in self.storeData['topLevelOptions']:
+                del self.storeData['topLevelOptions'][fname]
                 
         self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
         self._alertData.noteUiUpdate()
         return prepLoadTopConfig(self)
     
-    async def createAlert(self, acfg):
-        try:
-            preppedConfig = prepForValidation(acfg)
-        except vol.Invalid as v:
-            return { 'error': f'data check failed: {v}' }
-        newEnt = await self._alertData.declareAlert(preppedConfig, doReport=False)
-        if not isinstance(newEnt, Entity):
-            return {'error': newEnt}
-        _LOGGER.info(f'Lifecycle created alert {newEnt.entity_id} via UI')
-        if isinstance(newEnt, AlertGenerator):
-            if newEnt.alName not in self._alertData.generators:
-                _LOGGER.error(self._alertData.generators)
-                msg = f'{gAssertMsg}: UI generator alert {newEnt.alName} not in generators category'
-                report(DOMAIN, 'error', msg)
-                return {'error': msg}
-        elif (not newEnt.alDomain in self._alertData.alerts or not newEnt.alName in self._alertData.alerts[newEnt.alDomain]) and \
-             (not newEnt.alDomain in self._alertData.tracked or not newEnt.alName in self._alertData.tracked[newEnt.alDomain]):
-            errMsg = f'{gAssertMsg}: UI alert {newEnt.entity_id} not in alerts or tracked category'
-            report(DOMAIN, 'error', errMsg)
-            return {'error': errMsg}
-        self.entities.append(newEnt)
-        if not 'alerts' in self.data['config']:
-            self.data['config']['alerts'] = []
-        self.data['config']['alerts'].append(acfg)
-        self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
-        return {}
-
-    def getDataIndex(self, domain, name):
-        return next((i for i, item in enumerate(self.data['config']['alerts']) if \
-                     ('generator_name' in item and GENERATOR_DOMAIN == domain and item['generator_name'] == name) or
-                     (item['domain'] == domain and item['name'] == name)), -1)
+    async def declareInternalAlert(self, preppedConfig, doReport=True):
+        # Check validation
+        rez = await self._alertData.declareAlert(preppedConfig, doReport=doReport, checkForUpdate=True, isTracked=True, fromUI=True)
+        if rez != True:
+            return rez # is errMsg
+        newEnt = InternalAlertPlaceholder(preppedConfig['domain'], preppedConfig['name'])
+        _LOGGER.info(f'Lifecycle created tracked alert {newEnt.entity_id} via UI')
+        return newEnt
     
-    def loadAlert(self, domain, name):
-        if 'config' not in self.data:
-            return { 'error': 'alert not found' }
+    def loadAlert(self, uiId):
+        for info in self.storeData['alertInfos']:
+            if info['uiId'] == uiId:
+                return info['cfg']
+        return { 'error': 'alert not found' }
 
-        dataIndex = self.getDataIndex(domain, name)
-        if dataIndex == -1:
-            return { 'error': 'alert not found' }
-        return self.data['config']['alerts'][dataIndex]
-    
+    # Returns str on error, or preppedConfig
     async def validateAlert(self, acfg):
         try:
             preppedConfig = prepForValidation(acfg)
         except vol.Invalid as v:
-            return { 'error': f'data check failed: {v}' }
+            return f'data check failed: {v}'
 
-        rez = await self._alertData.declareAlert(preppedConfig, doReport=False, checkForUpdate=True)
-        if rez is not None:
-            return {'error': rez}
-        return {}
+        isTracked = isAlert2Internal(preppedConfig)
+        rez = await self._alertData.declareAlert(preppedConfig, doReport=False, isTracked=isTracked, checkForUpdate=True)
+        if rez != True:
+            return rez # string
+        return preppedConfig
+    
+    def alertCreated(self, domain, name):
+        self.displayMsgWsMgr.reloadSingleIfExists(domain, name)
+    
+    async def createAlert(self, acfg):
+        preppedConfig = await self.validateAlert(acfg)
+        if isinstance(preppedConfig, str):
+            return { 'error': preppedConfig }
 
-    async def updateAlert(self, acfg):
-        domain = acfg['domain']
-        name = acfg['name']
-        if 'generator_name' in acfg:
-            domain = GENERATOR_DOMAIN
-            name = acfg['generator_name']
+        existingName = self.uiAlertAlreadyExists(preppedConfig)
+        if existingName is not None:
+            return { 'error': f'UI alert already exists: {existingName}' }
+        
+        if isAlert2Internal(preppedConfig):
+            newEnt = await self.declareInternalAlert(preppedConfig, doReport=False)
+        else:
+            newEnt = await self._alertData.declareAlert(preppedConfig, doReport=False, fromUI=True)
+        if not isinstance(newEnt, Entity):
+            return {'error': newEnt}
 
-        entIndex = next((i for i, item in enumerate(self.entities) if item.alDomain == domain and item.alName == name), -1)
-        if entIndex == -1:
-            return { 'error': f'can not find existing valid UI-created alert with domain={domain} and name={name}' }
-        dataIndex = self.getDataIndex(domain, name)
-        if dataIndex == -1:
-            errMsg = f'{gAssertMsg} updateAlert: domain={domain} and name={name} in self.entities but not in self.data config'
+        newInfo = { 'uiId': self.storeData['nextAlertUiId'], 'cfg': acfg }
+        self.storeData['alertInfos'].append(newInfo)
+        self.storeData['nextAlertUiId'] += 1
+        self.alerts.append({ 'ent': newEnt, 'info': newInfo })
+        
+        self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
+        return { 'uiId': newInfo['uiId'] }
+
+    async def deleteAlertInt(self, uiId, verb):
+        storeIdx = next((i for i, item in enumerate(self.storeData['alertInfos']) if (item['uiId'] == uiId)), -1)
+        if storeIdx == -1:
+            return (None, None, f'UI-created alert does not exist - can\'t {verb}')
+        listIdx = next((i for i, item in enumerate(self.alerts) if (item['info']['uiId'] == uiId)), -1)
+        if listIdx == -1:
+            errMsg = f'{gAssertMsg} Alert uiId={uiId} exists in store but not in alert list during {verb}'
             _LOGGER.error(errMsg)
-            return { 'error': errMsg }
+            return (None, None, errMsg)
 
+        ent = self.alerts[listIdx]['ent']
+        if ent is not None and not isinstance(ent, InternalAlertPlaceholder): # If alert was loaded
+            _LOGGER.info('undeclaring alert')
+            rez = await self._alertData.undeclareAlert(ent.alDomain, ent.alName, doReport=False, removeFromRegistry=True)
+            if rez is not None:
+                errMsg = f'{gAssertMsg} in {verb}: uiId={uiId} domain={ent.alDomain} name={ent.alName} found in UI, but undeclareAlert failed'
+                _LOGGER.error(errMsg)
+                return (None, None, errMsg)
+        return (storeIdx, listIdx, None)
+    
+    async def updateAlert(self, uiId, acfg):
         # Validate alert before call undeclareAlert so hopefully won't end up returning an error
-        # and no alert left over
-        vrez = await self.validateAlert(acfg)
-        if vrez != {}:
-            return vrez
-        try:
-            preppedConfig = prepForValidation(acfg)
-        except vol.Invalid as v:
-            return { 'error': f'data check failed: {v}' }
-        rez = await self._alertData.undeclareAlert(domain, name, doReport=False)
-        if rez is not None:
-            errMsg = f'{gAssertMsg} updateAlert: domain={domain} name={name} found in UI, but undeclareAlert failed'
-            _LOGGER.error(errMsg)
-            return {'error': errMsg }
-        newEnt = await self._alertData.declareAlert(preppedConfig, doReport=False)
+        # with no alert left over
+        preppedConfig = await self.validateAlert(acfg)
+        if isinstance(preppedConfig, str):
+            return { 'error': preppedConfig }
+
+        (storeIdx, listIdx, errMsg) = await self.deleteAlertInt(uiId, 'update')
+        if errMsg:
+            return {'error': errMsg}
+        
+        if isAlert2Internal(preppedConfig):
+            newEnt = await self.declareInternalAlert(preppedConfig, doReport=False)
+        else:
+            newEnt = await self._alertData.declareAlert(preppedConfig, doReport=False, fromUI=True)
 
         # When updating a generator, we may be changing the set of alerts generated.
         # This could leave orphan entity registry entries.
@@ -771,84 +889,59 @@ class UiMgr:
             return {'error': newEnt}
 
         _LOGGER.info(f'Lifecycle updated alert {newEnt.entity_id} via UI')
-        self.entities[entIndex] = newEnt
-        self.data['config']['alerts'][dataIndex] = acfg
+        self.storeData['alertInfos'][storeIdx]['cfg'] = acfg
+        self.alerts[listIdx]['ent'] = newEnt
+        
         self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
-
         return {}
 
-    def alertCreated(self, domain, name):
-        self.displayMsgWsMgr.reloadSingleIfExists(domain, name)
-    
-    async def deleteAlert(self, acfg):
-        domain = acfg['domain']
-        name = acfg['name']
-        if 'generator_name' in acfg:
-            domain = GENERATOR_DOMAIN
-            name = acfg['generator_name']
-            
-        entIndex = next((i for i, item in enumerate(self.entities) if item.alDomain == domain and item.alName == name), -1)
-        failedEntIndex = next((i for i, item in enumerate(self.failedEnts) if item['domain'] == domain and item['name'] == name), -1)
-        if entIndex == -1 and failedEntIndex == -1:
-            return { 'error': f'can not find existing UI-created alert with domain={domain} and name={name}' }
-        dataIndex = self.getDataIndex(domain, name)
-        if dataIndex == -1:
-            errMsg = f'{gAssertMsg} deleteAlert: domain={domain} and name={name} in self.entities but not in self.data config'
-            _LOGGER.error(errMsg)
-            return { 'error': errMsg }
+    async def deleteAlert(self, uiId):
+        (storeIdx, listIdx, errMsg) = await self.deleteAlertInt(uiId, 'delete')
+        if errMsg:
+            return {'error': errMsg}
 
-        if entIndex >= 0:
-            rez = await self._alertData.undeclareAlert(domain, name, doReport=False, removeFromRegistry=True)
-            if rez is not None:
-                errMsg = f'{gAssertMsg} deleteAlert: domain={domain} name={name} found in UI, but undeclareAlert failed'
-                _LOGGER.error(errMsg)
-                return {'error': errMsg}
-            eid = self.entities[entIndex].entity_id
-            del self.entities[entIndex]
-            _LOGGER.info(f'Lifecycle deleted alert {eid} via UI')
-        if failedEntIndex >= 0:
-            bEnt = self.failedEnts[failedEntIndex]
-            del self.failedEnts[failedEntIndex]
-            _LOGGER.info(f'Lifecycle deleted invalid alert domain={bEnt["domain"]} name={bEnt["name"]} via UI')
-
-        del self.data['config']['alerts'][dataIndex]
-        if not self.data['config']['alerts']:
-            del self.data['config']['alerts']
+        ename = getAlertName(self.alerts[listIdx])
+        del self.storeData['alertInfos'][storeIdx]
+        del self.alerts[listIdx]
         self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
+        _LOGGER.info(f'Lifecycle deleted alert {ename} via UI')
         return {}
 
     def _data_to_save(self):
-        return self.data
+        return self.storeData
 
     def search(self, sTxt):
         terms = sTxt.lower().split()
         results = []
-        for ent in self.entities:
-            anid = ent.entity_id.lower()
+        for ainfo in self.alerts:
+            acfg = ainfo['info']['cfg']
+            #aname = getAlertName(ainfo)
+            ent = ainfo['ent']
+            if ent == None:
+                # Ent falied to load
+                testEntId = getPreferredEntityId(acfg['domain'], acfg['name']).lower()
+            #elif ent.entity_id == None:
+            #    if not isinstance(ent, AlertGenerator): # must be anonymous generator
+            #        report(DOMAIN, 'error', f'{gAssertMsg} in search, ent of class {ent.__class__} missing entity_id')
+            #    testEntId = getPreferredEntityId(ent.alDomain, ent.alName)
+            else:
+                testEntId = ent.entity_id.lower()
+            
             ok = True
             for term in terms:
-                if term not in anid:
+                if term not in testEntId:
                     ok = False
                     break
             if ok:
-                results.append({ 'id': ent.entity_id, 'domain': ent.alDomain, 'name': ent.alName })
-        # Include entities that failed to load
-        for fEnt in self.failedEnts:
-            fakeEntId = 'alert2.' + entNameFromDN(fEnt['domain'], fEnt['name']).lower()
-            ok = True
-            for term in terms:
-                if term not in fakeEntId:
-                    ok = False
-                    break
-            if ok:
-                results.append({ 'id': fakeEntId, 'domain': fEnt['domain'], 'name': fEnt['name'], 'failedToLoad': True })
+                if ent == None:
+                    results.append({ 'uiId': ainfo['info']['uiId'], 'id': testEntId, 'domain': acfg['domain'], 'name': acfg['name'], 'failedToLoad': True })
+                else:
+                    results.append({ 'uiId': ainfo['info']['uiId'], 'id': testEntId, 'domain': ent.alDomain, 'name': ent.alName })
         return results
 
     def setOneTime(self, akey):
-        if not 'oneTime' in self.data:
-            self.data['oneTime'] = {}
-        if akey in self.data['oneTime']:
+        if akey in self.storeData['oneTime']:
             return False
-        self.data['oneTime'][akey] = dt.now().isoformat()
+        self.storeData['oneTime'][akey] = dt.now().isoformat()
         self._store.async_delay_save(self._data_to_save, SAVE_DELAY)
         return True

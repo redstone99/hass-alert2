@@ -18,6 +18,12 @@ EVENT_ALERT2_OFF = 'alert2_alert_off'
 EVENT_ALERT2_ACK = 'alert2_alert_ack'
 EVENT_ALERT2_UNACK = 'alert2_alert_unack'
 shutting_down = False
+def isAlert2Internal(obj):
+    try:
+        rez = 'domain' in obj and obj['domain'] == DOMAIN and 'name' in obj and obj['name'] in ['error', 'warning','global_exception']
+    except TypeError:
+        return False
+    return rez
 
 class PersistantNotificationHelper:
     Separate = 'separate'
@@ -25,7 +31,7 @@ class PersistantNotificationHelper:
     CollapseAndDismiss = 'collapse_and_dismiss'
     def genNotificationId(alEnt):
         return f'alert2-dn={alEnt.alDomain}-nm={alEnt.alName}'
-
+    
 #
 # report() - report that an event alert has fired.
 # 

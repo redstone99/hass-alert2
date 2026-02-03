@@ -625,7 +625,6 @@ def processSupersedes(cfgElem, svars):
         return (f'Supersedes variable has bad value: "{cfgElem}"', None)
         
 class AlertGenerator(AlertCommon, SensorEntity):
-    _attr_device_class = SensorDeviceClass.DATA_SIZE #'problem'
     #_attr_available = True  defaults to True
     # Pass name explicitly cuz if it's not in config, then __init__ will have created a fake name
     def __init__(self, hass, alertData, config, rawConfig, name):
@@ -635,9 +634,13 @@ class AlertGenerator(AlertCommon, SensorEntity):
         self.config = config
         self.rawConfig = rawConfig
         self._attr_name = entNameFromDN(GENERATOR_DOMAIN, name)
+        self._attr_device_class = SensorDeviceClass.DATA_SIZE #'problem'
         self.alDomain = GENERATOR_DOMAIN
         self.alName = name
-        self._attr_unique_id = f'generator-n={self.alName}'
+        if 'generator_name' in self.config:
+            self._attr_unique_id = f'generator-n={self.alName}'
+        else:
+            pass # anonymous generator. No unique_id, since the name may change each time we load it.
         self._generator_template = self.config['generator']
         self.tracker = Tracker(self, 'generator', hass, alertData,
                                [ { 'fieldName': 'generator', 'type': Tracker.Type.List,
@@ -792,12 +795,12 @@ class AlertGenerator(AlertCommon, SensorEntity):
                 #        break
                 _LOGGER.info(f'Generator {self.name} creating alert: {acfg} with vars {svars}')
                 ent = await self.alertData.declareAlert(acfg, genVars=svars)
-                if ent is None:
-                    sawError = True
-                    break
-                else:
+                if isinstance(ent, Entity):
                     self.idEntityMap[entId] = ent
                     needWrite = True
+                else:
+                    sawError = True
+                    break
 
         if not sawError:
             # If we saw an error while processing templates, we might be missing entities
@@ -824,7 +827,7 @@ class AlertGenerator(AlertCommon, SensorEntity):
                     del self.idEntityMap[aId]
                     needWrite = True
         # If anonymous generator, don't try writing state
-        if needWrite and 'generator_name' in self.config:
+        if needWrite: # and 'generator_name' in self.config:
             self.async_write_ha_state()
 
 
@@ -885,7 +888,6 @@ def notifierExists(hass, anotifier):
 #    Shutdown is done by async_will_remove_from_hass
 
 class AlertBase(AlertCommon, RestoreEntity):
-    _attr_device_class = BinarySensorDeviceClass.PROBLEM #'problem'
     def __init__(
             self,
             hass: HomeAssistant,
@@ -901,6 +903,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         self.alDomain = config['domain']
         self.alName = config['name']
         self._attr_name = entNameFromDN(self.alDomain, self.alName)
+        self._attr_device_class = BinarySensorDeviceClass.PROBLEM #'problem'
 
         self._attr_unique_id = f'd={self.alDomain}-n={self.alName}'
         

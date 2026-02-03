@@ -240,10 +240,10 @@ def jDomain(afield):
 def jDictTemplate(aval):
     if isinstance(aval, dict):
         return cv.template_complex(aval) # recurses through dict
-    elif isinstance(aval, str):
+    elif isinstance(aval, str) and template_helper.is_template_string(aval):
         return cv.template(aval)  # hopefully produces a dict
     else:
-        raise vol.Invalid(f'"data" field must be either a dict or a string the evaluates to a dict')
+        raise vol.Invalid(f'"data" field must be either a dict or a string template that evaluates to a dict')
 
 DEFAULTS_SCHEMA = vol.Schema({
     vol.Optional('notifier'): vol.Any(cv.template, jstringList),
@@ -310,6 +310,7 @@ UNHANDLED_EXCEPTION_DICT = {
 }
 
 # So if 'generator' is present, then 'name' is a template. Otherwise it's a string.
+# This output useless error messages if there are extra parameters :(
 SINGLE_TRACKED_SCHEMA = vol.Any(
     SINGLE_TRACKED_SCHEMA_PRE_NAME.extend(ALERT2_GLOBAL_DICT),
     SINGLE_TRACKED_SCHEMA_PRE_NAME.extend(UNHANDLED_EXCEPTION_DICT),
