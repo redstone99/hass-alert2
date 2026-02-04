@@ -1575,7 +1575,7 @@ async def test_condition(hass, service_calls):
     assert service_calls.isEmpty()
 
     gad = hass.data[DOMAIN]
-    assert gad.tracked['test']['t30b']._friendly_name == 'happyt30b'
+    assert hass.states.get('alert2.test_t30b').attributes['friendly_name'] == 'happyt30b'
     assert gad.alerts['test']['t31']._condition_template.template == 'off'
     assert gad.tracked['test']['t32']._condition_template.template == 'no'
     assert gad.alerts['test']['t33']._condition_template.template == '{{ states("foo.bar") }}'
@@ -2878,7 +2878,7 @@ async def test_late_state(hass, service_calls):
     t70 = gad.alerts['test']['t70']
     assert re.search('states."sensor.ick"', t70._condition_template.template)
     
-async def test_friendlyname(hass, service_calls):
+async def test_friendly_name(hass, service_calls):
     cfg = { 'alert2' : { 'alerts' : [
         { 'domain': 'test', 'name': 't71', 'friendly_name': '{{ states("sensor.ick") }}', 'condition': 'off' },
         ]}}
@@ -3126,14 +3126,14 @@ async def test_bad2(hass, service_calls):
     service_calls.popNotifySearch('persistent_notification', 't25', 'rather than a float')
     service_calls.popNotifySearch('persistent_notification', 't26', 'template value should be a string')
     service_calls.popNotifySearch('persistent_notification', 't27', 'template value should be a string')
-    service_calls.popNotifySearch('persistent_notification', 't29', 'is not .* iterable')
+    service_calls.popNotifySearch('persistent_notification', 't29', 'is not .*iterable')
     service_calls.popNotifySearch('persistent_notification', 't30', 'expected a dictionary')
-    service_calls.popNotifySearch('persistent_notification', 't31', 'is not .* iterable')
+    service_calls.popNotifySearch('persistent_notification', 't31', 'is not .*iterable')
     service_calls.popNotifySearch('persistent_notification', 't32', 'required key not provided')
-    service_calls.popNotifySearch('persistent_notification', 't33', 'is not .* iterable')
-    service_calls.popNotifySearch('persistent_notification', 't34', 'is not .* iterable')
+    service_calls.popNotifySearch('persistent_notification', 't33', 'is not .*iterable')
+    service_calls.popNotifySearch('persistent_notification', 't34', 'is not .*iterable')
     service_calls.popNotifySearch('persistent_notification', 't35', 'expected a dictionary')
-    service_calls.popNotifySearch('persistent_notification', 't36', 'is not .* iterable')
+    service_calls.popNotifySearch('persistent_notification', 't36', 'is not .*iterable')
     service_calls.popNotifySearch('persistent_notification', 't37', 'required key not provided')
     #_LOGGER.warning(service_calls.allCalls)
     gad = hass.data[DOMAIN]

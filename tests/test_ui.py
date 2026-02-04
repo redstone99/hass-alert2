@@ -954,7 +954,7 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger', 'txt': "[{'trigger':'template','value_template':'{{ true }}'}]" })
     assert rez == { 'rez': [{'platform':'template','value_template':'{{ true }}'}] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger', 'txt': "yes" })
-    assert re.search("'bool' is not .* iterable", rez['error'])
+    assert re.search("'bool' is not .*iterable", rez['error'])
 
     # trigger_on
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_on', 'txt': "[{'platform':'state','entity_id':'sensor.zz'}]" })
@@ -962,7 +962,7 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_on', 'txt': "[{'trigger':'template','value_template':'{{ true }}'}]" })
     assert rez == { 'rez': [{'platform':'template','value_template':'{{ true }}'}] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_on', 'txt': "yes" })
-    assert re.search("'bool' is not .* iterable", rez['error'])
+    assert re.search("'bool' is not .*iterable", rez['error'])
     
     # trigger_off
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_off', 'txt': "[{'platform':'state','entity_id':'sensor.zz'}]" })
@@ -970,7 +970,7 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_off', 'txt': "[{'trigger':'template','value_template':'{{ true }}'}]" })
     assert rez == { 'rez': [{'platform':'template','value_template':'{{ true }}'}] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger_off', 'txt': "yes" })
-    assert re.search("'bool' is not .* iterable", rez['error'])
+    assert re.search("'bool' is not .*iterable", rez['error'])
     
     # condition
     rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': 'on' })
@@ -2060,9 +2060,9 @@ async def test_internal(hass, service_calls, hass_client, hass_storage, monkeypa
                   })
     hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
-    assert gad.tracked['alert2']['error']._friendly_name == 'f2'
-    assert gad.tracked['alert2']['warning']._friendly_name == 'f1'
-    assert gad.tracked['alert2']['global_exception']._friendly_name == 'f3'
+    assert hass.states.get('alert2.alert2_error').attributes['friendly_name'] == 'f2'
+    assert hass.states.get('alert2.alert2_warning').attributes['friendly_name'] == 'f1'
+    assert hass.states.get('alert2.alert2_global_exception').attributes['friendly_name'] == 'f3'
 
     rez = await tpost("/api/alert2/manageAlert", {'search': { 'str': '' } } )
     assert rez == { 'results': [
@@ -2080,15 +2080,15 @@ async def test_internal(hass, service_calls, hass_client, hass_storage, monkeypa
         'domain':'alert2', 'name':'warning', 'friendly_name': 'f1a' } }})
     assert rez == {}
     
-    assert gad.tracked['alert2']['warning']._friendly_name == 'f1'
+    assert hass.states.get('alert2.alert2_warning').attributes['friendly_name'] == 'f1'
     await do_reload(cfg, hass, monkeypatch)
-    assert gad.tracked['alert2']['warning']._friendly_name == 'f1a'
+    assert hass.states.get('alert2.alert2_warning').attributes['friendly_name'] == 'f1a'
     
     # Delete tracked
     rez = await tpost("/api/alert2/manageAlert", {'delete': { 'uiId':1 } })
     assert rez == {}
     await do_reload(cfg, hass, monkeypatch)
-    assert gad.tracked['alert2']['warning']._friendly_name == None
+    assert hass.states.get('alert2.alert2_warning').attributes['friendly_name'] == 'alert2_warning'
 
     # Try create duplicate
     rez = await tpost("/api/alert2/manageAlert", {'create': {
@@ -2100,7 +2100,7 @@ async def test_internal(hass, service_calls, hass_client, hass_storage, monkeypa
         'domain':'alert2', 'name':'warning', 'friendly_name': 'f1b' } })
     assert rez == { 'uiId': 4 }
     await do_reload(cfg, hass, monkeypatch)
-    assert gad.tracked['alert2']['warning']._friendly_name == 'f1b'
+    assert hass.states.get('alert2.alert2_warning').attributes['friendly_name'] == 'f1b'
     
 async def test_internal2(hass, service_calls, hass_storage, hass_client):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [ ]}}
@@ -2314,11 +2314,11 @@ async def test_anon_gen(hass, service_calls, hass_storage, hass_client):
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
     assert set(gad.alerts['d-d'].keys()) == set([ 'n2-y', 'n1-z'])
 
-    gad.alerts['d-d']['n2-y']._friendly_name == None
+    assert hass.states.get('alert2.d_d_n2_y').attributes['friendly_name'] == 'd-d_n2-y'
     anonCfg['friendly_name'] = 'ff'
     rez = await tpost("/api/alert2/manageAlert", {'update': {'uiId':2, 'cfg':anonCfg }})
     assert rez == {}
-    gad.alerts['d-d']['n2-y']._friendly_name == 'ff'
+    assert hass.states.get('alert2.d_d_n2_y').attributes['friendly_name'] == 'ff'
     assert service_calls.isEmpty()
 
     rez = await tpost("/api/alert2/manageAlert", {'search': { 'str': '' } } )
