@@ -633,14 +633,19 @@ class AlertGenerator(AlertCommon, SensorEntity):
         # super().__init__()
         self.config = config
         self.rawConfig = rawConfig
-        self._attr_name = entNameFromDN(GENERATOR_DOMAIN, name)
-        self._attr_device_class = SensorDeviceClass.DATA_SIZE #'problem'
         self.alDomain = GENERATOR_DOMAIN
         self.alName = name
         if 'generator_name' in self.config:
             self._attr_unique_id = f'generator-n={self.alName}'
         else:
             pass # anonymous generator. No unique_id, since the name may change each time we load it.
+        # If _attr_unique_id is not set, then I think helpers/entity_platform::_async_add_entity
+        # will raise an error if we specify a dup entity_id. However, we check ourselves for dups internally before adding
+        # so I think we should be fine.
+        #self.entity_id = getPreferredEntityId(self.alDomain, self.alName)
+        self._attr_name = entNameFromDN(self.alDomain, self.alName)
+        
+        self._attr_device_class = SensorDeviceClass.DATA_SIZE #'problem'
         self._generator_template = self.config['generator']
         self.tracker = Tracker(self, 'generator', hass, alertData,
                                [ { 'fieldName': 'generator', 'type': Tracker.Type.List,
@@ -902,10 +907,12 @@ class AlertBase(AlertCommon, RestoreEntity):
         self.config = config
         self.alDomain = config['domain']
         self.alName = config['name']
-        self._attr_name = entNameFromDN(self.alDomain, self.alName)
-        self._attr_device_class = BinarySensorDeviceClass.PROBLEM #'problem'
-
         self._attr_unique_id = f'd={self.alDomain}-n={self.alName}'
+        # helpers/entity_platform::_async_add_entity may modify entity_id as necessary, since we're setting unique_id as well
+        self.entity_id = getPreferredEntityId(self.alDomain, self.alName)
+        self._attr_name = entNameFromDN(self.alDomain, self.alName)
+        
+        self._attr_device_class = BinarySensorDeviceClass.PROBLEM #'problem'
         
         # config stuff
         self._notifier_list_template = getField('notifier', config, defaultCfg)
@@ -936,7 +943,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             self.extraVariables = genVars
         else:
             self.extraVariables = None
-        self._friendly_name = None
+        #self._friendly_name = None
         self.friendlyNameTracker = None
         if 'friendly_name' in config:
             frn = config['friendly_name']
@@ -947,8 +954,7 @@ class AlertBase(AlertCommon, RestoreEntity):
                                                    [ { 'fieldName': 'friendly_name', 'type': Tracker.Type.Str,
                                                        'template': frn } ], self.friendly_name_update, self.extraVariables)
             else:
-                self._friendly_name = frn.template.strip()
-        # else _friendly_name is None
+                self._attr_name = frn.template.strip()
         if self._message_template is not None:
             self._message_template.hass = hass
         if self._ack_reminder_message_template is not None:
@@ -984,8 +990,10 @@ class AlertBase(AlertCommon, RestoreEntity):
 
         self.future_notification_info = None
     # This overrides helpers/entity.py:Entity version of this
-    def _friendly_name_internal(self) -> str | None:
-        return self._friendly_name or self.name
+    # NOTE - as of HA commit c6064f40d28 from 1/27/26, this function is no longer used.
+    # They switched to _cached_friendly_name
+    #def _friendly_name_internal(self) -> str | None:
+    #    return self._friendly_name or self.name
 
     async def startWatching(self):
         #await super().startWatching()  not in parent class
@@ -1064,8 +1072,12 @@ class AlertBase(AlertCommon, RestoreEntity):
             self.friendlyNameTracker.refresh()
     def friendly_name_update(self, results):
         newname = results[0]
-        if newname != self._friendly_name:
-            self._friendly_name = newname
+        if newname != self._attr_name:
+            self._attr_name = newname
+            # Hack based on HA internals in helpers/entity.py::
+            # HA commit c6064f40d28 from 1/27/26 removed the _friendly_name_internal() function
+            # so alternative hack is to set _cached_friendly_name ourselves.
+            #self._cached_friendly_name = (self.name, newname)
             self.async_write_ha_state()
                         
     @property
@@ -1080,7 +1092,6 @@ class AlertBase(AlertCommon, RestoreEntity):
             'last_ack_time': self.last_ack_time,
             'is_acked': self.is_acked(),
             'ack_required': self._ack_required,
-            #'friendly_name2': self._friendly_name, # Entity class defines "friendly_name" so we have to use something different.
             'fires_since_last_notify': self.fires_since_last_notify,
             'notified_max_on': self.notified_max_on,
             'notification_control': self.notification_control,
@@ -1438,10 +1449,10 @@ class AlertBase(AlertCommon, RestoreEntity):
            (reason == NotificationReason.ReminderToAck and self._ack_reminder_message_template is None) or \
            (reason == NotificationReason.ReminderOn and self._reminder_message_template is None):
             addedName = True
-            if self._friendly_name is None:
-                msg += f'Alert2 {self.name}'
+            if 'friendly_name' in self.config:
+                msg += self.name
             else:
-                msg += self._friendly_name
+                msg += f'Alert2 {self.name}'
 
         if len(message) > 0:
             if addedName:

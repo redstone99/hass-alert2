@@ -60,7 +60,6 @@ from .util import (
     global_tasks,
     gAssertMsg,
     isAlert2Internal,
-    #getDNToUse
 )
 
 # Need to define CONFIG_SCHEMA here to make hacs github validator happy
@@ -784,16 +783,6 @@ class Alert2Data:
     async def loadAlertBlock(self, aRawCfg):
         fromUI = False # TODO - remove as arg to declareAlert(), below
         # TODO - I think this func no longer needs to return anything. Can simplify.
-        #failedEnts = []
-        #entities = []
-        #def addToQueue(obj, newEnt):
-        #    if isinstance(newEnt, Entity):
-        #        entities.append(newEnt)
-        #    elif newEnt is True:
-        #        pass
-        #    else:  # newEnt is False or errMsg
-        #        (domain, name) = getDNToUse(obj, assumeOK=False)
-        #        failedEnts.append({ 'domain': domain, 'name': name })
         numCreated = 0
         def note(newEnt):
             nonlocal numCreated
@@ -846,7 +835,6 @@ class Alert2Data:
                     return True
                 if 'generator' in aCfg:
                     newEnt = self.declareGenerator(aCfg, rawConfig=obj)
-                    #addGenerator = 'generator_name' in aCfg
                 else:
                     newEnt = self.declareCondition(aCfg, genVars)
         except (vol.Invalid, HomeAssistantError) as v:
@@ -861,12 +849,7 @@ class Alert2Data:
         #_LOGGER.info(f'declareAlert: {isBulk} {newEnt}')
         if isinstance(newEnt, Entity):
             if isinstance(newEnt, AlertGenerator):
-                #if addGenerator:
                 await self.sensorComponent.async_add_entities([newEnt])
-                #else:
-                #    # If ent is added for real, then addedToHassDone is eventually called.
-                #    # Otherwise we call the internal housekeeping explicitly here
-                #    await newEnt.noteAddToHassDone()
             else:
                 await self.component.async_add_entities([newEnt])
             msg = f'Lifecycle created {"tracked " if isTracked else ""} alert {newEnt.entity_id}' \
@@ -876,7 +859,6 @@ class Alert2Data:
             else:
                 _LOGGER.info(msg)
             # notify uiMgr so can update display_msg watcher if appropriate
-            #_LOGGER.warning(f'will call alertCreated: {"".join(traceback.format_stack())}')
             self.uiMgr.alertCreated(newEnt.alDomain, newEnt.alName)
         else:
             if not isinstance(newEnt, str):
