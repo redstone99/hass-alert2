@@ -765,7 +765,6 @@ class Alert2Data:
             else:
                 report(DOMAIN, 'error', msg)
 
-        #(ents, failedEnts) = await self.loadAlertBlock(self._rawYamlConfig)
         numCreated = await self.loadAlertBlock(self._rawYamlConfig)
         _LOGGER.info(f'Lifecycle created {numCreated} alerts from YAML config')
         await self.uiMgr.declareAlerts()

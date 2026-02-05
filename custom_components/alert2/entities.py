@@ -637,11 +637,10 @@ class AlertGenerator(AlertCommon, SensorEntity):
         self.alName = name
         if 'generator_name' in self.config:
             self._attr_unique_id = f'generator-n={self.alName}'
-        else:
-            pass # anonymous generator. No unique_id, since the name may change each time we load it.
-        # If _attr_unique_id is not set, then I think helpers/entity_platform::_async_add_entity
-        # will raise an error if we specify a dup entity_id. However, we check ourselves for dups internally before adding
-        # so I think we should be fine.
+        # else anonymous generator. No unique_id, since the name may change each time we load it.
+        
+        # We don't need a friendly_name and entity_id will be sensor.*, so let HA pick the entity_id
+        # base on self.name
         #self.entity_id = getPreferredEntityId(self.alDomain, self.alName)
         self._attr_name = entNameFromDN(self.alDomain, self.alName)
         
@@ -910,7 +909,7 @@ class AlertBase(AlertCommon, RestoreEntity):
         self._attr_unique_id = f'd={self.alDomain}-n={self.alName}'
         # helpers/entity_platform::_async_add_entity may modify entity_id as necessary, since we're setting unique_id as well
         self.entity_id = getPreferredEntityId(self.alDomain, self.alName)
-        self._attr_name = entNameFromDN(self.alDomain, self.alName)
+        self._attr_name = entNameFromDN(self.alDomain, self.alName) # will overwrite with friendly_name if specified
         
         self._attr_device_class = BinarySensorDeviceClass.PROBLEM #'problem'
         
@@ -1074,10 +1073,6 @@ class AlertBase(AlertCommon, RestoreEntity):
         newname = results[0]
         if newname != self._attr_name:
             self._attr_name = newname
-            # Hack based on HA internals in helpers/entity.py::
-            # HA commit c6064f40d28 from 1/27/26 removed the _friendly_name_internal() function
-            # so alternative hack is to set _cached_friendly_name ourselves.
-            #self._cached_friendly_name = (self.name, newname)
             self.async_write_ha_state()
                         
     @property

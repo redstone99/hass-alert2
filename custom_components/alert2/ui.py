@@ -40,10 +40,7 @@ from homeassistant.components.websocket_api import (decorators, async_register_c
 _LOGGER = logging.getLogger(__name__)
 
 def prepLoadTopConfig(uiMgr):
-    # Extract dict with just top config keys from data
-    #rawUiTopConfig = dict(uiMgr.storeData['topLevelOptions']) # shallow copy
     uiCfg = uiMgr.getRawTopConfig()
-    #rawUiTopConfig = { key: uiCfg[key] for key in uiMgr._alertData.rawYamlBaseTopConfig.keys() if key in uiCfg }
     resp = { 'rawYaml': uiMgr._alertData.rawYamlBaseTopConfig,
              'raw':     uiMgr._alertData.rawTopConfig,
              'rawUi': uiCfg }
@@ -639,13 +636,16 @@ class MigratableStore(Store):
                         'topLevelOptions': topLevelOptions,
                         'oneTime': data['oneTime'] if 'oneTime' in data else {},
                        }
-            _LOGGER.info(f'alertInfos = {alertInfos}')
+            #_LOGGER.info(f'alertInfos = {alertInfos}')
             return newData
         else:
             assert old_version == 2, f'{gAssertMsg} UI alert store has unexpected version {old_version}'
             assert isinstance(data, dict)
             return data
 
+# Alert2 internal alerts (eg error, warning, etc) are declared in __init__.py.  In the UI, the entries modifying them
+# do not result in actual entities, since those ents already exist via __init__.
+# So instead we create a fake ent with just a bit of bookkeeping fields
 class InternalAlertPlaceholder(Entity):
     def __init__(self, domain, name):
         super().__init__()
