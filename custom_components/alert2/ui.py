@@ -605,7 +605,14 @@ def getAlertName(ainfo):
         domain = acfg['domain'] if 'domain' in acfg else '[missing domain]'
         name = acfg['name'] if 'name' in acfg else '[missing name]'
     return f'domain={domain} name={name}'
-    
+
+
+STORAGE_SCHEMA = vol.Schema({
+    vol.Required('nextAlertUiId'): int,
+    vol.Required('defaults'): dict,
+    vol.Required('alertInfos'): list,
+    vol.Required('topLevelOptions'): dict,
+    vol.Required('oneTime'): dict })
 STORAGE_KEY = f"{DOMAIN}.storage"
 STORAGE_VERSION = 2
 SAVE_DELAY = 10
@@ -613,6 +620,7 @@ SAVE_DELAY = 10
 # "data" is a dict de-serialized from JSON
 class MigratableStore(Store):
     async def _async_migrate_func(self, old_version, data: dict):
+        _LOGGER.warning(f'_async_migrate_func {old_version} from {data}')
         if old_version == 1:
             # Storage was { 'config': { defaults, alerts, tracked } }
             # Now we switch to
@@ -622,20 +630,35 @@ class MigratableStore(Store):
             #   }
             nextUiId = 1
             alertInfos = []
-            if 'alerts' in data['config']:
-                for acfg in data['config']['alerts']:
-                    alertInfos.append({ 'uiId': nextUiId, 'cfg': copy.deepcopy(acfg) })
-                    nextUiId += 1
             topLevelOptions = {}
-            for fname in [ 'skip_internal_errors', 'notifier_startup_grace_secs', 'defer_startup_notifications' ]:
-                if fname in data:
-                    topLevelOptions[fname] = data[fname]
+            defaults = {}
+            oneTime = {}
+            if data is not None and isinstance(data, dict):
+                if 'config' in data and isinstance(data['config'], dict):
+                    if 'alerts' in data['config']:
+                        for acfg in data['config']['alerts']:
+                            alertInfos.append({ 'uiId': nextUiId, 'cfg': copy.deepcopy(acfg) })
+                            nextUiId += 1
+                    if 'defaults' in data['config']:
+                        defaults = data['config']['defaults']
+                    for fname in [ 'skip_internal_errors', 'notifier_startup_grace_secs', 'defer_startup_notifications' ]:
+                        if fname in data['config']:
+                            topLevelOptions[fname] = data['config'][fname]
+                if 'oneTime' in data:
+                    oneTime = data['oneTime']
             newData = { 'nextAlertUiId': nextUiId,
-                        'defaults': data['config']['defaults'] if 'defaults' in data['config'] else {},
+                        'defaults': defaults,
                         'alertInfos': alertInfos,
                         'topLevelOptions': topLevelOptions,
-                        'oneTime': data['oneTime'] if 'oneTime' in data else {},
+                        'oneTime': oneTime,
                        }
+            _LOGGER.warning(f'newData is {newData}')
+            try:
+                STORAGE_SCHEMA(newData)
+            except vol.Invalid as ex:
+                errMsg = f'migration in alert2 produced invalid schema: {ex} from {newData}'
+                _LOGGER.error(errMsg)
+                raise Exception(errMsg)
             #_LOGGER.info(f'alertInfos = {alertInfos}')
             return newData
         else:
@@ -664,20 +687,31 @@ class UiMgr:
             hass.http.register_view(aview)
         self._store = MigratableStore(hass, STORAGE_VERSION, STORAGE_KEY)
         self.storeData = None
+        self.storeFatalErr = False
         self.alerts = [] # { ent (may be None), info }
         self.displayMsgWsMgr = DisplayMsgSocketMgr(hass, alertData)
         
     async def startup(self):
         # Store handles the case where there may be a write pending
         self.storeData = None # reset in case load throw exception
-        self.storeData = await self._store.async_load()
-        #_LOGGER.warning(f'foo storeData={self.storeData}')
+        try:
+            self.storeData = await self._store.async_load()
+        except Exception as ex:
+            return str(ex)
+        defaultData = { 'nextAlertUiId': 1,
+                        'defaults': {},
+                        'alertInfos': [],
+                        'topLevelOptions': {},
+                        'oneTime': {} }
         if self.storeData is None:
-            self.storeData = { 'nextAlertUiId': 1,
-                               'defaults': {},
-                               'alertInfos': [],
-                               'topLevelOptions': {},
-                               'oneTime': {} }
+            self.storeData = defaultData
+        try:
+            STORAGE_SCHEMA(self.storeData)
+        except vol.Invalid as ex:
+            self.storeFatalErr = True
+            errMsg = f'UI loaded bad storage: {ex} from {self.storeData} ... {type(self.storeData)}'
+            self.storeData = defaultData
+            return errMsg
         self.alerts = [ {'ent': None, 'info': xx } for xx in self.storeData['alertInfos'] ]
         if self.storeData['alertInfos']:
             uids = [ aa['uiId'] for aa in self.storeData['alertInfos'] ]
@@ -687,7 +721,7 @@ class UiMgr:
                 self.storeData['nextAlertUiId'] = maxUid + 1
             if len(uids) != len(set(uids)):
                 report(DOMAIN, 'error', f'{gAssertMsg} ui load appears to be duplicate uiId: {uids}')
-                
+        return None
         
     def shutdown(self):
         #create_task(self._hass, DOMAIN, self.async_shutdown())
@@ -764,6 +798,8 @@ class UiMgr:
         _LOGGER.info(f'Lifecycle created {numSuccess} alerts from UI config')
         
     def saveTopConfig(self, topConfig):
+        if self.storeFatalErr:
+            return {'error': f'UI data store failed to load. Preventing updates to avoid overwriting' }
         try:
             preppedConfig = prepForValidation(topConfig)
         except vol.Invalid as v:
@@ -822,6 +858,8 @@ class UiMgr:
         self.displayMsgWsMgr.reloadSingleIfExists(domain, name)
     
     async def createAlert(self, acfg):
+        if self.storeFatalErr:
+            return {'error': f'UI data store failed to load. Preventing updates to avoid overwriting' }
         preppedConfig = await self.validateAlert(acfg)
         if isinstance(preppedConfig, str):
             return { 'error': preppedConfig }
@@ -846,6 +884,8 @@ class UiMgr:
         return { 'uiId': newInfo['uiId'] }
 
     async def deleteAlertInt(self, uiId, verb):
+        if self.storeFatalErr:
+            return {'error': f'UI data store failed to load. Preventing updates to avoid overwriting' }
         storeIdx = next((i for i, item in enumerate(self.storeData['alertInfos']) if (item['uiId'] == uiId)), -1)
         if storeIdx == -1:
             return (None, None, f'UI-created alert does not exist - can\'t {verb}')
@@ -866,6 +906,8 @@ class UiMgr:
         return (storeIdx, listIdx, None)
     
     async def updateAlert(self, uiId, acfg):
+        if self.storeFatalErr:
+            return {'error': f'UI data store failed to load. Preventing updates to avoid overwriting' }
         # Validate alert before call undeclareAlert so hopefully won't end up returning an error
         # with no alert left over
         preppedConfig = await self.validateAlert(acfg)
@@ -896,6 +938,8 @@ class UiMgr:
         return {}
 
     async def deleteAlert(self, uiId):
+        if self.storeFatalErr:
+            return {'error': f'UI data store failed to load. Preventing updates to avoid overwriting' }
         (storeIdx, listIdx, errMsg) = await self.deleteAlertInt(uiId, 'delete')
         if errMsg:
             return {'error': errMsg}
@@ -908,6 +952,8 @@ class UiMgr:
         return {}
 
     def _data_to_save(self):
+        if self.storeFatalErr:
+            raise Exception('UI data store failed to load. Preventing updates to avoid overwriting')
         return self.storeData
 
     def search(self, sTxt):

@@ -559,11 +559,10 @@ class Alert2Data:
         isFirstInit = (self.delayedNotifierMgr is None)
         if isFirstInit:
             self.uiMgr = UiMgr(self._hass, self)
-        try:
-            await self.uiMgr.startup() # could throw some json errors
-        except Exception as v:
-            _LOGGER.error(f'UI startup exception: {"".join(traceback.format_exception(v))}')
-            self.earlyErrors.append(f'UI config: {v}')
+        rez = await self.uiMgr.startup()
+        if rez is not None:
+            _LOGGER.error(f'UI startup exception: {rez}')
+            self.earlyErrors.append(rez)
         else:
             err = self.noteUiUpdate()
             if err:

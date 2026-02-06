@@ -112,7 +112,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
 
     # Test top-level flags were set
-    assert hass.states.get('alert2.error') == None # skip_internal_errors
+    assert hass.states.get('alert2.alert2_error') == None # skip_internal_errors
     cfga = cfg['alert2']
     assert gad.delayedNotifierMgr.notifier_startup_grace_secs == cfga['notifier_startup_grace_secs']
     assert gad.delayedNotifierMgr.defer_startup_notifications == cfga['defer_startup_notifications']
@@ -637,6 +637,7 @@ async def test_migrate3(hass, service_calls, hass_storage, hass_client, monkeypa
                                        'data': { 'config': uiCfg } }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
     assert gad.alerts['d']['t1']._supersede_debounce_secs == 6
+    assert hass.states.get('alert2.alert2_error') is not None 
 # UI with single top level
 async def test_migrate4(hass, service_calls, hass_storage, hass_client, monkeypatch):
     cfg = { 'alert2' : {
@@ -650,7 +651,7 @@ async def test_migrate4(hass, service_calls, hass_storage, hass_client, monkeypa
     hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
                                        'data': { 'config': uiCfg } }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
-    assert hass.states.get('alert2.error') == None # skip_internal_errors
+    assert hass.states.get('alert2.alert2_error') == None # skip_internal_errors
 # Bit of everything
 async def test_migrate5(hass, service_calls, hass_storage, hass_client, monkeypatch):
     await setAndWait(hass, "sensor.a", 'off')
@@ -670,7 +671,7 @@ async def test_migrate5(hass, service_calls, hass_storage, hass_client, monkeypa
     hass_storage['alert2.storage'] = { 'version': 1, 'minor_version': 1, 'key': 'alert2.storage',
                                        'data': uiCfg }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
-    assert hass.states.get('alert2.error') == None # skip_internal_errors
+    assert hass.states.get('alert2.alert2_error') == None # skip_internal_errors
     assert gad.alerts['d']['t1']._supersede_debounce_secs == 6
 
     # No warning about using clear_notification without setting annotate_messages to False
@@ -2336,3 +2337,33 @@ async def test_anon_gen(hass, service_calls, hass_storage, hass_client):
     assert set(gad.alerts['d-d'].keys()) == set([ 'n1-z'])
     
 #and test that anon generators list generated ents in UI    
+
+async def test_bad_store(hass, service_calls, hass_storage, hass_client,  monkeypatch):
+    cfg = { 'alert2' : { 'defaults': {    }, 'alerts' : []}}
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': 'foobar' }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg, noErrors=False)
+    service_calls.popNotifyEmpty('persistent_notification', 'loaded bad storage.*expected a dict.*from foobar')
+
+    rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'t1', 'condition': "no" } })
+    assert re.search('Preventing updates', rez['error'])
+    assert service_calls.isEmpty()
+    rez = await tpost("/api/alert2/manageAlert", {'delete': { 'uiId': 1 } })
+    assert re.search('Preventing updates', rez['error'])
+    assert service_calls.isEmpty()
+
+async def test_bad_store2(hass, service_calls, hass_storage, hass_client,  monkeypatch):
+    cfg = { 'alert2' : { 'defaults': {    }, 'alerts' : []}}
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': None }
+    (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg)
+
+    rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'t1', 'condition': "no" } })
+    assert rez == { 'uiId': 1 }
+    assert service_calls.isEmpty()
+
+async def test_bad_store3(hass, service_calls, hass_storage, hass_client,  monkeypatch):
+    cfg = { 'alert2' : { 'defaults': {    }, 'alerts' : []}}
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': { 'x': 3 } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'loaded bad storage.*extra keys not allowed')
