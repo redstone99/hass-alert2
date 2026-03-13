@@ -255,7 +255,9 @@ If you want to completely disable these internal alerts, you can set `skip_inter
 
 ## Configuration
 
-Alert configuration is done through the `alert2:` section of your `configuration.yaml` file.  There are three subsections: `defaults`, `alerts`, and  `tracked`.
+Alert configuration is done through the `alert2:` section of your `configuration.yaml` file or via the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui). There are examples below and also in [Alert2 Recipes](Recipes.md).
+
+There are three subsections: `defaults`, `alerts`, and  `tracked`. If using the UI, config is done via the Alert2 Manager lovelace card.
 
 We recommend that your config specify at least the following parameters:
 
@@ -723,6 +725,50 @@ As described above in `early_start`, alerts by default don't start being monitor
 If you have high-priority alerts, you might consider setting `notifier` to be a high-priority notifier and `summary_notifier` to be a low-priority notifier.  And set `priority` to `high` or `medium` as well to make them stand out in the Alert2 UI Overview card.
 
 Also, alert2 entities are built on `RestoreEntity`, which backs itself up every 15 minutes. This means, alert firing may not be remembered across HA restarts if the alert fired within 15 minutes of HA restarting.
+
+### Migrating from Alert
+
+Here is an example of converting an old Alert-style config to Alert2. It shows many of the common options. You may find you don't need to set the `message` and `done_message` fields in some of your alerts since the default messaging in Alert2 conveys the alert name and whether it's turning on or off.
+
+Old Alert:
+
+````yaml
+ garage_door:
+   name: The Garage Door is open
+   title: "[HA] Garage Door alert"
+   message: The Garage Door is still open
+   done_message: The Garage Door is now closed
+   entity_id: cover.garage_door
+   state: "open"
+   repeat: # first notification after 30', then 60', then every 2h
+     - 30
+     - 60
+     - 120
+   can_acknowledge: true
+   skip_first: true
+   notifiers:
+     - telegram_me
+     - telegram_her
+     - email_me
+````
+
+Converted to Alert2:
+
+````yaml
+ alerts:
+    - domain: Garage Door
+      name: Open for too long
+      title: "[HA] Garage Door"
+      message: The door is still open
+      done_message: The door is now closed
+      condition: "{{ states('cover.garage_door') == 'open' }}"
+      delay_on_secs: 600 #first notif delayed for this  many secs
+      reminder_frequency_mins: [30, 60, 120]
+      notifier: [notify.telegram_me, notify.telgram_her, notify.email_me]
+````
+
+And note that Ack/Snooze can be managed via the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) Overview card.
+
 
 ## Generator patterns
 
