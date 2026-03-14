@@ -4773,3 +4773,33 @@ async def test_exception2(hass, service_calls, monkeypatch):
     alert2.create_task(hass, 'foof', gdie())
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
+
+async def test_err_trigger(hass, service_calls):
+    # Set up HA declaring a single alert that triggers on system log error messages
+    # with the text "badbad" in it, and set Ha to fire events when the system logs messages.
+    cfg = { 'alert2' : { 'alerts': [
+        { 'domain': 'd', 'name': 'n',
+          'condition': '{{ "badbad" in trigger.event.data.message[0] }}',
+          'message': '{% set msg = trigger.event.data.message[0] %} logmsg={{msg}}',
+          'trigger': [ { 'platform': 'event', 'event_type': 'system_log_event', 'event_data': { 'level': 'ERROR' } } ],
+          } ] },
+            'system_log': { 'fire_event': True }, }
+    assert await async_setup_component(hass, 'system_log', cfg)
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    # A logged error that does not have "badbad" in it should not trigger the alert
+    _LOGGER.error('foo')
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.25) # Event triggerings seem to not be gated by async_block_till_done(), so wait extra.
+    assert service_calls.isEmpty()
+
+    # A logged error with "badbad" should fire the alert with a message including the
+    # log message text.
+    _LOGGER.error('badbad-extra')
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.25)
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 d_n: logmsg=badbad-extra')
+    assert service_calls.isEmpty()
