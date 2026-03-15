@@ -156,6 +156,16 @@ def prepStrConfigField(fname, tval, doReport=True):
         return tval
     
 dummyTriggerDict = { 'trigger': 'homeassistant', 'event': 'start' }
+
+class FakeTrigger:
+    def __init__(self):
+        self.__accessed__ = False
+    def __getattr__(self, name):
+        self.__accessed__ = True
+        raise AttributeError(f'Trigger fff has no attribute "{name}"')
+    def __repr__(self):
+        self.__accessed__ = True
+        return 'A FakeTrigger object'
     
 class RenderValueView(HomeAssistantView):
     def __init__(self, uimgr):
@@ -176,6 +186,7 @@ class RenderValueView(HomeAssistantView):
         extraVars = data['extraVars'] if 'extraVars' in data and data['extraVars'] else {}
         simple = False
         addNotificationVars = False
+        addTriggerVar = False
 
         try:
             ttxt = prepStrConfigField(name, ttxt)
@@ -231,6 +242,7 @@ class RenderValueView(HomeAssistantView):
             elif name in ['message', 'done_message', 'reminder_message', 'ack_reminder_message' ]:
                 tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME({ name: ttxt})[name]
                 addNotificationVars = True
+                addTriggerVar = True
                 ttype = 'string'
             elif name in ['display_msg' ]:
                 tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME({ name: ttxt})[name]
@@ -276,9 +288,12 @@ class RenderValueView(HomeAssistantView):
                 except TypeError as v:
                     return self.json({ 'error': f'parse error: {str(v)}' })
                 simple = True
-            elif name in ['condition','condition_on','condition_off']:
-                #obj = { 'domain': 'foo', 'name': 'bar', 'trigger': dummyTriggerDict, name: ttxt }
-                #tval = SINGLE_ALERT_SCHEMA_EVENT(obj)[name]
+            elif name in ['condition']:
+                obj = { name: ttxt }
+                addTriggerVar = True
+                tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME(obj)[name]
+                ttype = 'bool'
+            elif name in ['condition_on','condition_off']:
                 obj = { name: ttxt }
                 tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME(obj)[name]
                 ttype = 'bool'
@@ -338,9 +353,12 @@ class RenderValueView(HomeAssistantView):
                 notificationVars['get_message'] = lambda : '[ message placeholder ]'
         else:
             notificationVars = extraVars
+        extraVars = dict(notificationVars) # shallow copy. Actually, can probably skip copy
+        if addTriggerVar:
+            extraVars['trigger'] = FakeTrigger()
         
         if ttype == 'notifier_list':
-            (notifiers, errors, debugInfo) = notifierTemplateToList(self.uiMgr._hass, notificationVars, tval, 'notifier')
+            (notifiers, errors, debugInfo) = notifierTemplateToList(self.uiMgr._hass, extraVars, tval, 'notifier')
             if errors:
                 errStr = ','.join(errors)
                 return self.json({ 'error': f'Notifier list error: {errStr}', 'rez': notifiers })
@@ -351,9 +369,15 @@ class RenderValueView(HomeAssistantView):
                 report(DOMAIN, 'error', msg)
                 return self.json({ 'error': f'Server error: {msg}' })
             try:
-                aresult = tval.async_render(parse_result=False, variables=notificationVars)
+                aresult = tval.async_render(parse_result=False, variables=extraVars)
             except TemplateError as err:
-                return self.json({ 'error': f'render error: {str(err)}' })
+                #_LOGGER.warning(f'got TemplateError: {err}')
+                if addTriggerVar and extraVars['trigger'].__accessed__:
+                    pass # handled below
+                else:
+                    return self.json({ 'error': f'render error: {str(err)}' })
+            if addTriggerVar and extraVars['trigger'].__accessed__:
+                return self.json({ 'error': f'UI Rendering is not smart enough to simulate references to "trigger", so the "null" result shown here may not reflect how your template and alert will actually behave.'})
             if ttype in ['string']:
                 result = aresult
             elif ttype == 'bool':
@@ -383,7 +407,7 @@ class RenderValueView(HomeAssistantView):
             defaults = self.uiMgr._alertData.topConfig # from
             mergedVal = getField(name, { 'domain':'foo', 'name':'bar', name: tval }, defaults)
             try:
-                result = expandDataDict(mergedVal, notificationVars)
+                result = expandDataDict(mergedVal, extraVars)
             except HomeAssistantError as err:
                 return self.json({ 'error': f'data template {err}'})
         else:

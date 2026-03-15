@@ -342,11 +342,16 @@ class TriggerCond:
         reason = ""
         alias = ""
         if "trigger" in run_variables:
+            #_LOGGER.info(f'Trigger found {run_variables["trigger"]}')
             if "description" in run_variables["trigger"]:
                 reason = f' by {run_variables["trigger"]["description"]}'
             if "alias" in run_variables["trigger"]:
                 alias = f' trigger \'{run_variables["trigger"]["alias"]}\''
                 _LOGGER.debug(f'Activity {self.fullName} triggered{reason}{alias}')
+        else:
+            #_LOGGER.info(f'Trigger NOT found')
+            pass
+                
 
         self.parentEnt.async_set_context(context)
         this = self.parentEnt.state
