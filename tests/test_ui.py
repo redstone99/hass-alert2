@@ -930,6 +930,10 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert rez == { 'rez': 'joeFire' }
     rez = await tpost("/api/alert2/renderValue", {'name': 'done_message', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
     assert rez == { 'rez': 'joeyay' }
+    rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': '{{ trigger.event == "foo" }}' })
+    assert re.search('not smart enough to simulate references to', rez['error'])
+    rez = await tpost("/api/alert2/renderValue", {'name': 'condition', 'txt': '{{ trigger }}' })
+    assert re.search('not smart enough to simulate references to', rez['error'])
     
     # reminder_message
     rez = await tpost("/api/alert2/renderValue", {'name': 'reminder_message', 'txt': 'foo' })
