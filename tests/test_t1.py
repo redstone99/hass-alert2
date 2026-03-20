@@ -3893,7 +3893,8 @@ async def test_display_msg(hass, service_calls):
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
 
-    # Make sure doc is correct saying "null" works
+    # Make sure doc is correct saying "null" works.
+    # Though that doesn't work with templates
     assert parse_yaml("x: null") == { 'x': None }
 
 async def test_display_msg2(hass, service_calls):
@@ -3901,6 +3902,7 @@ async def test_display_msg2(hass, service_calls):
          { 'domain': 'test', 'name': 't1', 'condition': 'off', 'display_msg': '{{ "yay" }}' },
          { 'domain': 'test', 'name': 't2', 'condition': 'off' },
          { 'domain': 'test', 'name': 't3', 'condition': 'off', 'display_msg': '{{ yayz - 3  }}' },
+         { 'domain': 'test', 'name': 't4', 'condition': 'off', 'display_msg': 'x={{ alert_entity_id }} d={{alert_domain}} n={{alert_name}}' },
         ]}}
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
@@ -3917,6 +3919,8 @@ async def test_display_msg2(hass, service_calls):
         assert 'yayz' in str(er)
     else:
         assert False
+    msg = await hass.services.async_call('alert2','get_display_msg', { 'entity_id': 'alert2.test_t4' }, blocking=True, return_response=True)
+    assert msg == {'alert2.test_t4': 'x=alert2.test_t4 d=test n=t4'}
     
 async def test_priority(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
