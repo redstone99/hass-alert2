@@ -449,12 +449,19 @@ class SupersedeNotifyMgr:
 
 
 def updateConfigDict(currConfig, newConfig):
+    newData = None
+    #newDoneData = None
     if 'data' in currConfig and 'data' in newConfig:
         newData = mergeDataDict(currConfig['data'], newConfig['data'])
-        currConfig.update(newConfig)
+    #if 'done_data' in currConfig and 'done_data' in newConfig:
+    #    newDoneData = mergeDataDict(currConfig['done_data'], newConfig['done_data'])
+        
+    currConfig.update(newConfig)
+
+    if newData:
         currConfig['data'] = newData
-    else:
-        currConfig.update(newConfig)
+    #if newDoneData:
+    #    currConfig['done_data'] = newDoneData
 
 class Alert2Data:
     def __init__(self, hass, config):

@@ -250,7 +250,7 @@ class RenderValueView(HomeAssistantView):
                     simple = True
                 else:
                     ttype = 'string'
-            elif name in ['data']:
+            elif name in ['data' ]:
                 tval = SINGLE_TRACKED_SCHEMA_PRE_NAME({ name: ttxt})[name]
                 addNotificationVars = True
                 ttype = 'data-dict'
@@ -576,7 +576,7 @@ class DisplayMsgSocketMgr:
                                           'rendered': results[0]
                                       }, } )
 
-        tracker = Tracker(ent, 'display_msg', self.hass, self.alertData,
+        tracker = Tracker(ent, 'display_msg', self.hass,
                           [ { 'fieldName': 'display_msg', 'type': Tracker.Type.StrEmptyOk,
                               'template': ent._display_msg_template } ], handle_rez, extraVariables=ent.extraVariables)
         #_LOGGER.warning(f'{ent.entity_id}: got subscribe msg {msgId} for tracker {id(tracker)}')

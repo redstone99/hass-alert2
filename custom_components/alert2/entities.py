@@ -55,6 +55,19 @@ class NotificationReason(Enum):
     # SnoozeEnded does not result in notification, for internal use
     SnoozeEnded = 5
     ReminderToAck = 6
+    @staticmethod
+    def getActionStr(aenum, alert):
+        if aenum == NotificationReason.Fire:
+            if isinstance(alert, EventAlert):
+                return 'fired'
+            else:
+                assert isinstance(alert, ConditionAlert), alert
+                return 'turned on'
+        elif aenum == NotificationReason.StopFiring:
+            return 'turned off'
+        # probably should call reportIfSafe(DOMAIN, 'error') here
+        return f'--{aenum.name}-SHOULD-NEVER-SEE-THIS--'
+    
 class ThresholdExeeded(Enum):
     Init = 1
     Max = 2
@@ -163,21 +176,21 @@ def getField(fieldName, config, defaultCfg):
     if config['domain'] == DOMAIN:
         for atracked in defaultCfg['tracked']:
             if atracked['name'] == config['name'] and fieldName in atracked:
-                if fieldName == 'data' and foundVal:
+                if fieldName in ['data'] and foundVal:
                     val = mergeDataDict(val, atracked[fieldName])
                 else:
                     val = atracked[fieldName]
                 foundVal = True
     
     if fieldName in config:
-        if fieldName == 'data' and foundVal:
+        if fieldName in ['data'] and foundVal:
             val = mergeDataDict(val, config[fieldName])
         else:
             val = config[fieldName]
         foundVal = True
 
     if not foundVal:
-        if fieldName == 'data':
+        if fieldName in ['data']:
             return None
         raise vol.Invalid(f'Alert {config["domain"]},{config["name"]} config or defaults must specify {fieldName}')
     return val
@@ -273,10 +286,10 @@ def renderResultToList(arez):
 
 class TriggerCond:
     # await cb() is invoked if trigger fires and condition is truthy
-    def __init__(self, parentEnt, trigName, hass, alertData, cb, extraVariables, triggerConf, condTempl):
+    def __init__(self, parentEnt, trigName, hass, cb, extraVariables, triggerConf, condTempl):
         # Base class - common to TriggerCond and Tracker
         self.hass = hass
-        self.alertData = alertData
+        #self.alertData = alertData
         self._self_ref_update_count = 0
         self.parentEnt = parentEnt
         if not isinstance(parentEnt, Entity):
@@ -390,9 +403,9 @@ class Tracker:
         Float = 4
         NonnegativeFloat = 5
         List = 6
-    def __init__(self, parentEnt, sname, hass, alertData, cfgList, cb, extraVariables):
+    def __init__(self, parentEnt, sname, hass, cfgList, cb, extraVariables):
         self.hass = hass
-        self.alertData = alertData
+        #self.alertData = alertData
         self.cfgList = cfgList
         self.trackerInfo = None
         self._self_ref_update_count = 0
@@ -628,7 +641,8 @@ def processSupersedes(cfgElem, svars):
         return (None, None)
     else:
         return (f'Supersedes variable has bad value: "{cfgElem}"', None)
-        
+
+# AlertCommon must be first in parent class list so super() calls it
 class AlertGenerator(AlertCommon, SensorEntity):
     #_attr_available = True  defaults to True
     # Pass name explicitly cuz if it's not in config, then __init__ will have created a fake name
@@ -651,7 +665,7 @@ class AlertGenerator(AlertCommon, SensorEntity):
         
         self._attr_device_class = SensorDeviceClass.DATA_SIZE #'problem'
         self._generator_template = self.config['generator']
-        self.tracker = Tracker(self, 'generator', hass, alertData,
+        self.tracker = Tracker(self, 'generator', hass,
                                [ { 'fieldName': 'generator', 'type': Tracker.Type.List,
                                    'template': self._generator_template } ], self.update_rez, extraVariables=None)
                                
@@ -670,7 +684,7 @@ class AlertGenerator(AlertCommon, SensorEntity):
     @property
     def extra_state_attributes(self):
         return { 'generated_ids': [ ent.entity_id for ent in self.idEntityMap.values() ] }
-    
+
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         await self.addedToHassDone()
@@ -912,7 +926,18 @@ class AlertBase(AlertCommon, RestoreEntity):
         self.alDomain = config['domain']
         self.alName = config['name']
         self._attr_unique_id = f'd={self.alDomain}-n={self.alName}'
-        # helpers/entity_platform::_async_add_entity may modify entity_id as necessary, since we're setting unique_id as well
+        # helpers/entity_platform::_async_add_entity may modify entity_id as necessary, since we're setting unique_id as well.
+        # I think the way this works is that if _attr_unique_id is set, then that creates a persistent registry entry that stores the entity_id.  When an entity is created, if the unique_id already exists, it uses the entity_id from the registry. If the registry entry doesn't yet exist, then it does async_generate_entity_id()
+        #
+        # So this means self.entity_id should be set by the time async_added_to_hass() is called.
+        #
+        # helpers/entity_platform.py:: _async_add_entity -> _async_add_entity ->
+        #    helpers/entity_registry.py::async_get_or_create -> _async_generate_entity_id()
+        #    and then at the end of _async_add_entity it calls:
+        #       helpers/entity.py:add_to_platform_finish() -> async_added_to_hass()
+        #
+        # some random entity creaters like template entities -> helpers/entity.py::async_generate_entity_id()
+        #
         self.entity_id = getPreferredEntityId(self.alDomain, self.alName)
         self._attr_name = entNameFromDN(self.alDomain, self.alName) # will overwrite with friendly_name if specified
         
@@ -930,7 +955,10 @@ class AlertBase(AlertCommon, RestoreEntity):
         self._title_template = config['title'] if 'title' in config else None
         self._target_template = config['target'] if 'target' in config else None
         self._data = getField('data', config, defaultCfg)
+        #self._done_data = getField('done_data', config, defaultCfg)
+        
         # Added on Aug 24, 2025 for v1.16. Remove with next version
+        # # done_data added after v1.16 so no warning check.
         if self._data and isinstance(self._data, dict):
             if any([ isinstance(self._data[x], template_helper.Template) for x in self._data.keys() ]):
                 if alertData.uiMgr.setOneTime('v1.16_data_syntax_change'):
@@ -943,22 +971,11 @@ class AlertBase(AlertCommon, RestoreEntity):
         # Reminders can either be ack reminders (if ack_required is set), or for condition alerts can be alert-on reminders
         self.reminder_frequency_mins = getField('reminder_frequency_mins', config, defaultCfg)
         self.reminders_since_fire = 0
+        # self.extraVariables will be updated in async_added_to_hass()
+        self.extraVariables = {'alert_domain': self.alDomain, 'alert_name': self.alName }
         if genVars is not None:
-            self.extraVariables = genVars
-        else:
-            self.extraVariables = None
-        #self._friendly_name = None
-        self.friendlyNameTracker = None
-        if 'friendly_name' in config:
-            frn = config['friendly_name']
-            # Since friendly_name may be displyed quite early, so if we aren't using templates, then
-            # directly process it
-            if template_helper.is_template_string(frn.template):
-                self.friendlyNameTracker = Tracker(self, 'friendly_name', hass, alertData,
-                                                   [ { 'fieldName': 'friendly_name', 'type': Tracker.Type.Str,
-                                                       'template': frn } ], self.friendly_name_update, self.extraVariables)
-            else:
-                self._attr_name = frn.template.strip()
+            self.extraVariables.update(genVars)
+
         if self._message_template is not None:
             self._message_template.hass = hass
         if self._ack_reminder_message_template is not None:
@@ -993,6 +1010,22 @@ class AlertBase(AlertCommon, RestoreEntity):
         self.notification_control = NOTIFICATIONS_ENABLED
 
         self.future_notification_info = None
+        self.friendlyNameTracker = None
+
+    # Called once async_added_to_hass() so entity_id exists and self.extraVariables is populated
+    async def lateInit(self):
+        if 'friendly_name' in self.config:
+            frn = self.config['friendly_name']
+            # Since friendly_name may be displyed quite early, so if we aren't using templates, then
+            # directly process it
+            if template_helper.is_template_string(frn.template):
+                self.friendlyNameTracker = Tracker(self, 'friendly_name', self.hass,
+                                                   [ { 'fieldName': 'friendly_name', 'type': Tracker.Type.Str,
+                                                       'template': frn } ], self.friendly_name_update, self.extraVariables)
+            else:
+                self._attr_name = frn.template.strip()
+        
+        
     # This overrides helpers/entity.py:Entity version of this
     # NOTE - as of HA commit c6064f40d28 from 1/27/26, this function is no longer used.
     # They switched to _cached_friendly_name
@@ -1005,10 +1038,8 @@ class AlertBase(AlertCommon, RestoreEntity):
             self.friendlyNameTracker.startWatching()
 
     def getNotificationVars(self, reason: NotificationReason):
-        notificationVars = { 'notify_reason': reason.name, 'alert_entity_id': self.entity_id,
-                             'alert_domain': self.alDomain, 'alert_name': self.alName }
-        if self.extraVariables:
-            notificationVars.update(self.extraVariables)
+        notificationVars = { 'notify_reason': reason.name , 'alert_entity_id': self.entity_id }
+        notificationVars.update(self.extraVariables)
         return notificationVars
             
     async def async_will_remove_from_hass(self) -> None:
@@ -1068,6 +1099,7 @@ class AlertBase(AlertCommon, RestoreEntity):
                         self.notification_control = val
                     else:
                         self.notification_control = dt.parse_datetime(val)
+        self.extraVariables.update({ 'alert_entity_id': self.entity_id })
         # child class calls addedToHassDone
                         
     async def async_update(self) -> None:
@@ -1286,9 +1318,9 @@ class AlertBase(AlertCommon, RestoreEntity):
                     
         notifier_list = []
         defer_notifier_list = []
-        alertData = self.hass.data[DOMAIN]
+        #alertData = self.hass.data[DOMAIN]
         for anotifier in notifiers:
-            if alertData.delayedNotifierMgr.willDefer(anotifier, args):
+            if self.alertData.delayedNotifierMgr.willDefer(anotifier, args):
                 defer_notifier_list.append(anotifier)
             elif notifierExists(self.hass, anotifier):
                 notifier_list.append(anotifier)
@@ -1459,7 +1491,13 @@ class AlertBase(AlertCommon, RestoreEntity):
                 msg += ': '
             msg += f'{message}'
 
-        _LOGGER.warning(msg)
+        if reason in [ NotificationReason.ReminderOn, NotificationReason.ReminderToAck,
+                       NotificationReason.Summary ]:
+            # No warning needed. If anyone is notified, we'll get an INFO log for that.
+            pass
+        else:
+            action = NotificationReason.getActionStr(reason, self)
+            _LOGGER.warning(f'Activity {self.entity_id} {action}. Msg: {msg}')
         #_LOGGER.warning(f'_notify_pre_debounce: {"".join(traceback.format_stack())}')
         
         last_fired_time = self.last_fired_time
@@ -1468,8 +1506,8 @@ class AlertBase(AlertCommon, RestoreEntity):
             self.last_fired_time = now
             self.reminders_since_fire = 0
             
-        alertData = self.hass.data[DOMAIN]
-        alertData.supersedeNotifyMgr.processNotify(self, now, msg, reason, last_fired_time, skip_notify, debounce_secs=self._supersede_debounce_secs, extra_data=extra_data)
+        #alertData = self.hass.data[DOMAIN]
+        self.alertData.supersedeNotifyMgr.processNotify(self, now, msg, reason, last_fired_time, skip_notify, debounce_secs=self._supersede_debounce_secs, extra_data=extra_data)
 
     # Purpose is to avoid infinite loop of alert2_error reporting an alert2_error when it has an internal issue
     # I think all calls to report errors that can happen from alert2_error either are assertion failures or use reportIfSafe.
@@ -1549,11 +1587,13 @@ class AlertBase(AlertCommon, RestoreEntity):
             notificationVars = self.getNotificationVars(reason)
             
             args = {}
-            if self._data is not None:
+            dataToUse = self._data # self._done_data if (self._done_data and reason == NotificationReason.StopFiring) else self._data
+            if dataToUse is not None:
                 try:
-                    nDict = expandDataDict(self._data, notificationVars)
+                    nDict = expandDataDict(dataToUse, notificationVars)
                 except HomeAssistantError as err:
-                    msg += self.reportIfSafe(DOMAIN, 'error', f'{self.name} data {err}')
+                    dataName = 'data' # 'done_data' if dataToUse == self._done_data else 'data'
+                    msg += self.reportIfSafe(DOMAIN, 'error', f'{self.name} {dataName} {err}')
                 else:
                     args['data'] = nDict
             if extra_data is not None:
@@ -1582,7 +1622,7 @@ class AlertBase(AlertCommon, RestoreEntity):
                     
             (notifier_list, defer_notifier_list) = self.getNotifiers(args, reason)
             if len(notifier_list) > 0:
-                _LOGGER.warning(f'{self.entity_id} notifying {notifier_list}: {args["message"]}')
+                _LOGGER.info(f'{self.entity_id} notifying {notifier_list}: {args["message"]}')
                 async def foo():
                     for notifier in notifier_list:
                         if notifier == 'persistent_notification':
@@ -1619,10 +1659,10 @@ class AlertBase(AlertCommon, RestoreEntity):
                     #_LOGGER.debug(f'Notifying done: {notifier_list}')
                 atask = create_task(self.hass, DOMAIN, foo())
             if len(defer_notifier_list) > 0:
-                _LOGGER.warning(f'{self.entity_id} defering notifying {defer_notifier_list}: {args["message"]}')
+                _LOGGER.info(f'{self.entity_id} defering notifying {defer_notifier_list}: {args["message"]}')
             if len(notifier_list) == 0 and len(defer_notifier_list) == 0:
                 # Notifier is set to null, no notifiation.  at least log
-                _LOGGER.warning(f'{self.entity_id} (null notifier): {args["message"]}')
+                _LOGGER.info(f'{self.entity_id} (null notifier): {args["message"]}')
                 
         else:
             # doNotify is False
@@ -1646,7 +1686,7 @@ class AlertBase(AlertCommon, RestoreEntity):
                 self.reportIfSafe(DOMAIN, 'error', f'{self.name} not notifying with 0 remaining_secs and no skip_notify set')
                 tillmsg = f' bad-logic-err'
             smsg = f'  {self.entity_id} skipping notify {tillmsg}: {msg}'
-            _LOGGER.warning(smsg)
+            _LOGGER.info(smsg)
             #if remaining_reason != NOTIFICATIONS_DISABLED:
             #    if remaining_secs > 0:
             #        self.schedule_reminder(remaining_secs)
@@ -1669,12 +1709,6 @@ class EventAlert(AlertBase):
     ):
         super().__init__(hass, alertData, config, defaultCfg)
         self.detach_trigger = None
-        self.triggerCond = None
-        if 'trigger' in config:
-            self.triggerCond = TriggerCond(self, 'trigger', hass, alertData, self.triggered, self.extraVariables,
-                                           config['trigger'], self._condition_template)
-        else:
-            pass # This is just a tracked alert, like alert2.error
 
         self.exception_ignore_regexes = []
         if 'exception_ignore_regexes' in self.config:
@@ -1684,7 +1718,25 @@ class EventAlert(AlertBase):
                     self.exception_ignore_regexes.append(are)
                 except re.error as ex:
                     report(DOMAIN, 'error', f'{self.name}: failed to compile exception_ignore_regexes "{astr}": {ex}')
-    
+
+        self.triggerCond = None
+
+    async def lateInit(self):
+        await super().lateInit()
+        
+        self.triggerCond = None
+        if 'trigger' in self.config:
+            self.triggerCond = TriggerCond(self, 'trigger', self.hass, self.triggered, self.extraVariables,
+                                           self.config['trigger'], self._condition_template)
+        else:
+            pass # This is just a tracked alert, like alert2.error
+
+    async def async_added_to_hass(self) -> None:
+        """Restore extra state attributes on start-up."""
+        await super().async_added_to_hass()
+        await self.lateInit()
+        await self.addedToHassDone()
+                    
     @property
     def state(self) -> str:
         if not self.last_fired_time:
@@ -1694,11 +1746,6 @@ class EventAlert(AlertBase):
         return {
         }
 
-    async def async_added_to_hass(self) -> None:
-        """Restore extra state attributes on start-up."""
-        await super().async_added_to_hass()
-        await self.addedToHassDone()
-        
     async def startWatching(self):
         await super().startWatching()
         if self.triggerCond:
@@ -1730,7 +1777,6 @@ class EventAlert(AlertBase):
         
     async def record_event(self, message: str, extra_data: dict = None):
         now = dt.now()
-        _LOGGER.warning(f'Activity {self.entity_id} fired')
         msg = message
         self._notify_pre_debounce(now, NotificationReason.Fire, message, extra_data=extra_data)
         self.reminder_check(now) # To schedule reminder - the only reminder I think that could be needed is if throttled, a notificaiton that throttling has turned off
@@ -1805,61 +1851,69 @@ class ConditionAlert(AlertBase):
         # We don't restore this parameter cuz we don't know that cond was true while HA was down.
         self.cond_true_time = None
         self.cond_true_task = None
-
-        templs = []
-        if self._condition_template is not None:
-            templs.append({'fieldName': 'condition', 'type': Tracker.Type.Bool, 'template': self._condition_template })
-        self._threshold_value_template = config['threshold']['value'] if 'threshold' in config else None
-        if self._threshold_value_template is not None:
-            self._threshold_value_template.hass = hass
-            templs.append({'fieldName': 'value', 'type': Tracker.Type.Float, 'template': self._threshold_value_template })
-            self._threshold_hysteresis_float_or_template =  config['threshold']['hysteresis']
-            if isinstance(self._threshold_hysteresis_float_or_template, template_helper.Template):
-                self._threshold_hysteresis_float_or_template.hass = hass
-                templs.append({'fieldName': 'hysteresis', 'type': Tracker.Type.NonnegativeFloat, 'template': self._threshold_hysteresis_float_or_template })
-            self._threshold_max_float_or_template = config['threshold']['maximum'] if 'maximum' in config['threshold'] else None
-            if isinstance(self._threshold_max_float_or_template, template_helper.Template):
-                self._threshold_max_float_or_template.hass = hass
-                templs.append({'fieldName': 'maximum', 'type': Tracker.Type.Float, 'template': self._threshold_max_float_or_template })
-            self._threshold_min_float_or_template = config['threshold']['minimum'] if 'minimum' in config['threshold'] else None
-            if isinstance(self._threshold_min_float_or_template, template_helper.Template):
-                self._threshold_min_float_or_template.hass = hass
-                templs.append({'fieldName': 'minimum', 'type': Tracker.Type.Float, 'template': self._threshold_min_float_or_template })
-            
-            #self.threshold_min = config['threshold']['minimum'] if 'minimum' in config['threshold'] else None
-            #self.threshold_hysteresis = config['threshold']['hysteresis'] if 'hysteresis' in config['threshold'] else None
-            #self.threshold_exceeded = ThresholdExeeded.Init # to record if we crossed min or max
-        self.condValTracker = Tracker(self, 'condition-value', hass, alertData, templs, self.cond_val_update, self.extraVariables)
-
-        self.delayOnSecsTracker = None
-        if  self._delay_on_secs_template is not None:
-            self._delay_on_secs_template.hass = hass
-            templs2 = [ {'fieldName': 'delay_on_secs', 'type': Tracker.Type.NonnegativeFloat, 'template': self._delay_on_secs_template } ]
-            self.delayOnSecsTracker = Tracker(self, 'delay-on-secs', hass, alertData, templs2, self.delay_on_secs_update, self.extraVariables)
-
-        self.onTracker = None
-        if 'trigger_on' in config:
-            self.onTracker = TriggerCond(self, 'trigger_on', hass, alertData, self.trigger_on, self.extraVariables,
-                               config['trigger_on'], config['condition_on'] if 'condition_on' in config else None)
-        elif 'condition_on' in config:
-            templs = [{'fieldName': 'condition_on', 'type': Tracker.Type.Bool, 'template': config['condition_on'] }]
-            self.onTracker = Tracker(self, 'condition_on', hass, alertData, templs, self.cond_on_update, self.extraVariables)
-
-        self.offTracker = None
-        if 'trigger_off' in config:
-            self.offTracker = TriggerCond(self, 'trigger_off', hass, alertData, self.trigger_off, self.extraVariables,
-                               config['trigger_off'], config['condition_off'] if 'condition_off' in config else None)
-        elif 'condition_off' in config:
-            templs = [{'fieldName': 'condition_off', 'type': Tracker.Type.Bool, 'template': config['condition_off'] }]
-            self.offTracker = Tracker(self, 'condition_off', hass, alertData, templs, self.cond_off_update, self.extraVariables)
-
-
+        
         self.manualOnEnabled = config['manual_on'] if 'manual_on' in config else False
         self.manualOffEnabled = config['manual_off'] if 'manual_off' in config else False
         self.ackRemindersOnly = config['ack_reminders_only'] if 'ack_reminders_only' in config else False
 
         self.threshold_exceeded = ThresholdExeeded.Init
+
+        # Populated in lateInit
+        self.delayOnSecsTracker = None
+        self.offTracker = None
+        self.onTracker = None
+        self.condValTracker = None
         
+    async def lateInit(self):
+        await super().lateInit()
+        
+        templs = []
+        if self._condition_template is not None:
+            templs.append({'fieldName': 'condition', 'type': Tracker.Type.Bool, 'template': self._condition_template })
+        self._threshold_value_template = self.config['threshold']['value'] if 'threshold' in self.config else None
+        if self._threshold_value_template is not None:
+            self._threshold_value_template.hass = self.hass
+            templs.append({'fieldName': 'value', 'type': Tracker.Type.Float, 'template': self._threshold_value_template })
+            self._threshold_hysteresis_float_or_template =  self.config['threshold']['hysteresis']
+            if isinstance(self._threshold_hysteresis_float_or_template, template_helper.Template):
+                self._threshold_hysteresis_float_or_template.hass = self.hass
+                templs.append({'fieldName': 'hysteresis', 'type': Tracker.Type.NonnegativeFloat, 'template': self._threshold_hysteresis_float_or_template })
+            self._threshold_max_float_or_template = self.config['threshold']['maximum'] if 'maximum' in self.config['threshold'] else None
+            if isinstance(self._threshold_max_float_or_template, template_helper.Template):
+                self._threshold_max_float_or_template.hass = self.hass
+                templs.append({'fieldName': 'maximum', 'type': Tracker.Type.Float, 'template': self._threshold_max_float_or_template })
+            self._threshold_min_float_or_template = self.config['threshold']['minimum'] if 'minimum' in self.config['threshold'] else None
+            if isinstance(self._threshold_min_float_or_template, template_helper.Template):
+                self._threshold_min_float_or_template.hass = self.hass
+                templs.append({'fieldName': 'minimum', 'type': Tracker.Type.Float, 'template': self._threshold_min_float_or_template })
+            
+            #self.threshold_min = config['threshold']['minimum'] if 'minimum' in config['threshold'] else None
+            #self.threshold_hysteresis = config['threshold']['hysteresis'] if 'hysteresis' in config['threshold'] else None
+            #self.threshold_exceeded = ThresholdExeeded.Init # to record if we crossed min or max
+        self.condValTracker = Tracker(self, 'condition-value', self.hass, templs, self.cond_val_update, self.extraVariables)
+        
+        self.delayOnSecsTracker = None
+        if  self._delay_on_secs_template is not None:
+            self._delay_on_secs_template.hass = self.hass
+            templs2 = [ {'fieldName': 'delay_on_secs', 'type': Tracker.Type.NonnegativeFloat, 'template': self._delay_on_secs_template } ]
+            self.delayOnSecsTracker = Tracker(self, 'delay-on-secs', self.hass, templs2, self.delay_on_secs_update, self.extraVariables)
+
+        self.onTracker = None
+        if 'trigger_on' in self.config:
+            self.onTracker = TriggerCond(self, 'trigger_on', self.hass, self.trigger_on, self.extraVariables,
+                               self.config['trigger_on'], self.config['condition_on'] if 'condition_on' in self.config else None)
+        elif 'condition_on' in self.config:
+            templs = [{'fieldName': 'condition_on', 'type': Tracker.Type.Bool, 'template': self.config['condition_on'] }]
+            self.onTracker = Tracker(self, 'condition_on', self.hass, templs, self.cond_on_update, self.extraVariables)
+
+        self.offTracker = None
+        if 'trigger_off' in self.config:
+            self.offTracker = TriggerCond(self, 'trigger_off', self.hass, self.trigger_off, self.extraVariables,
+                               self.config['trigger_off'], self.config['condition_off'] if 'condition_off' in self.config else None)
+        elif 'condition_off' in self.config:
+            templs = [{'fieldName': 'condition_off', 'type': Tracker.Type.Bool, 'template': self.config['condition_off'] }]
+            self.offTracker = Tracker(self, 'condition_off', self.hass, templs, self.cond_off_update, self.extraVariables)
+            
     async def trigger_on(self, variables):
         self.update_state_internal(True)
     def cond_on_update(self, results):
@@ -1929,8 +1983,9 @@ class ConditionAlert(AlertBase):
             cancel_task(DOMAIN, self.cond_true_task)
             self.cond_true_task = None
             self.cond_true_time = None
-        self.condValTracker.shutdown()
-        self.condValTracker = None
+        if self.condValTracker:
+            self.condValTracker.shutdown()
+            self.condValTracker = None
         if self.onTracker:
             self.onTracker.shutdown()
             self.onTracker = None
@@ -1944,7 +1999,8 @@ class ConditionAlert(AlertBase):
     async def async_added_to_hass(self) -> None:
         """Restore state and register callbacks."""
         await super().async_added_to_hass()
-
+        await self.lateInit()
+        
         last_state = await self.async_get_last_state()
         if last_state:
             # First part of 'if' is just for migration I think
@@ -2001,7 +2057,7 @@ class ConditionAlert(AlertBase):
         self.reminder_check() #???
     async def async_update(self) -> None:
         await super().async_update()
-        self.condValTracker.refresh()
+        self.condValTracker.refresh() # I think async_update can't happen before lateInit()
         if self.delayOnSecsTracker:
             self.delayOnSecsTracker.refresh()
         
@@ -2087,7 +2143,6 @@ class ConditionAlert(AlertBase):
         # So let the reminder_check() call in async_added_to_hass() decide.
         if self.added_to_hass_called:
             if state:
-                _LOGGER.warning(f'Activity {self.entity_id} turned on')
                 reason = NotificationReason.Fire
                 try:
                     msg = self.get_message_or_exception(reason)
@@ -2097,7 +2152,6 @@ class ConditionAlert(AlertBase):
                 self._notify_pre_debounce(now, reason, msg)
                 self.reminder_check(now)
             else:
-                _LOGGER.warning(f'Activity {self.entity_id} turned off')
                 reason = NotificationReason.StopFiring
                 #is_acked = self.last_ack_time and self.last_on_time and self.last_ack_time > self.last_on_time
                 secs_on = (self.last_off_time - self.last_on_time).total_seconds()

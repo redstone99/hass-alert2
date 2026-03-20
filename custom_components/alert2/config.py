@@ -259,6 +259,7 @@ DEFAULTS_SCHEMA = vol.Schema({
     vol.Optional('supersede_debounce_secs'): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional('icon'): cv.icon,
     vol.Optional('data'): jDictTemplate,
+    #vol.Optional('done_data'): jDictTemplate,
     vol.Optional('persistent_notifier_grouping'): vol.Any(PersistantNotificationHelper.Separate,
                                                           PersistantNotificationHelper.Collapse,
                                                           PersistantNotificationHelper.CollapseAndDismiss,
@@ -267,13 +268,13 @@ DEFAULTS_SCHEMA = vol.Schema({
 })
 DEFAULTS_SCHEMA_INTERNAL = DEFAULTS_SCHEMA.extend({
     vol.Optional('data'): vol.Any(jDictTemplate, [ jDictTemplate ]),
+    #vol.Optional('done_data'): vol.Any(jDictTemplate, [ jDictTemplate ]),
 })
 
 
 SINGLE_TRACKED_SCHEMA_PRE_NAME = vol.Schema({
     vol.Optional('notifier'): vol.Any(cv.template, jstringList),
     vol.Optional('summary_notifier'): vol.Any(cv.boolean, cv.template, jstringList),
-    vol.Optional('done_notifier'): vol.Any(cv.boolean, cv.template, jstringList),
     vol.Optional('persistent_notifier_grouping'): vol.Any(PersistantNotificationHelper.Separate,
                                                           PersistantNotificationHelper.Collapse,
                                                           PersistantNotificationHelper.CollapseAndDismiss,
@@ -318,7 +319,7 @@ SINGLE_TRACKED_SCHEMA = vol.Any(
 )
 
 SINGLE_ALERT_SCHEMA_PRE_NAME = SINGLE_TRACKED_SCHEMA_PRE_NAME.extend({
-    vol.Optional('message'): cv.template
+    vol.Optional('message'): cv.template,
 })
 
 SINGLE_ALERT_SCHEMA_EVENT = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
@@ -348,6 +349,8 @@ SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Optional('manual_on'): cv.boolean,
     vol.Optional('reminder_message'): vol.Any(None, cv.template),
     vol.Optional('done_message'): cv.template,
+    vol.Optional('done_notifier'): vol.Any(cv.boolean, cv.template, jstringList),
+    #vol.Optional('done_data'): jDictTemplate,
     vol.Optional('early_start'): cv.boolean,
     vol.Optional('supersede_debounce_secs'): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional('ack_reminders_only'): cv.boolean,
