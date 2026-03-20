@@ -1038,7 +1038,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             self.friendlyNameTracker.startWatching()
 
     def getNotificationVars(self, reason: NotificationReason):
-        notificationVars = { 'notify_reason': reason.name , 'alert_entity_id': self.entity_id }
+        notificationVars = { 'notify_reason': reason.name }
         notificationVars.update(self.extraVariables)
         return notificationVars
             

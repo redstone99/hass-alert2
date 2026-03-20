@@ -1598,6 +1598,17 @@ async def test_condition(hass, service_calls):
     await setAndWait(hass, 'sensor.b', 'on')
     assert gad.alerts['test']['t38d'].state == 'on'
     service_calls.popNotifyEmpty('persistent_notification', 't38d.*turned on')
+
+async def test_condition2(hass, service_calls):
+    # test that alert_entity_id is available in condition
+    cfg = { 'alert2' : { 'alerts': [
+        { 'domain': 'test', 'name': 't32', 'condition': 'o{% if alert_entity_id=="alert2.test_t32" %}n{%endif%}' },
+    ], } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t32: turned on$')
+
     
     
 async def test_err_args(hass, service_calls):
@@ -2881,6 +2892,7 @@ async def test_late_state(hass, service_calls):
 async def test_friendly_name(hass, service_calls):
     cfg = { 'alert2' : { 'alerts' : [
         { 'domain': 'test', 'name': 't71', 'friendly_name': '{{ states("sensor.ick") }}', 'condition': 'off' },
+        { 'domain': 'test', 'name': 't72', 'friendly_name': 'z{{ alert_entity_id }}z', 'condition': 'off' },
         ]}}
     hass.states.async_set("sensor.ick", 't71yy')
     assert await async_setup_component(hass, DOMAIN, cfg)
@@ -2890,9 +2902,12 @@ async def test_friendly_name(hass, service_calls):
     gad = hass.data[DOMAIN]
 
     t71 = gad.alerts['test']['t71']
+    t72 = gad.alerts['test']['t72']
     assert hass.states.get('alert2.test_t71').attributes['friendly_name'] == 't71yy'
+    assert hass.states.get('alert2.test_t72').attributes['friendly_name'] == 'zalert2.test_t72z'
     await setAndWait(hass, "sensor.ick", 'foo71')
     assert hass.states.get('alert2.test_t71').attributes['friendly_name'] == 'foo71'
+    assert hass.states.get('alert2.test_t72').attributes['friendly_name'] == 'zalert2.test_t72z'
     
 async def test_reload(hass, service_calls, monkeypatch):
     cfg = { 'alert2' : { 'notifier_startup_grace_secs': 1.0,
