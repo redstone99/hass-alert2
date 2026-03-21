@@ -126,7 +126,6 @@ class JTestView(HomeAssistantView):
 
 
 async def test_server(recorder_mock, enable_custom_integrations, hass, hass_storage, monkeypatch, hass_access_token):
-    _LOGGER.warning('fuck..........')
     cfg = {'alert2': {},
            http.DOMAIN: {http.CONF_SERVER_PORT: 50005}
            }
