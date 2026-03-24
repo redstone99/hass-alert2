@@ -537,9 +537,9 @@ To reduce spurious notifications due to races between two hierarchically-related
 
 #### Common alert features
 
-Most template alert config fields related to notifications can access extra template variables for convenience.
+Most template alert config fields can access the following extra variables for convenience: `alert_entity_id`, `alert_domain` and `alert_name`. 
 
-One extra variable is `notify_reason`, containing the reason for the notification.  `notify_reason` may take the following string values:
+The variable `notify_reason` is also available to config fields related to notifications. `notify_reason` contains the reason for the notification and may take the following string values:
 
 | Value | Description |
 |---|---|
@@ -549,9 +549,9 @@ One extra variable is `notify_reason`, containing the reason for the notificatio
 | `ReminderToAck` | Reminder that an alert has not yet been acked. |
 | `Summary` | Summary of alert activity after notifications have been limited, either due to being snoozed or throttled. |
 
-Other extra variables include `alert_entity_id`, `alert_domain` and `alert_name`. This should make it easier on iOS companion app to implement an "Ack" button in notifications and pass through the alert entity id to the event handler.
+This should make it easier on iOS companion app to implement an "Ack" button in notifications and pass through the alert entity id to the event handler.
 
-Config fields supporting these extra variables are:  `message`, `done_message`, `reminder_message`, `ack_reminder_message`, `target`, `title`, `notifier`, `done_notifier`, `summary_notifier` and `data`.
+`notify_reason` is available to the fields:  `message`, `done_message`, `reminder_message`, `ack_reminder_message`, `target`, `title`, `notifier`, `done_notifier`, `summary_notifier` and `data`.
 
 #### `Data` field 
 
