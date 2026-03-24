@@ -2379,3 +2379,41 @@ async def test_bad_store3(hass, service_calls, hass_storage, hass_client,  monke
     await hass.async_start()
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'loaded bad storage.*extra keys not allowed')
+
+async def test_regex(hass, service_calls, hass_storage):
+    # Test regex replace and escaping
+    #
+    # In dev tools, this works:
+    #    {{ "xaax"|regex_replace("x(.*)x","y\\1y") }}
+    #
+    # Also, in alert created in the UI, you only need two backslashes:
+    #
+    #   name....   {{genElem|regex_replace('x(.*)x','y\\1z') }}
+    #
+    # However, in actual yaml, you need 4 "\"
+    #
+    #   name: "{{ genElem|regex_replace('x(.*)x', 'y\\\\1y') }}"
+    #
+    cfg = { 'alert2': { 'alerts': [
+        { 'domain': 'test', 'name': '{{ genElem|regex_replace("x(.*)x", "y\\\\1y") }}', 'generator': [ 'xAAx', 'xBBx' ],'condition': 'off' },
+        ]}}
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'nextAlertUiId': 2,
+                   'alertInfos': [
+                       {'uiId': 1, 'cfg': { 'domain': 'test2', 'name': '{{ genElem|regex_replace("x(.*)x", "y\\\\1y") }}', 'generator': "[ 'xAAx', 'xBBx' ]",'condition': 'off' }}  ] })
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': uiCfg }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    assert hass.states.get('sensor.alert2generator_anonymous_0').state == '2'
+    assert hass.states.get('sensor.alert2generator_anonymous_1').state == '2'
+    
+    registeredEnts = set(['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception',
+                      'alert2.test_yaay', 'alert2.test_ybby',
+                      'alert2.test2_yaay', 'alert2.test2_ybby',
+                      ])
+    entities = er.async_get(hass).entities
+    _LOGGER.warning(list(entities.keys()))
+    assert set(entities.keys()) == registeredEnts

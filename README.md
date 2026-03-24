@@ -960,6 +960,7 @@ alert2:
       generator: "{{ states.sensor|selectattr('entity_id', 'match', 'sensor.temp_.*')
                                   |map(attribute='entity_id')|list }}"
       domain: thermostat
+      # See note on backslashes in regexes, later in this doc.
       name: "{{ genEntityId
                 |regex_replace('sensor.temp_(.*)','\\\\1') }}_is_low"
       condition: "{{ states(genEntityId)|float < 40 }}"
@@ -1002,6 +1003,17 @@ We recommend setting `friendly_name` in your Alert2 config rather than editing t
 
 You may see old alert entities persist briefly with a state of "unavailable", particularly in the 10 seconds after HA startup if one of your generators changes the set of alerts it generates.  What going on is that the set of Alert2 entities in existence can fluctuate, as you adjust your Alert2 config or as generators update. If Alert2 stops creating an alert (eg on restart), then since the `unique_id` is set, the dead alert will persist with a state of "unavailable".  Alert2 strives to avoid this by updating the entity registry during Alert2 lifecycle changes.  And 10 seconds after HA starts up or Alert2 reloads, Alert2 it will go through and purge the entity registry of those dead alerts.
 
+### A note on regexes and escaping
+
+Escaping in a regex requires two backslashes when entered in the HA UI, or four backslashes when entered in YAML.  For example, to call regex_replace() with a group reference in a template you'd do the following:
+
+Via the UI (eg the Alert2 Manager card or via dev tools template evaluator):
+
+    {{ .... | regex_replace('x(.*)x', '\\1')  }}
+
+In your YAML config:
+
+    {{ .... | regex_replace('x(.*)x', '\\\\1')  }}
 
 ## Actions and events
 

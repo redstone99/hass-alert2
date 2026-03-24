@@ -2874,7 +2874,7 @@ async def test_generator9(hass, service_calls, monkeypatch):
     entities = er.async_get(hass).entities
     assert set(entities.keys()) == registeredEnts
     
-    
+
 async def test_late_state(hass, service_calls):
     cfg = { 'alert2' : { 'alerts' : [
         # Check that template condition still becomes states("sensor.ick") even if sensor.ick doesn't yet exist
