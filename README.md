@@ -764,10 +764,13 @@ Converted to Alert2:
       condition: "{{ states('cover.garage_door') == 'open' }}"
       delay_on_secs: 600 #first notif delayed for this  many secs
       reminder_frequency_mins: [30, 60, 120]
-      notifier: [notify.telegram_me, notify.telgram_her, notify.email_me]
+      notifier: [notify.telegram_me, notify.telgram_her, email_me]
 ````
 
-And note that Ack/Snooze can be managed via the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) Overview card.
+Notes
+  - Alert Acknowledgment or Snooze can be managed via the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) Overview card.
+  - In the notifier section, the email_me notifier ([SMTP](https://www.home-assistant.io/integrations/smtp/) integration) in the example is using the Legacy notifier API, hence the "notify." prefix is not used for it.
+  - The Telegram notifiers ([Telegram bot](https://www.home-assistant.io/integrations/telegram_bot/) integration) can be sensitive to unusual characters in the title or message strings; consider configuring that integration to use HTML mode instead of Markdown.
 
 
 ## Generator patterns
