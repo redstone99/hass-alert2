@@ -237,7 +237,25 @@ The current recommended way to notify groups is to create an entity, such as a t
 
 Alert2 does not yet support [Notify Entity Groups](https://www.home-assistant.io/integrations/group/#notify-entity-groups), but open an [discussion](https://github.com/redstone99/hass-alert2/discussions) and request the feature if interested.
 
-Notifiers may be either legacy notifiers or the newer notify entities (entities beginning with `notify.` ).  When using the newer notify entities, Alert2 supports only the `message` and `title` fields. Specifying other fields like `data` with notify entities will result in an error.
+Notifiers may be either legacy action names or the newer notify entity names.  Legacy action names can include or omit the "notify." prefix.  If notifier name could refer to either a notify entity or an action name, Alert2 will use the entity.
+
+At present, notify entities support only the `message` and `title` fields. Specifying other fields like `data` with notify entities will result in an error.
+
+Example:
+```yaml
+   # Uses the legacy notify.telegram_ha action
+   notifier: telegram_ha
+   
+   # Uses the notify entity "notify.telegram_ha" if it exists
+   # otherwise uses the legacy action "notify.telegram_ha".
+   notifier: notify.telegram_ha
+```
+
+##### Telegram notifiers
+
+If you're using telegram notifiers ([Telegram bot](https://www.home-assistant.io/integrations/telegram_bot/) integration), we recommend setting `parse_mode` in the notifier config to "html" (or "plain_text").
+Telegram notifiers default to a parse_mode of "markdown", which can throw errors with the syntax characters Alert2 or you might add to notification messages (e.g., "[").
+
 
 ### Alert2 internal errors
 
@@ -764,11 +782,11 @@ Converted to Alert2:
       condition: "{{ states('cover.garage_door') == 'open' }}"
       delay_on_secs: 600 #first notif delayed for this  many secs
       reminder_frequency_mins: [30, 60, 120]
-      notifier: [notify.telegram_me, notify.telgram_her, notify.email_me]
+      # Example uses newer notify entities for telegram and the legacy notify action for email
+      notifier: [notify.telegram_me, notify.telgram_her, email_me]
 ````
 
 And note that Ack/Snooze can be managed via the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) Overview card.
-
 
 ## Generator patterns
 

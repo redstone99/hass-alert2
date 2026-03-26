@@ -42,6 +42,8 @@ from homeassistant.util.dt import utcnow
 from homeassistant.util.yaml import parse_yaml
 import homeassistant.components.persistent_notification as pn
 from homeassistant.components.notify import NotifyEntity, NotifyEntityFeature
+#from homeassistant.components.telegram_bot.notify import TelegramBotNotifyEntity
+#from homeassistant.components.telegram.notify import TelegramNotificationService
 #from tests.common import MockConfigEntry
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.ignore_uncaught_exceptions import IGNORE_UNCAUGHT_EXCEPTIONS
@@ -388,6 +390,7 @@ async def test_notifiers1(hass, service_calls):
     hass.states.async_set("sensor.a", "off")
     hass.states.async_set("sensor.b", "off")
     hass.states.async_set("sensor.c", "off")
+    hass.states.async_set("sensor.d", "off")
     cfg = { 'alert2' : { 'alerts' : [
         # notifier available immediately
         { 'domain': 'test', 'name': 't6a', 'condition': 'sensor.a', 'notifier': 'persistent_notification' },
@@ -395,6 +398,8 @@ async def test_notifiers1(hass, service_calls):
         { 'domain': 'test', 'name': 't6b', 'condition': 'sensor.b', 'notifier': 'foo' },
         # notifier available after grace period
         { 'domain': 'test', 'name': 't6c', 'condition': 'sensor.c', 'notifier': 'foo2' },
+        # mix of existing and non-existing notifiers
+        { 'domain': 'test', 'name': 't6d', 'condition': 'sensor.d', 'notifier': [ 'foo', 'yuck' ] },
     ], } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
@@ -441,6 +446,13 @@ async def test_notifiers1(hass, service_calls):
     await setAndWait(hass, 'sensor.c', 'on')
     service_calls.popNotifyEmpty('foo2', r'test_t6c: turned on')
 
+    # Test what happens if some notifiers don't exist but some do.
+    await setAndWait(hass, 'sensor.d', 'on')
+    await hass.async_block_till_done()
+    service_calls.popNotifySearch('persistent_notification', 'yuck',  r'"yuck" is not known to HA')
+    service_calls.popNotifyEmpty('foo', r'test_t6d: turned on')
+
+    
 def mock_service_foo(call):
     return None
 
@@ -656,28 +668,36 @@ async def test_notifiers5(hass, service_calls):
 
 async def test_notifiers6(hass, service_calls):
     # Test new notifier system.  Create 
+    alert2.kNotifierStartupGraceSecs = 3
     await setAndWait(hass, "sensor.a1", 'off')
     await setAndWait(hass, "sensor.a2", 'off')
     await setAndWait(hass, "sensor.a3", 'off')
     await setAndWait(hass, "sensor.a4", 'off')
+    await setAndWait(hass, "sensor.a5", 'off')
+    await setAndWait(hass, "sensor.a6", 'off')
+    await setAndWait(hass, "sensor.target", '')
     cfg = { 'alert2' : { 'alerts': [
-        { 'domain': 'd', 'name': 't1', 'condition': 'sensor.a1', 'notifier': 'notify.notify_happy3' },
-        { 'domain': 'd', 'name': 't2', 'condition': 'sensor.a2', 'notifier': 'notify.notify_happy3', 'title': 'mytitle' },
-        { 'domain': 'd', 'name': 't3', 'condition': 'sensor.a3', 'notifier': '{{ [ "notify.notify_happy3", "persistent_notification" ] }}', 'title': 'title2' },
-        { 'domain': 'd', 'name': 't4', 'condition': 'sensor.a4', 'notifier': 'notify.notify_happy3', 'data': { 'a': 3 } },
+        { 'domain': 'd', 'name': 't1', 'condition': 'sensor.a1', 'notifier': 'notify.happy3' },
+        { 'domain': 'd', 'name': 't2', 'condition': 'sensor.a2', 'notifier': 'notify.happy3', 'title': 'mytitle' },
+        { 'domain': 'd', 'name': 't3', 'condition': 'sensor.a3', 'notifier': '{{ [ "notify.happy3", "persistent_notification" ] }}', 'title': 'title2' },
+        { 'domain': 'd', 'name': 't4', 'condition': 'sensor.a4', 'notifier': 'notify.happy3', 'data': { 'a': 3 } },
+        { 'domain': 'd', 'name': 't5', 'condition': 'sensor.a5', 'notifier': [ "notify.happy3", 'notify.yuck' ],},
+        { 'domain': 'd', 'name': 't6', 'condition': 'sensor.a6', 'notifier': 'sensor.target' },
     ]}}
     assert await async_setup_component(hass, "notify", {})
     assert await async_setup_component(hass, "persistent_notification", {})
     assert await async_setup_component(hass, DOMAIN, cfg)
 
+
+    
     # Create new notify entity, notify.notify_happy3
     #
     gotSendMsg = None
     class TestNotifyEntity(NotifyEntity):
         _attr_supported_features = NotifyEntityFeature.TITLE
-        def __init__(self, config, subconfig) -> None:
-            self._attr_unique_id = f'happy3'
-            self.name = f'happy'
+        def __init__(self, config, subconfig, aname) -> None:
+            self._attr_unique_id = f'unique-{aname}'
+            self._attr_name = aname
         async def async_send_message(self, message: str, title: str | None = None) -> None:
             #_LOGGER.info('!!!!!!!!!  got send message ')
             nonlocal gotSendMsg
@@ -687,23 +707,51 @@ async def test_notifiers6(hass, service_calls):
     x =  ep.async_get_platforms(hass, 'notify')
     assert len(x) == 1
     notifyEntPlatform = x[0]
-    nEnt = TestNotifyEntity(None, None)
-    await notifyEntPlatform.async_add_entities([nEnt])
+    nEntHappy3 = TestNotifyEntity(None, None, 'happy3')
+    nEntOverlap = TestNotifyEntity(None, None, 'overlap')
+    await notifyEntPlatform.async_add_entities([nEntHappy3, nEntOverlap])
+    hass.services.async_register('notify','overlap', mock_service_foo)
+    hass.services.async_register('notify','unique', mock_service_foo)
 
     await hass.async_start()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     # List all entities known
-    #   entities = er.async_get(hass).entities
-    #   _LOGGER.info(list(entities.keys()))
-    await hass.services.async_call('notify','send_message', {'entity_id': 'notify.notify_happy3', 'message': 'amsg', 'title': 'atitle' })
+    entities = er.async_get(hass).entities
+    _LOGGER.info(list(entities.keys()))
+    await hass.services.async_call('notify','send_message', {'entity_id': 'notify.happy3', 'message': 'amsg', 'title': 'atitle' })
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('send_message', f'amsg')
     assert service_calls.isEmpty()
     assert gotSendMsg == { 'msg': 'amsg', 'title': 'atitle' }
     gotSendMsg = None
 
-        
+    #entId = 'notify.notify_happy3'
+    #entRegistry = er.async_get(hass)
+    #entry = entRegistry.async_get(entId)
+    #platform = entry.platform
+    #plats = ep.async_get_platforms(hass, platform)
+    #assert len(plats) == 1
+    #plat = plats[0]
+    #assert plat.platform_data.platform_name == platform
+    #_LOGGER.info(f'platform={platform}  ents={plat.entities}')
+    #ent = plat.entities[entId]
+    #assert isinstance(ent, NotifyEntity)
+    #assert isinstance(ent, TestNotifyEntity)
+    #assert ent.__class__.__name__ == 'TestNotifyEntity'
+    #_LOGGER.info(f'and parse_mode={ent.service.parse_mode}')
+    #
+    #srvSuffix = 'poop'
+    #svcs = hass.data[NOTIFY_SERVICES].get(srvSuffix, [])
+    #serv: Service = hass.services.async_services_internal.get('notify', {}).get(srvSuffix, None)
+    #if serv:
+    #    serv.job.target
+    #
+    # Alert2 has some tricky logic to give better diagnostic error if user is
+    # using a telegram notifier without putting it in HTML mode
+    #assert TelegramBotNotifyEntity.__class__.__name__ == 'TelegramBotNotifyEntity'
+    #assert TelegramNotificationService.__class__.__name__ == 'TelegramNotificationService'
+    
     await setAndWait(hass, "sensor.a1", 'on')
     service_calls.popNotifyEmpty('send_message', f't1: turned on')
     assert gotSendMsg == { 'msg': 'Alert2 d_t1: turned on'}
@@ -722,7 +770,39 @@ async def test_notifiers6(hass, service_calls):
     service_calls.popNotifySearch('send_message', 't4', f't4: turned on')
     service_calls.popNotifyEmpty('persistent_notification', 'at present support only "message"')
     assert gotSendMsg == None
-    
+
+    await asyncio.sleep(alert2.kNotifierStartupGraceSecs)
+    gotSendMsg = None
+    await setAndWait(hass, "sensor.a5", 'on')
+    await hass.async_block_till_done()
+    assert gotSendMsg == { 'msg': 'Alert2 d_t5: turned on'}
+    service_calls.popNotifySearch('send_message', 't5', f't5: turned on')
+    service_calls.popNotifyEmpty('persistent_notification', '"notify.yuck" is not known')
+
+    gotSendMsg = None
+    await setAndWait(hass, "sensor.a6", 'off')
+    # Should use old notification system
+    await setAndWait(hass, "sensor.target", 'overlap')
+    await setAndWait(hass, "sensor.a6", 'on')
+    assert gotSendMsg == None
+    service_calls.popNotifyEmpty('overlap', 't6: turned on')
+    # Should default to new notification system
+    await setAndWait(hass, "sensor.target", 'notify.overlap')
+    await setAndWait(hass, "sensor.a6", 'off')
+    assert gotSendMsg == { 'msg': 'Alert2 d_t6: turned off after 0 s.'}
+    service_calls.popNotifyEmpty('send_message', f't6: turned off')
+    # And should use old system even with 'notify.' prefix
+    gotSendMsg = None
+    await setAndWait(hass, "sensor.target", 'notify.unique')
+    await setAndWait(hass, "sensor.a6", 'on')
+    assert gotSendMsg == None
+    service_calls.popNotifyEmpty('unique', 't6: turned on')
+    await setAndWait(hass, "sensor.target", 'unique')
+    await setAndWait(hass, "sensor.a6", 'off')
+    assert gotSendMsg == None
+    service_calls.popNotifyEmpty('unique', 't6: turned off')
+
+            
 async def test_throttle(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
         { 'domain': 'test', 'name': 't10a', 'condition': 'sensor.a', 'throttle_fires_per_mins': [2, 0.05], 'reminder_frequency_mins':0.01 },

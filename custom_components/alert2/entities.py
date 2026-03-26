@@ -67,6 +67,16 @@ class NotificationReason(Enum):
             return 'turned off'
         # probably should call reportIfSafe(DOMAIN, 'error') here
         return f'--{aenum.name}-SHOULD-NEVER-SEE-THIS--'
+
+def newNotifierExists(hass, anotifier):
+    entRegistry = er.async_get(hass)
+    return anotifier.startswith('notify.') and entRegistry.async_is_registered(anotifier)
+def legacyNotifierExists(hass, anotifier):
+    prefix = 'notify.'
+    suffix = anotifier[len(prefix):] if anotifier.startswith(prefix) else anotifier
+    return suffix if hass.services.has_service('notify', suffix) else None
+def notifierExists(hass, anotifier):
+    return newNotifierExists(hass, anotifier) or (legacyNotifierExists(hass, anotifier) is not None)
     
 class ThresholdExeeded(Enum):
     Init = 1
@@ -898,11 +908,6 @@ def notifierTemplateToList(hass, notificationVars, templOrList, sourceTemplate):
             notifiers.append(anotifier)
     return (notifiers, errors, debugInfo)
 
-def notifierExists(hass, anotifier):
-    entRegistry = er.async_get(hass)
-    return (anotifier.startswith('notify.') and entRegistry.async_is_registered(anotifier)) or \
-        (not anotifier.startswith('notify.') and hass.services.has_service('notify', anotifier))
-
 # Functionality common to both event alerts and condition alerts
 #
 # Startup procedure is:
@@ -1631,24 +1636,29 @@ class AlertBase(AlertCommon, RestoreEntity):
                                 if 'data' not in args:
                                     args['data'] = {}
                                 args['data']['notification_id'] = PersistantNotificationHelper.genNotificationId(self)
-                        if notifier.startswith('notify.'):
+                        if newNotifierExists(self.hass, notifier):
                             args['entity_id'] = notifier
                         elif 'entity_id' in args:
                             del args['entity_id']
                         try:
-                            if notifier.startswith('notify.'):
+                            if newNotifierExists(self.hass, notifier):
+                                # Newer entity platform notify.
                                 await self.hass.services.async_call('notify', 'send_message', args)
                             else:
-                                await self.hass.services.async_call('notify', notifier, # eg 'raw_jtelegram'
-                                                                    args)
+                                # Legacy notify mechanism
+                                lNotifier = legacyNotifierExists(self.hass, notifier)
+                                if lNotifier is None:
+                                    self.reportIfSafe(DOMAIN, 'error', f'{gAssertMsg} {self.name} somehow notifier {notifier} is neither new nor old notifier?')
+                                else:
+                                    await self.hass.services.async_call('notify', lNotifier, # eg 'raw_jtelegram'
+                                                                        args)
                         except ServiceNotFound:
                             # We check has_service and depend on notify in manifest,
-                            # so this should never happen.  But don't report in case it's for alert2.error
-                            # so we don't loop.
-                            _LOGGER.error(f'{gAssertMsg} {self.name} Somehow notify of {notifier} failed with ServiceNotFound. args={args}')
+                            # so this should never happen.
+                            self.reportIfSafe(DOMAIN, 'error', f'{gAssertMsg} {self.name} Somehow notify of {notifier} failed with ServiceNotFound. args={args}')
                         except vol.error.MultipleInvalid as err:
-                            if notifier.startswith('notify.'):
-                                report(DOMAIN, 'error', f'New notifiers (those starting with "notify.") at present support only "message" and "title" parameters. If you want to specify extra parameters like "data", you must use the legacy notifier system.  Actual error:  {err}')
+                            if newNotifierExists(self.hass, notifier):
+                                self.reportIfSafe(DOMAIN, 'error', f'{self.name}: The new entity-platform notifiers at present support only "message" and "title" parameters. If you want to specify extra parameters like "data", you must use the legacy service-based notifiers.  Actual error:  {err}')
                             else:
                                 raise
                             
