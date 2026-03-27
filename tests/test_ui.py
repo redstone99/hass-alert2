@@ -1798,6 +1798,12 @@ async def test_display_msg2(hass, service_calls, hass_storage, caplog):
     assert re.search('Summary: Alert2 d_n3: .*fired 1x', caplog.text)
 
 async def test_display_msg3(hass, service_calls, hass_ws_client):
+    #xx = logging.getLogger('alert2')
+    #xx.setLevel(logging.DEBUG)
+    #xx = logging.getLogger(None) # get root logger
+    #xx.setLevel(logging.DEBUG)
+
+
     # Purpose is to both test an event alert
     # and to check subscribing to more than one entity over a single websocket connection
     #
@@ -1824,10 +1830,14 @@ async def test_display_msg3(hass, service_calls, hass_ws_client):
     await setAndWait(hass, 'sensor.a1', 'foo')
     await setAndWait(hass, 'sensor.a2', 'foo2')
     await setAndWait(hass, 'sensor.b', '')
+    await setAndWait(hass, 'sensor.n3', 'off')
     cfg = { 'alert2': {
         'alerts': [
             { 'domain': 'd', 'name': 'n1', 'condition':'off', 'display_msg': '{{ states("sensor.a1") }}' },
             { 'domain': 'd', 'name': 'n2', 'trigger': [{'platform':'state','entity_id':'sensor.b'}], 'display_msg': '{{ states("sensor.a2") }}' },
+            # Try a display_msg that references alert_entity_id
+            { 'domain': 'd', 'name': 'n3', 'condition':'sensor.n3', 'friendly_name': 'dd_fn3',
+              'display_msg': '{% if is_state(alert_entity_id, "on") %}ch-on{% else %}{{ "zz" }}{% endif %}', },
         ]} }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
@@ -1864,6 +1874,45 @@ async def test_display_msg3(hass, service_calls, hass_ws_client):
     await getEvent(wsc, msg_id2, 'z2')
     await checkNoMsg(wsc)
 
+    _LOGGER.info('-----------------------------------------')
+    
+    msg_id3 = 3
+    await wsc.send_json({ "id": msg_id3, "type": "alert2_watch_display_msg",
+                          'domain': 'd', 'name': 'n3' } )
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    await getEvent(wsc, msg_id3, 'zz')
+    await getResult(wsc, msg_id3, None)
+    await checkNoMsg(wsc)
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, 'sensor.n3', 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 'n3: turned on')
+    await getEvent(wsc, msg_id3, 'ch-on')
+    await checkNoMsg(wsc)
+
+    await setAndWait(hass, 'sensor.n3', 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 'n3: turned off')
+    await getEvent(wsc, msg_id3, 'zz')
+    await checkNoMsg(wsc)
+
+    await setAndWait(hass, 'sensor.n3', 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 'n3: turned on')
+    await getEvent(wsc, msg_id3, 'ch-on')
+    await checkNoMsg(wsc)
+
+    await setAndWait(hass, 'sensor.n3', 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 'n3: turned off')
+    await getEvent(wsc, msg_id3, 'zz')
+    await checkNoMsg(wsc)
+
+    await setAndWait(hass, 'sensor.n3', 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 'n3: turned on')
+    await getEvent(wsc, msg_id3, 'ch-on')
+    await checkNoMsg(wsc)
+
+    await asyncio.sleep(0.5)
+    
 async def test_event(hass, service_calls, hass_client, hass_storage):
     cfg = { 'alert2': {
         'alerts': [

@@ -4016,7 +4016,7 @@ async def test_display_msg2(hass, service_calls):
         assert False
     msg = await hass.services.async_call('alert2','get_display_msg', { 'entity_id': 'alert2.test_t4' }, blocking=True, return_response=True)
     assert msg == {'alert2.test_t4': 'x=alert2.test_t4 d=test n=t4'}
-    
+
 async def test_priority(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
         { 'domain': 'test', 'name': 't1', 'condition': 'off' },
