@@ -2970,9 +2970,11 @@ async def test_late_state(hass, service_calls):
     assert re.search('states."sensor.ick"', t70._condition_template.template)
     
 async def test_friendly_name(hass, service_calls):
+    await setAndWait(hass, "sensor.a", 'off')
     cfg = { 'alert2' : { 'alerts' : [
         { 'domain': 'test', 'name': 't71', 'friendly_name': '{{ states("sensor.ick") }}', 'condition': 'off' },
         { 'domain': 'test', 'name': 't72', 'friendly_name': 'z{{ alert_entity_id }}z', 'condition': 'off' },
+        { 'domain': 'test', 'name': 't73', 'friendly_name': 'z{{ states(alert_entity_id) }}z', 'condition': 'sensor.a' },
         ]}}
     hass.states.async_set("sensor.ick", 't71yy')
     assert await async_setup_component(hass, DOMAIN, cfg)
@@ -2983,11 +2985,17 @@ async def test_friendly_name(hass, service_calls):
 
     t71 = gad.alerts['test']['t71']
     t72 = gad.alerts['test']['t72']
+    t73 = gad.alerts['test']['t73']
     assert hass.states.get('alert2.test_t71').attributes['friendly_name'] == 't71yy'
     assert hass.states.get('alert2.test_t72').attributes['friendly_name'] == 'zalert2.test_t72z'
+    assert hass.states.get('alert2.test_t73').attributes['friendly_name'] == 'zoffz'
     await setAndWait(hass, "sensor.ick", 'foo71')
     assert hass.states.get('alert2.test_t71').attributes['friendly_name'] == 'foo71'
     assert hass.states.get('alert2.test_t72').attributes['friendly_name'] == 'zalert2.test_t72z'
+
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifySearch('persistent_notification', 'self-references', 'template self-references alert entity')
+    service_calls.popNotifyEmpty('persistent_notification', ': turned on')
     
 async def test_reload(hass, service_calls, monkeypatch):
     cfg = { 'alert2' : { 'notifier_startup_grace_secs': 1.0,

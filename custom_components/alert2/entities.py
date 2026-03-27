@@ -413,18 +413,18 @@ class Tracker:
         Float = 4
         NonnegativeFloat = 5
         List = 6
-    def __init__(self, parentEnt, sname, hass, cfgList, cb, extraVariables):
+    def __init__(self, parentEnt, sname, hass, cfgList, cb, extraVariables, allowEntRef: bool):
         self.hass = hass
-        #self.alertData = alertData
         self.cfgList = cfgList
         self.trackerInfo = None
-        self._self_ref_update_count = 0
+        #self._self_ref_update_count = 0
         self.parentEnt = parentEnt
         if not isinstance(parentEnt, Entity):
             report(DOMAIN, 'error', f'{gAssertMsg} parentEnt type={type(parentEnt)}')
         self.fullName = f'{parentEnt.name}::{sname}'
         self.cb = cb
         self.extraVariables = extraVariables
+        self.allowEntRef = allowEntRef
 
     def shutdown(self):
         if self.trackerInfo:
@@ -465,18 +465,30 @@ class Tracker:
                    updates: list[TrackTemplateResult]) -> None:
         if event:
             self.parentEnt.async_set_context(event.context)
+        # entity_id is the entity who'se state change triggered the template update
         entity_id = event and event.data["entity_id"]
-        _LOGGER.debug(f'{self.fullName} template result cb for entity_id={entity_id}')
-        # This is how componnents/template/template_entity.py does cycle detection
-        if entity_id and entity_id == self.parentEnt.entity_id:
-            self._self_ref_update_count += 1
+        _LOGGER.debug(f'{self.fullName} template result cb for entity_id={entity_id} parent_entity_id={self.parentEnt.entity_id}')
+        # componnents/template/template_entity.py does some simple cycle detetion, which makes sense
+        # for a TemplateEntity, but it's of less value for Alert2 entitites.
+        #if entity_id and entity_id == self.parentEnt.entity_id:
+        #    self._self_ref_update_count += 1
+        #else:
+        #    self._self_ref_update_count = 0
+        #if self._self_ref_update_count > 2:
+        #    upStr = ','.join([ x['fieldName'] for x in self.cfgList ])
+        #    report(DOMAIN, 'error', f'{self.fullName} detected template loop. event={event}, updates for [{upStr}]. Skipping render')
+        #    return
+        if self.allowEntRef:
+            pass # doesn't matter what entity_id is
         else:
-            self._self_ref_update_count = 0
-        if self._self_ref_update_count > 2:
-            upStr = ','.join([ x['fieldName'] for x in self.cfgList ])
-            report(DOMAIN, 'error', f'{self.fullName} detected template loop. event={event}, updates for [{upStr}]. Skipping render')
-            return
-
+            if entity_id and entity_id == self.parentEnt.entity_id:
+                # I think it's impossible for this to be reached by alert2.alert2_error, so
+                # we don't need to call reportIfSafe.. I think.
+                report(DOMAIN, 'error', f'{self.fullName} template self-references alert entity. We forbid this for now to conservatively avoid reference loops. Skipping update.')
+                upStr = ','.join([ x['fieldName'] for x in self.cfgList ])
+                _LOGGER.info(f'{self.fullName}: self ref debug info: event={event}, updates for [{upStr}].')
+                return
+        
         tresults = [None for x in self.cfgList]
         for update in updates:
             template = update.template
@@ -677,7 +689,8 @@ class AlertGenerator(AlertCommon, SensorEntity):
         self._generator_template = self.config['generator']
         self.tracker = Tracker(self, 'generator', hass,
                                [ { 'fieldName': 'generator', 'type': Tracker.Type.List,
-                                   'template': self._generator_template } ], self.update_rez, extraVariables=None)
+                                   'template': self._generator_template } ], self.update_rez, extraVariables=None,
+                               allowEntRef=False)
                                
         # "name" here is overloaded. There's the 'name' from the domain+name specified in an alert config
         # then there's the 'name' that is the HA entity's name property.
@@ -1026,7 +1039,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             if template_helper.is_template_string(frn.template):
                 self.friendlyNameTracker = Tracker(self, 'friendly_name', self.hass,
                                                    [ { 'fieldName': 'friendly_name', 'type': Tracker.Type.Str,
-                                                       'template': frn } ], self.friendly_name_update, self.extraVariables)
+                                                       'template': frn } ], self.friendly_name_update, self.extraVariables, allowEntRef=False)
             else:
                 self._attr_name = frn.template.strip()
         
@@ -1900,13 +1913,13 @@ class ConditionAlert(AlertBase):
             #self.threshold_min = config['threshold']['minimum'] if 'minimum' in config['threshold'] else None
             #self.threshold_hysteresis = config['threshold']['hysteresis'] if 'hysteresis' in config['threshold'] else None
             #self.threshold_exceeded = ThresholdExeeded.Init # to record if we crossed min or max
-        self.condValTracker = Tracker(self, 'condition-value', self.hass, templs, self.cond_val_update, self.extraVariables)
+        self.condValTracker = Tracker(self, 'condition-value', self.hass, templs, self.cond_val_update, self.extraVariables, allowEntRef=False)
         
         self.delayOnSecsTracker = None
         if  self._delay_on_secs_template is not None:
             self._delay_on_secs_template.hass = self.hass
             templs2 = [ {'fieldName': 'delay_on_secs', 'type': Tracker.Type.NonnegativeFloat, 'template': self._delay_on_secs_template } ]
-            self.delayOnSecsTracker = Tracker(self, 'delay-on-secs', self.hass, templs2, self.delay_on_secs_update, self.extraVariables)
+            self.delayOnSecsTracker = Tracker(self, 'delay-on-secs', self.hass, templs2, self.delay_on_secs_update, self.extraVariables, allowEntRef=False)
 
         self.onTracker = None
         if 'trigger_on' in self.config:
@@ -1914,7 +1927,7 @@ class ConditionAlert(AlertBase):
                                self.config['trigger_on'], self.config['condition_on'] if 'condition_on' in self.config else None)
         elif 'condition_on' in self.config:
             templs = [{'fieldName': 'condition_on', 'type': Tracker.Type.Bool, 'template': self.config['condition_on'] }]
-            self.onTracker = Tracker(self, 'condition_on', self.hass, templs, self.cond_on_update, self.extraVariables)
+            self.onTracker = Tracker(self, 'condition_on', self.hass, templs, self.cond_on_update, self.extraVariables, allowEntRef=False)
 
         self.offTracker = None
         if 'trigger_off' in self.config:
@@ -1922,7 +1935,7 @@ class ConditionAlert(AlertBase):
                                self.config['trigger_off'], self.config['condition_off'] if 'condition_off' in self.config else None)
         elif 'condition_off' in self.config:
             templs = [{'fieldName': 'condition_off', 'type': Tracker.Type.Bool, 'template': self.config['condition_off'] }]
-            self.offTracker = Tracker(self, 'condition_off', self.hass, templs, self.cond_off_update, self.extraVariables)
+            self.offTracker = Tracker(self, 'condition_off', self.hass, templs, self.cond_off_update, self.extraVariables, allowEntRef=False)
             
     async def trigger_on(self, variables):
         self.update_state_internal(True)

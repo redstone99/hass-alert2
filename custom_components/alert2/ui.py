@@ -578,7 +578,7 @@ class DisplayMsgSocketMgr:
 
         tracker = Tracker(ent, 'display_msg', self.hass,
                           [ { 'fieldName': 'display_msg', 'type': Tracker.Type.StrEmptyOk,
-                              'template': ent._display_msg_template } ], handle_rez, extraVariables=ent.extraVariables)
+                              'template': ent._display_msg_template } ], handle_rez, extraVariables=ent.extraVariables, allowEntRef=True)
         #_LOGGER.warning(f'{ent.entity_id}: got subscribe msg {msgId} for tracker {id(tracker)}')
         if ent.earlyStart or self.alertData.haStarted:
             tracker.startWatching()
