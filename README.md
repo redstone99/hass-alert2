@@ -253,8 +253,7 @@ Example:
 
 ##### Telegram notifiers
 
-If you're using telegram notifiers ([Telegram bot](https://www.home-assistant.io/integrations/telegram_bot/) integration), we recommend setting `parse_mode` in the notifier config to "html" (or "plain_text").
-Telegram notifiers default to a parse_mode of "markdown", which can throw errors with the syntax characters Alert2 or you might add to notification messages (e.g., "[").
+If you're using telegram notifiers ([Telegram bot](https://www.home-assistant.io/integrations/telegram_bot/) integration), we recommend setting `parse_mode` in the notifier config to "html" (or "plain_text"). Telegram notifiers default to a parse_mode of "markdown".  If telegram can't parse a message, it throws an error and the message is not sent. "Markdown" is especially susceptible to such issues (e.g., if the message contains a "[").
 
 
 ### Alert2 internal errors
