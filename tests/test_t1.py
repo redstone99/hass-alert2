@@ -14,7 +14,7 @@ import pytest
 import contextlib
 import datetime as rawdt
 _LOGGER = logging.getLogger(None) # get root logger
-#_LOGGER.setLevel(logging.DEBUG)
+_LOGGER.setLevel(logging.DEBUG)
 if os.environ.get('JTESTDIR'):
     sys.path.insert(0, os.environ['JTESTDIR'])
 from custom_components.alert2 import (DOMAIN, Alert2Data)
@@ -1444,6 +1444,7 @@ async def test_event(hass, service_calls):
         { 'domain': 'test', 'name': 't25', 'target': 'targett25' },
         { 'domain': 'test', 'name': 't25a', 'target': '{{ "ab" + "cd" }}' },
         { 'domain': 'test', 'name': 't26', 'data': { 'd1': 'data-d1' } },
+        { 'domain': 'test', 'name': 'Toxic Air' },
     ], } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
@@ -1503,6 +1504,14 @@ async def test_event(hass, service_calls):
     service_calls.popNotifyEmpty('persistent_notification', 'test_t26',
                                  extraFields={ 'data': { 'd1': 3 }})
 
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'toxic_air', 'message': 'foo'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'Domain and name must exactly match.*foo')
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'toxic_air', 'message': 'foo2'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'Domain and name must exactly match.*foo')
+
+    
 async def test_event2(hass, service_calls):
     # Check throttling
     cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True }, 'tracked' : [
@@ -2975,6 +2984,8 @@ async def test_friendly_name(hass, service_calls):
         { 'domain': 'test', 'name': 't71', 'friendly_name': '{{ states("sensor.ick") }}', 'condition': 'off' },
         { 'domain': 'test', 'name': 't72', 'friendly_name': 'z{{ alert_entity_id }}z', 'condition': 'off' },
         { 'domain': 'test', 'name': 't73', 'friendly_name': 'z{{ states(alert_entity_id) }}z', 'condition': 'sensor.a' },
+        # Friendly name ignored
+        { 'domain': 'test', 'name': 't74', 'friendly_name': 'fff', 'condition': 'sensor.a', 'annotate_messages': False, 'message': 'foo' },
         ]}}
     hass.states.async_set("sensor.ick", 't71yy')
     assert await async_setup_component(hass, DOMAIN, cfg)
@@ -2995,7 +3006,8 @@ async def test_friendly_name(hass, service_calls):
 
     await setAndWait(hass, "sensor.a", 'on')
     service_calls.popNotifySearch('persistent_notification', 'self-references', 'template self-references alert entity')
-    service_calls.popNotifyEmpty('persistent_notification', ': turned on')
+    service_calls.popNotifySearch('persistent_notification', 'zoffz', 'zoffz: turned on')
+    service_calls.popNotifyEmpty('persistent_notification', '^foo$')
     
 async def test_reload(hass, service_calls, monkeypatch):
     cfg = { 'alert2' : { 'notifier_startup_grace_secs': 1.0,
@@ -4910,3 +4922,112 @@ async def test_err_trigger(hass, service_calls):
     await asyncio.sleep(0.25)
     service_calls.popNotifyEmpty('persistent_notification', 'Alert2 d_n: logmsg=badbad-extra')
     assert service_calls.isEmpty()
+
+async def test_update(hass, service_calls, monkeypatch):
+    cfg = { 'alert2' : { 'alerts': [
+        { 'domain': 'd', 'name': 't1', 'condition': 'off' },
+        { 'domain': 'd', 'name': 't2', 'condition': 'sensor.a', 'notifier': None },
+        { 'domain': 'd', 'name': 't3', 'condition': 'sensor.b', 'notifier': None },
+        { 'domain': 'd', 'name': '{{ genElem }}', 'condition': 'off', 'generator_name': 'g1', 'generator': '{{ states("sensor.g") }}' },
+    ]},
+            'template': [
+                { 'binary_sensor': [
+                    { 'name': 'any_alert_on',
+                      'unique_id': 'foosdfsdf',
+                      'state': "{{ integration_entities('alert2') |select('search','alert') |expand |selectattr('state','eq','on') |list|count != 0 }}",
+                     } ],
+                  'sensor': [
+                      { 'name': 'st',
+                        'unique_id': 's1',
+                        'state': "{{ states('sensor.c') }}",
+                       },
+                    { 'name': 'st2',
+                      'unique_id': 's6',
+                      'state': "{{ states('alert2.d_t2') }}",
+                     },
+                    { 'name': 'st3',
+                      'unique_id': 's7',
+                      'state': "{{ states.alert2 | selectattr('entity_id', 'eq', 'alert2.d_t2') | map(attribute='entity_id') | list }}",
+                     },
+                    { 'name': 'st4',
+                      'unique_id': 's5',
+                      'state': "{{ states | selectattr('entity_id', 'eq', 'alert2.d_t2') | map(attribute='state') | list }}",
+                     },
+                    { 'name': 'all_names',
+                      'unique_id': 's4',
+                      'state': "{{ states | selectattr('entity_id', 'match', '^alert2.') | map(attribute='entity_id') | list }}",
+                     },
+                    { 'name': 'alert_on_names2',
+                      'unique_id': 's2',
+                      'state': "{{ states | selectattr('entity_id', 'match', '^alert2.') | selectattr('state','eq','on') | map(attribute='entity_id') | list }}",
+                     },
+                      { 'name': 'alert_on_names',
+                        'unique_id': 's3',
+                        'state': "{{ integration_entities('alert2') |select('search','alert') |expand |selectattr('state','eq','on') | map(attribute='entity_id')|list }}",
+                       },
+
+                ]}]}
+    await setAndWait(hass, "sensor.a", 'off')
+    await setAndWait(hass, "sensor.b", 'off')
+    await setAndWait(hass, "sensor.c", '11')
+    await setAndWait(hass, "sensor.g", '[]')
+    # Template is setup and does first renderings before alert2 is setup.
+    assert await async_setup_component(hass, "template", cfg)
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    entities = er.async_get(hass).entities
+    _LOGGER.info(list(entities.keys()))
+
+    # Basic template update test
+    assert hass.states.get('sensor.st').state == '11'
+    await setAndWait(hass, "sensor.c", '12')
+    assert hass.states.get('sensor.st').state == '12'
+
+    # Basic alert template update test
+    assert hass.states.get('sensor.st2').state == 'off'
+    await setAndWait(hass, "sensor.a", 'on')
+    assert hass.states.get('sensor.st2').state == 'on'
+    await setAndWait(hass, "sensor.a", 'off')
+    assert hass.states.get('sensor.st2').state == 'off'
+
+    # 'states' does not track entity updates, even if a new entity is created.
+    #
+    assert hass.states.get('sensor.st3').state == '[]'
+    _LOGGER.info('--------------------------------------------------------')
+    await setAndWait(hass, "sensor.g", '["foo"]')
+    assert hass.states.get('sensor.st3').state == '[]'
+    # Reloading doesn't help
+    await do_reload(cfg, hass, monkeypatch)
+    assert hass.states.get('sensor.st3').state == '[]'
+    await asyncio.sleep(61)
+    assert hass.states.get('sensor.st3').state == '[]'
+
+
+
+    # 'states' does not track entity updates
+    
+    fuck
+
+    # Can states track updates?
+    assert hass.states.get('sensor.st2').state == 'off'
+    await setAndWait(hass, "sensor.a", 'on')
+    assert hass.states.get('sensor.st2').state == 'on'
+    fuck
+
+
+    assert hass.states.get('sensor.alert_on_names').state == '[]'
+    assert hass.states.get('sensor.alert_on_names2').state == '[]'
+    assert hass.states.get('binary_sensor.any_alert_on').state == 'off'
+
+    
+    await setAndWait(hass, "sensor.a", 'on')
+    await asyncio.sleep(0.25)
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert hass.states.get('sensor.alert_on_names2').state == '[alert2.d_t2]'
+    assert hass.states.get('sensor.alert_on_names').state == '[alert2.d_t2]'
+    assert hass.states.get('binary_sensor.any_alert_on').state == 'on'
+    
