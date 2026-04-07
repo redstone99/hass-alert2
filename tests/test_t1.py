@@ -31,7 +31,7 @@ from custom_components.alert2.util import (     GENERATOR_DOMAIN,
                                                 EVENT_ALERT2_UNACK,
                                            )
 import homeassistant.const
-from homeassistant.core import State
+from homeassistant.core import State, HassJob
 from homeassistant import config as conf_util
 from   homeassistant.exceptions import HomeAssistantError
 import homeassistant.helpers.restore_state as rs
@@ -42,6 +42,7 @@ from homeassistant.util.dt import utcnow
 from homeassistant.util.yaml import parse_yaml
 import homeassistant.components.persistent_notification as pn
 from homeassistant.components.notify import NotifyEntity, NotifyEntityFeature
+import homeassistant.helpers.template.render_info as templ_ri
 #from homeassistant.components.telegram_bot.notify import TelegramBotNotifyEntity
 #from homeassistant.components.telegram.notify import TelegramNotificationService
 #from tests.common import MockConfigEntry
@@ -4861,35 +4862,63 @@ async def test_exception2(hass, service_calls, monkeypatch):
     await hass.async_start()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    async def gdie():
+    async def gdie(astr):
+        _LOGGER.info(f'----- about to die -----------: {astr}')
+        raise ZTestException('xoo')
+    async def cb_gdie():
+        _LOGGER.info('----- about to cb die -----------')
         raise ZTestException('xoo')
 
     # Try regex that doesn't compile
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'foo(' } ] } }
     await do_reload(cfg, hass, monkeypatch)
     service_calls.popNotifyEmpty('persistent_notification', 'failed to compile')
-    
+
+    if False:
+       # Try hass task version.  It squashes exceptions
+        cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xxx' ] } ] } }
+        await do_reload(cfg, hass, monkeypatch)
+        hass.async_create_task(gdie('a'), 'gdie-a') # no eager_start
+        await hass.async_block_till_done()
+        await asyncio.sleep(0.25)
+        assert service_calls.isEmpty()
+        hass.async_create_task(gdie('b'), 'gdie-b', eager_start=True)
+        await hass.async_block_till_done()
+        await asyncio.sleep(0.25)
+        assert service_calls.isEmpty()
+
+       # Try hass job version. It also seems to squash exceptions
+        ajob = HassJob(cb_gdie, 'gdie2')
+        hass.async_run_hass_job(ajob, background=False)
+        await hass.async_block_till_done()
+        await asyncio.sleep(0.25)
+        assert service_calls.isEmpty()
+        ajob = HassJob(cb_gdie, 'gdie3')
+        hass.async_run_hass_job(ajob, background=True)
+        await hass.async_block_till_done()
+        await asyncio.sleep(0.25)
+        
     # Try alert2 version
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xxx' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
-    alert2.create_task(hass, 'alert2', gdie())
+    alert2.create_task(hass, 'alert2', gdie('d'))
     await asyncio.sleep(0.25)
     service_calls.popNotifyEmpty('persistent_notification', 'Exception.*xoo')
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xoo.*raise ZTestException' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
-    alert2.create_task(hass, 'alert2', gdie())
+    alert2.create_task(hass, 'alert2', gdie('e'))
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
     
     # Try custom domain
     cfg = { 'alert2' : { 'tracked': [ { 'domain': 'foof', 'name': 'unhandled_exception', 'exception_ignore_regexes': [ 'xxx' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
-    alert2.create_task(hass, 'foof', gdie())
+    alert2.create_task(hass, 'foof', gdie('f'))
     await asyncio.sleep(0.25)
     service_calls.popNotifyEmpty('persistent_notification', 'foof_unhandled_exception.*xoo')
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'foof', 'name': 'unhandled_exception', 'exception_ignore_regexes': [ 'xoo.*raise ZTestException' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
-    alert2.create_task(hass, 'foof', gdie())
+    alert2.create_task(hass, 'foof', gdie('g'))
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
 
@@ -4924,48 +4953,53 @@ async def test_err_trigger(hass, service_calls):
     assert service_calls.isEmpty()
 
 async def test_update(hass, service_calls, monkeypatch):
+    templ_ri.ALL_STATES_RATE_LIMIT = 1 # seconds
     cfg = { 'alert2' : { 'alerts': [
-        { 'domain': 'd', 'name': 't1', 'condition': 'off' },
+        #{ 'domain': 'd', 'name': 't1', 'condition': 'off' },
         { 'domain': 'd', 'name': 't2', 'condition': 'sensor.a', 'notifier': None },
-        { 'domain': 'd', 'name': 't3', 'condition': 'sensor.b', 'notifier': None },
-        { 'domain': 'd', 'name': '{{ genElem }}', 'condition': 'off', 'generator_name': 'g1', 'generator': '{{ states("sensor.g") }}' },
+        #{ 'domain': 'd', 'name': 't3', 'condition': 'sensor.b', 'notifier': None },
+        { 'domain': 'd', 'name': '{{ genElem }}', 'condition': 'sensor.a', 'generator_name': 'g1', 'generator': '{{ states("sensor.g") }}', 'notifier': None },
     ]},
             'template': [
                 { 'binary_sensor': [
-                    { 'name': 'any_alert_on',
-                      'unique_id': 'foosdfsdf',
-                      'state': "{{ integration_entities('alert2') |select('search','alert') |expand |selectattr('state','eq','on') |list|count != 0 }}",
-                     } ],
+                    #{ 'name': 'any_alert_on',
+                    #  'unique_id': 'foosdfsdf',
+                    #  'state': "{{ integration_entities('alert2') |select('search','alert') |expand |selectattr('state','eq','on') |list|count != 0 }}",
+                    # }
+                ],
                   'sensor': [
-                      { 'name': 'st',
-                        'unique_id': 's1',
-                        'state': "{{ states('sensor.c') }}",
-                       },
-                    { 'name': 'st2',
-                      'unique_id': 's6',
-                      'state': "{{ states('alert2.d_t2') }}",
+                    #  { 'name': 'st',
+                    #    'unique_id': 's1',
+                    #    'state': "{{ states('sensor.c') }}",
+                    #   },
+                    #{ 'name': 'st2',
+                    #  'unique_id': 's6',
+                    #  'state': "{{ states('alert2.d_t2') }}",
+                    # },
+                    #{ 'name': 'st3',
+                    #  'unique_id': 's7',
+                    #  'state': "{{ states.alert2 | selectattr('entity_id', 'eq', 'alert2.d_t2') | map(attribute='entity_id') | list }}",
+                    # },
+                    #{ 'name': 'st4',
+                    #  'unique_id': 's5',
+                    #  'state': "{{ states | selectattr('entity_id', 'eq', 'alert2.d_t2') | map(attribute='state') | list }}",
+                    # },
+                    #{ 'name': 'st4',
+                    #  'unique_id': 's4',
+                    #  'state': "{{ states.alert2 | selectattr('entity_id', 'match', '^alert2.') | map(attribute='entity_id') | list }}",
+                    # },
+                    #{ 'name': 'st5',
+                    #  'unique_id': 's2',
+                    #  'state': "{{ states | selectattr('entity_id', 'match', '^alert2.') | selectattr('state','eq','on') | map(attribute='entity_id') | list }}",
+                    # },
+                    #{ 'name': 'alert_on_names2',
+                    #  'unique_id': 's2',
+                    #  'state': "{{ states | selectattr('entity_id', 'match', '^alert2.') | selectattr('state','eq','on') | map(attribute='entity_id') | list }}",
+                    # },
+                    { 'name': 'st8',
+                      'unique_id': 'st8',
+                      'state': "{{ integration_entities('alert2') |select('search','alert') |expand |selectattr('state','eq','on') | map(attribute='entity_id')|list }}",
                      },
-                    { 'name': 'st3',
-                      'unique_id': 's7',
-                      'state': "{{ states.alert2 | selectattr('entity_id', 'eq', 'alert2.d_t2') | map(attribute='entity_id') | list }}",
-                     },
-                    { 'name': 'st4',
-                      'unique_id': 's5',
-                      'state': "{{ states | selectattr('entity_id', 'eq', 'alert2.d_t2') | map(attribute='state') | list }}",
-                     },
-                    { 'name': 'all_names',
-                      'unique_id': 's4',
-                      'state': "{{ states | selectattr('entity_id', 'match', '^alert2.') | map(attribute='entity_id') | list }}",
-                     },
-                    { 'name': 'alert_on_names2',
-                      'unique_id': 's2',
-                      'state': "{{ states | selectattr('entity_id', 'match', '^alert2.') | selectattr('state','eq','on') | map(attribute='entity_id') | list }}",
-                     },
-                      { 'name': 'alert_on_names',
-                        'unique_id': 's3',
-                        'state': "{{ integration_entities('alert2') |select('search','alert') |expand |selectattr('state','eq','on') | map(attribute='entity_id')|list }}",
-                       },
-
                 ]}]}
     await setAndWait(hass, "sensor.a", 'off')
     await setAndWait(hass, "sensor.b", 'off')
@@ -4981,6 +5015,56 @@ async def test_update(hass, service_calls, monkeypatch):
     entities = er.async_get(hass).entities
     _LOGGER.info(list(entities.keys()))
 
+
+    assert hass.states.get('sensor.st8').state == '[]'
+    await asyncio.sleep(1.25)
+    assert hass.states.get('sensor.st8').state == '[]'
+    await setAndWait(hass, "sensor.a", 'on')
+    await asyncio.sleep(1.25)
+    assert hass.states.get('sensor.st8').state == "['alert2.d_t2']"
+    await setAndWait(hass, "sensor.g", '["foo"]')
+    await asyncio.sleep(1.25)
+    assert hass.states.get('sensor.st8').state == "['alert2.d_t2', 'alert2.d_foo']"
+    fuck
+
+   
+    assert hass.states.get('sensor.st5').state == '[]'
+    await asyncio.sleep(1.25)
+    assert hass.states.get('sensor.st5').state == '[]'
+    await setAndWait(hass, "sensor.a", 'on')
+    await asyncio.sleep(1.25)
+    assert hass.states.get('sensor.st5').state == "['alert2.d_t2']"
+    await setAndWait(hass, "sensor.g", '["foo"]')
+    await asyncio.sleep(1.25)
+    assert hass.states.get('sensor.st5').state == "['alert2.d_t2', 'alert2.d_foo']"
+    fuck
+    
+    assert hass.states.get('sensor.st4').state == '[]'
+    await asyncio.sleep(1.25)
+    assert hass.states.get('sensor.st4').state == "['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'alert2.d_t2']"
+    fuck
+    
+
+    # 'states' does not track entity updates, even if a new entity is created.
+    #
+    assert hass.states.get('sensor.st3').state == '[]'
+    await asyncio.sleep(1.25)
+    assert hass.states.get('sensor.st3').state == "['alert2.d_t2']"
+
+
+    
+    _LOGGER.info('-----------------11111---------------------------------------')
+    await asyncio.sleep(2.25)
+    await setAndWait(hass, "sensor.g", '["foo"]')
+    await asyncio.sleep(2.25)
+    assert hass.states.get('sensor.st3').state == "['alert2.d_t2']"
+    _LOGGER.info('-----------------22222---------------------------------------')
+    # Reloading doesn't help
+    await do_reload(cfg, hass, monkeypatch)
+    assert hass.states.get('sensor.st3').state == '[]'
+    fuck
+
+    
     # Basic template update test
     assert hass.states.get('sensor.st').state == '11'
     await setAndWait(hass, "sensor.c", '12')
@@ -4993,17 +5077,6 @@ async def test_update(hass, service_calls, monkeypatch):
     await setAndWait(hass, "sensor.a", 'off')
     assert hass.states.get('sensor.st2').state == 'off'
 
-    # 'states' does not track entity updates, even if a new entity is created.
-    #
-    assert hass.states.get('sensor.st3').state == '[]'
-    _LOGGER.info('--------------------------------------------------------')
-    await setAndWait(hass, "sensor.g", '["foo"]')
-    assert hass.states.get('sensor.st3').state == '[]'
-    # Reloading doesn't help
-    await do_reload(cfg, hass, monkeypatch)
-    assert hass.states.get('sensor.st3').state == '[]'
-    await asyncio.sleep(61)
-    assert hass.states.get('sensor.st3').state == '[]'
 
 
 
