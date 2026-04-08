@@ -174,3 +174,19 @@ Here's an example using the separate on/off conditions.  Suppose you want to ale
             - binary_sensor.door_dryer_open
           to: "on"
 ```
+
+### Counting alerts that are on and unacked
+
+For dashboards, it might be handy to know how many condition alerts are firing and unacked.  You could create a template sensor to measure that with:
+````yaml
+template:
+- sensor:
+  - unique_id: alert2_on_unacked_count
+    name: alert2_on_unacked_count
+    state: >
+      {{ states.alert2
+         |selectattr('state','eq','on') 
+         |selectattr('attributes.is_acked','eq',false)
+         |list|count }}
+````
+Note the use of `states.alert2` instead of `states`.  As mentioned in [this disucsion thread](https://community.home-assistant.io/t/template-entities-referencing-states-can-miss-updates-diagnosed/1002663/2), avoid using the raw `states` object "at all costs".  In particular, templates of the form "{{ states | ... }}" may miss updates.

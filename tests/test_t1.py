@@ -14,7 +14,7 @@ import pytest
 import contextlib
 import datetime as rawdt
 _LOGGER = logging.getLogger(None) # get root logger
-_LOGGER.setLevel(logging.DEBUG)
+#_LOGGER.setLevel(logging.DEBUG)
 if os.environ.get('JTESTDIR'):
     sys.path.insert(0, os.environ['JTESTDIR'])
 from custom_components.alert2 import (DOMAIN, Alert2Data)
@@ -4968,17 +4968,12 @@ async def test_update(hass, service_calls, monkeypatch):
                       'unique_id': 'st2',
                       'state': "{{ states.alert2 | selectattr('entity_id', 'match', 'alert2.') | selectattr('state','eq','on') | map(attribute='entity_id') | list }}",
                      },
-                    { 'name': 'st3',
-                      'unique_id': 'st3',
-                      'state': "{{ states | selectattr('entity_id', 'match', 'alert2.') | selectattr('state','eq','on') | map(attribute='entity_id') | list }}",
-                     },
+                    # Don't use {{ states | ... }}.  It can get confused:
+                    #   https://community.home-assistant.io/t/template-entities-referencing-states-can-miss-updates-diagnosed/1002663/1
                     # integration_entities() doesn't track add/remove entities
-                    { 'name': 'st4',
-                      'unique_id': 'st4',
-                      'state': "{{ integration_entities('alert2')  | selectattr('entity_id', 'match', 'alert2.') | map(attribute='entity_id') | list }}",
-                     },
                 ]}]}
     await setAndWait(hass, "sensor.a", 'off')
+    await setAndWait(hass, "sensor.b", '1')
     await setAndWait(hass, "sensor.g", '[]')
     # Template is setup and does first renderings before alert2 is setup.
     assert await async_setup_component(hass, "template", cfg)
@@ -4993,44 +4988,24 @@ async def test_update(hass, service_calls, monkeypatch):
 
     assert hass.states.get('sensor.st1').state == '[]'
     assert hass.states.get('sensor.st2').state == '[]'
-    assert hass.states.get('sensor.st3').state == '[]'
-    assert hass.states.get('sensor.st4').state == '[]'
     # Wait for template rate_limit throttling on states and states.alert2
     await asyncio.sleep(1.1)
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     assert hass.states.get('sensor.st1').state == "['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'alert2.d_t2']"
     assert hass.states.get('sensor.st2').state == '[]'
-    assert hass.states.get('sensor.st3').state == '[]'
-    assert hass.states.get('sensor.st4').state == '[]'
 
     await setAndWait(hass, "sensor.a", 'on')
     await asyncio.sleep(1.1)
     assert hass.states.get('sensor.st1').state == "['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'alert2.d_t2']"
     assert hass.states.get('sensor.st2').state == "['alert2.d_t2']"
-    assert hass.states.get('sensor.st3').state == "['alert2.d_t2']"
-    assert hass.states.get('sensor.st4').state == '[]'
 
     await setAndWait(hass, "sensor.g", '["foo"]')
     await asyncio.sleep(1.1)
     assert hass.states.get('sensor.st1').state == "['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'alert2.d_t2', 'alert2.d_foo']"
     assert hass.states.get('sensor.st2').state == "['alert2.d_t2', 'alert2.d_foo']"
-    assert hass.states.get('sensor.st3').state == "['alert2.d_t2', 'alert2.d_foo']"
-    assert hass.states.get('sensor.st4').state == '[]'
 
     await setAndWait(hass, "sensor.a", 'off')
     await asyncio.sleep(1.1)
     assert hass.states.get('sensor.st1').state == "['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'alert2.d_t2', 'alert2.d_foo']"
     assert hass.states.get('sensor.st2').state == "[]"
-    # HA bug: https://community.home-assistant.io/t/template-entities-referencing-states-can-miss-updates-diagnosed/1002663
-    assert hass.states.get('sensor.st3').state == "['alert2.d_t2', 'alert2.d_foo']"
-    assert hass.states.get('sensor.st4').state == '[]'
-
-    await asyncio.sleep(2.1)
-    await setAndWait(hass, "sensor.b", '77')
-    await asyncio.sleep(2.1)
-    #assert hass.states.get('sensor.st3').state == '[]'
-    await setAndWait(hass, "sensor.b", '78')
-    await asyncio.sleep(2.1)
-    assert hass.states.get('sensor.st3').state == '[]'
-    
