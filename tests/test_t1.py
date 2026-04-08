@@ -4955,55 +4955,30 @@ async def test_err_trigger(hass, service_calls):
 async def test_update(hass, service_calls, monkeypatch):
     templ_ri.ALL_STATES_RATE_LIMIT = 1 # seconds
     cfg = { 'alert2' : { 'alerts': [
-        #{ 'domain': 'd', 'name': 't1', 'condition': 'off' },
         { 'domain': 'd', 'name': 't2', 'condition': 'sensor.a', 'notifier': None },
-        #{ 'domain': 'd', 'name': 't3', 'condition': 'sensor.b', 'notifier': None },
         { 'domain': 'd', 'name': '{{ genElem }}', 'condition': 'sensor.a', 'generator_name': 'g1', 'generator': '{{ states("sensor.g") }}', 'notifier': None },
     ]},
             'template': [
-                { 'binary_sensor': [
-                    #{ 'name': 'any_alert_on',
-                    #  'unique_id': 'foosdfsdf',
-                    #  'state': "{{ integration_entities('alert2') |select('search','alert') |expand |selectattr('state','eq','on') |list|count != 0 }}",
-                    # }
-                ],
-                  'sensor': [
-                    #  { 'name': 'st',
-                    #    'unique_id': 's1',
-                    #    'state': "{{ states('sensor.c') }}",
-                    #   },
-                    #{ 'name': 'st2',
-                    #  'unique_id': 's6',
-                    #  'state': "{{ states('alert2.d_t2') }}",
-                    # },
-                    #{ 'name': 'st3',
-                    #  'unique_id': 's7',
-                    #  'state': "{{ states.alert2 | selectattr('entity_id', 'eq', 'alert2.d_t2') | map(attribute='entity_id') | list }}",
-                    # },
-                    #{ 'name': 'st4',
-                    #  'unique_id': 's5',
-                    #  'state': "{{ states | selectattr('entity_id', 'eq', 'alert2.d_t2') | map(attribute='state') | list }}",
-                    # },
-                    #{ 'name': 'st4',
-                    #  'unique_id': 's4',
-                    #  'state': "{{ states.alert2 | selectattr('entity_id', 'match', '^alert2.') | map(attribute='entity_id') | list }}",
-                    # },
-                    #{ 'name': 'st5',
-                    #  'unique_id': 's2',
-                    #  'state': "{{ states | selectattr('entity_id', 'match', '^alert2.') | selectattr('state','eq','on') | map(attribute='entity_id') | list }}",
-                    # },
-                    #{ 'name': 'alert_on_names2',
-                    #  'unique_id': 's2',
-                    #  'state': "{{ states | selectattr('entity_id', 'match', '^alert2.') | selectattr('state','eq','on') | map(attribute='entity_id') | list }}",
-                    # },
-                    { 'name': 'st8',
-                      'unique_id': 'st8',
-                      'state': "{{ integration_entities('alert2') |select('search','alert') |expand |selectattr('state','eq','on') | map(attribute='entity_id')|list }}",
+                { 'sensor': [
+                    { 'name': 'st1',
+                      'unique_id': 'st1',
+                      'state': "{{ states.alert2 | selectattr('entity_id', 'match', 'alert2.') | map(attribute='entity_id') | list }}",
+                     },
+                    { 'name': 'st2',
+                      'unique_id': 'st2',
+                      'state': "{{ states.alert2 | selectattr('entity_id', 'match', 'alert2.') | selectattr('state','eq','on') | map(attribute='entity_id') | list }}",
+                     },
+                    { 'name': 'st3',
+                      'unique_id': 'st3',
+                      'state': "{{ states | selectattr('entity_id', 'match', 'alert2.') | selectattr('state','eq','on') | map(attribute='entity_id') | list }}",
+                     },
+                    # integration_entities() doesn't track add/remove entities
+                    { 'name': 'st4',
+                      'unique_id': 'st4',
+                      'state': "{{ integration_entities('alert2')  | selectattr('entity_id', 'match', 'alert2.') | map(attribute='entity_id') | list }}",
                      },
                 ]}]}
     await setAndWait(hass, "sensor.a", 'off')
-    await setAndWait(hass, "sensor.b", 'off')
-    await setAndWait(hass, "sensor.c", '11')
     await setAndWait(hass, "sensor.g", '[]')
     # Template is setup and does first renderings before alert2 is setup.
     assert await async_setup_component(hass, "template", cfg)
@@ -5016,91 +4991,46 @@ async def test_update(hass, service_calls, monkeypatch):
     _LOGGER.info(list(entities.keys()))
 
 
-    assert hass.states.get('sensor.st8').state == '[]'
-    await asyncio.sleep(1.25)
-    assert hass.states.get('sensor.st8').state == '[]'
-    await setAndWait(hass, "sensor.a", 'on')
-    await asyncio.sleep(1.25)
-    assert hass.states.get('sensor.st8').state == "['alert2.d_t2']"
-    await setAndWait(hass, "sensor.g", '["foo"]')
-    await asyncio.sleep(1.25)
-    assert hass.states.get('sensor.st8').state == "['alert2.d_t2', 'alert2.d_foo']"
-    fuck
-
-   
-    assert hass.states.get('sensor.st5').state == '[]'
-    await asyncio.sleep(1.25)
-    assert hass.states.get('sensor.st5').state == '[]'
-    await setAndWait(hass, "sensor.a", 'on')
-    await asyncio.sleep(1.25)
-    assert hass.states.get('sensor.st5').state == "['alert2.d_t2']"
-    await setAndWait(hass, "sensor.g", '["foo"]')
-    await asyncio.sleep(1.25)
-    assert hass.states.get('sensor.st5').state == "['alert2.d_t2', 'alert2.d_foo']"
-    fuck
-    
+    assert hass.states.get('sensor.st1').state == '[]'
+    assert hass.states.get('sensor.st2').state == '[]'
+    assert hass.states.get('sensor.st3').state == '[]'
     assert hass.states.get('sensor.st4').state == '[]'
-    await asyncio.sleep(1.25)
-    assert hass.states.get('sensor.st4').state == "['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'alert2.d_t2']"
-    fuck
-    
-
-    # 'states' does not track entity updates, even if a new entity is created.
-    #
-    assert hass.states.get('sensor.st3').state == '[]'
-    await asyncio.sleep(1.25)
-    assert hass.states.get('sensor.st3').state == "['alert2.d_t2']"
-
-
-    
-    _LOGGER.info('-----------------11111---------------------------------------')
-    await asyncio.sleep(2.25)
-    await setAndWait(hass, "sensor.g", '["foo"]')
-    await asyncio.sleep(2.25)
-    assert hass.states.get('sensor.st3').state == "['alert2.d_t2']"
-    _LOGGER.info('-----------------22222---------------------------------------')
-    # Reloading doesn't help
-    await do_reload(cfg, hass, monkeypatch)
-    assert hass.states.get('sensor.st3').state == '[]'
-    fuck
-
-    
-    # Basic template update test
-    assert hass.states.get('sensor.st').state == '11'
-    await setAndWait(hass, "sensor.c", '12')
-    assert hass.states.get('sensor.st').state == '12'
-
-    # Basic alert template update test
-    assert hass.states.get('sensor.st2').state == 'off'
-    await setAndWait(hass, "sensor.a", 'on')
-    assert hass.states.get('sensor.st2').state == 'on'
-    await setAndWait(hass, "sensor.a", 'off')
-    assert hass.states.get('sensor.st2').state == 'off'
-
-
-
-
-    # 'states' does not track entity updates
-    
-    fuck
-
-    # Can states track updates?
-    assert hass.states.get('sensor.st2').state == 'off'
-    await setAndWait(hass, "sensor.a", 'on')
-    assert hass.states.get('sensor.st2').state == 'on'
-    fuck
-
-
-    assert hass.states.get('sensor.alert_on_names').state == '[]'
-    assert hass.states.get('sensor.alert_on_names2').state == '[]'
-    assert hass.states.get('binary_sensor.any_alert_on').state == 'off'
-
-    
-    await setAndWait(hass, "sensor.a", 'on')
-    await asyncio.sleep(0.25)
+    # Wait for template rate_limit throttling on states and states.alert2
+    await asyncio.sleep(1.1)
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
-    assert hass.states.get('sensor.alert_on_names2').state == '[alert2.d_t2]'
-    assert hass.states.get('sensor.alert_on_names').state == '[alert2.d_t2]'
-    assert hass.states.get('binary_sensor.any_alert_on').state == 'on'
+    assert hass.states.get('sensor.st1').state == "['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'alert2.d_t2']"
+    assert hass.states.get('sensor.st2').state == '[]'
+    assert hass.states.get('sensor.st3').state == '[]'
+    assert hass.states.get('sensor.st4').state == '[]'
+
+    await setAndWait(hass, "sensor.a", 'on')
+    await asyncio.sleep(1.1)
+    assert hass.states.get('sensor.st1').state == "['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'alert2.d_t2']"
+    assert hass.states.get('sensor.st2').state == "['alert2.d_t2']"
+    assert hass.states.get('sensor.st3').state == "['alert2.d_t2']"
+    assert hass.states.get('sensor.st4').state == '[]'
+
+    await setAndWait(hass, "sensor.g", '["foo"]')
+    await asyncio.sleep(1.1)
+    assert hass.states.get('sensor.st1').state == "['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'alert2.d_t2', 'alert2.d_foo']"
+    assert hass.states.get('sensor.st2').state == "['alert2.d_t2', 'alert2.d_foo']"
+    assert hass.states.get('sensor.st3').state == "['alert2.d_t2', 'alert2.d_foo']"
+    assert hass.states.get('sensor.st4').state == '[]'
+
+    await setAndWait(hass, "sensor.a", 'off')
+    await asyncio.sleep(1.1)
+    assert hass.states.get('sensor.st1').state == "['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'alert2.d_t2', 'alert2.d_foo']"
+    assert hass.states.get('sensor.st2').state == "[]"
+    # HA bug: https://community.home-assistant.io/t/template-entities-referencing-states-can-miss-updates-diagnosed/1002663
+    assert hass.states.get('sensor.st3').state == "['alert2.d_t2', 'alert2.d_foo']"
+    assert hass.states.get('sensor.st4').state == '[]'
+
+    await asyncio.sleep(2.1)
+    await setAndWait(hass, "sensor.b", '77')
+    await asyncio.sleep(2.1)
+    #assert hass.states.get('sensor.st3').state == '[]'
+    await setAndWait(hass, "sensor.b", '78')
+    await asyncio.sleep(2.1)
+    assert hass.states.get('sensor.st3').state == '[]'
     
