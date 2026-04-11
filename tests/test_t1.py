@@ -4823,36 +4823,36 @@ async def test_exception(hass, service_calls, monkeypatch):
     assert service_calls.isEmpty()
 
     # let's crash a task
-    def gdie2():
-        raise ZTestException('boo')
+    def gdie2(aa):
+        raise ZTestException(f'boo-{aa}')
     # hass.create_task(gdie(), 'happy')  # No exception - I think it's swallowed.
     # hass.async_create_background_task(gdie(), 'happy')  # No exception. Swallowed.
-    hass.loop.call_soon_threadsafe(gdie2)
+    hass.loop.call_soon_threadsafe(gdie2, 1)
     await asyncio.sleep(0.25)
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'unhandled exception.*boo')
 
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'boo' } ] } }
     await do_reload(cfg, hass, monkeypatch)
-    hass.loop.call_soon_threadsafe(gdie2)
+    hass.loop.call_soon_threadsafe(gdie2, 2)
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
 
     # Test that can match against both err msg and stack trace
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'unhandled exception.*most recent call last.*raise ZTestException' } ] } }
     await do_reload(cfg, hass, monkeypatch)
-    hass.loop.call_soon_threadsafe(gdie2)
+    hass.loop.call_soon_threadsafe(gdie2, 3)
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
 
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xxx',  'boo' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
-    hass.loop.call_soon_threadsafe(gdie2)
+    hass.loop.call_soon_threadsafe(gdie2, 4)
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'boo',  'xxx' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
-    hass.loop.call_soon_threadsafe(gdie2)
+    hass.loop.call_soon_threadsafe(gdie2, 5)
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
 
