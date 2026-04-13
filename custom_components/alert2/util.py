@@ -17,6 +17,9 @@ EVENT_ALERT2_ON = 'alert2_alert_on'
 EVENT_ALERT2_OFF = 'alert2_alert_off'
 EVENT_ALERT2_ACK = 'alert2_alert_ack'
 EVENT_ALERT2_UNACK = 'alert2_alert_unack'
+#EVENT_ALERT2_RELOAD = 'alert2_reload'
+#EVENT_ALERT2_ENABLE = 'alert2_alert_enable'
+#EVENT_ALERT2_DISABLE = 'alert2_alert_disable'
 shutting_down = False
 def isAlert2Internal(obj):
     try:
@@ -46,7 +49,12 @@ def report(domain: str, name: str, message: str | None = None, isException: bool
         evdata['data'] = data
     if withTraceback:
         evdata['traceback'] = withTraceback
-    if isException:
+    if (domain == DOMAIN and name == 'global_exception') or (name == 'unhandled_exception'):
+        # For global_exception, a stack trace was already dumped by HA exception handler
+        # Same for unhandled_exception
+        # TODO - I almost wonder if it's better to move this to debug logging.
+        _LOGGER.info(f'Exception reported: {evdata}')
+    elif isException:
         _LOGGER.exception(f'Exception reported: {evdata}')
         #    _LOGGER.exception(f'Exception reported: {evdata}', exc_info=isException)
         evdata['traceback'] = traceback.format_exc()
@@ -59,7 +67,7 @@ def report(domain: str, name: str, message: str | None = None, isException: bool
             _LOGGER.error(f'Err reported: {evdata}')
     #_LOGGER.warning(f'  report() called from: {"".join(traceback.format_stack())}')
     if shutting_down:
-        _LOGGER.warning(f'   Not notifying or further processing alert because HA is shutting donw')
+        _LOGGER.warning(f'   Not notifying or further processing alert because HA is shutting down')
         return
     
     ghass = global_hass

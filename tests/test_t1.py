@@ -5,6 +5,7 @@
 #from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 import os
+import gc
 import re
 import sys
 import orjson
@@ -13,6 +14,7 @@ import logging
 import pytest
 import contextlib
 import datetime as rawdt
+import voluptuous as vol
 _LOGGER = logging.getLogger(None) # get root logger
 #_LOGGER.setLevel(logging.DEBUG)
 if os.environ.get('JTESTDIR'):
@@ -56,9 +58,13 @@ alert2.gGcDelaySecs = 0.1
 # TODO - move these fixtures into a class that is reused between this t1 and ui tests.
 #
 # Make sure at end of each test there are no extra notifications we haven't processed
+#
+# IGNORE_UNCAUGHT_EXCEPTIONS is from:
+# venv2/lib/python3.14/site-packages/pytest_homeassistant_custom_component/plugins.py
 @pytest.fixture(autouse=True)
 async def auto_check_empty_calls(hass, service_calls):
     IGNORE_UNCAUGHT_EXCEPTIONS.append( ("tests.test_t1", "test_exception") )
+    IGNORE_UNCAUGHT_EXCEPTIONS.append( ("tests.test_t1", "test_exception2") )
     yield
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
@@ -1452,9 +1458,14 @@ async def test_event(hass, service_calls):
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
 
-    await hass.services.async_call('alert2','report', {})
-    await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'alert2_error.*malformed')
+    try:
+        await hass.services.async_call('alert2','report', {})
+    except vol.error.MultipleInvalid:
+        pass
+    else:
+        assert False, "report did not fail"
+    #await hass.async_block_till_done()
+    #service_calls.popNotifyEmpty('persistent_notification', 'alert2_error.*malformed')
 
     assert hass.states.get('alert2.test_t22').state == 'has never fired'
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t22'})
@@ -1467,9 +1478,14 @@ async def test_event(hass, service_calls):
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t22: foo')
 
-    await hass.services.async_call('alert2','report', {'domain':'test','name':'t22', 'data':"yuck"})
-    await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'alert2_error.*Malformed.*non-dict')
+    try:
+        await hass.services.async_call('alert2','report', {'domain':'test','name':'t22', 'data':"yuck"})
+    except vol.error.MultipleInvalid:
+        pass
+    else:
+        assert False, "report did not fail"
+    #await hass.async_block_till_done()
+    #service_calls.popNotifyEmpty('persistent_notification', 'alert2_error.*Malformed.*non-dict')
 
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t22', 'data': { 'a': 7 }})
     await hass.async_block_till_done()
@@ -4812,16 +4828,23 @@ async def test_restore_state(hass, service_calls):
 
 class ZTestException(Exception):
     pass
+def countLoggedExceptions(caplog):
+    #indices = [m.start() for m in re.finditer('[Ee]xception', caplog.text)]
+    indices2 = [m.start() for m in re.finditer('most recent call last', caplog.text)]
+    #assert len(indices) == len(indices2)
+    return len(indices2)
 
-# NOTE - this test has ignore_uncaught_exceptions set.  Limit what's tested here.
+# NOTE - this test has IGNORE_UNCAUGHT_EXCEPTIONS set.  Limit what's tested here.
 #
-async def test_exception(hass, service_calls, monkeypatch):
+async def test_exception(hass, service_calls, monkeypatch, caplog):
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'xxx' } ] } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
 
+    assert countLoggedExceptions(caplog) == 0
+    
     # let's crash a task
     def gdie2(aa):
         raise ZTestException(f'boo-{aa}')
@@ -4831,32 +4854,46 @@ async def test_exception(hass, service_calls, monkeypatch):
     await asyncio.sleep(0.25)
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'unhandled exception.*boo')
+    assert countLoggedExceptions(caplog) == 1
+    assert 'tests.test_t1.ZTestException: boo-1' in caplog.text
 
+    
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'boo' } ] } }
     await do_reload(cfg, hass, monkeypatch)
     hass.loop.call_soon_threadsafe(gdie2, 2)
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
+    assert countLoggedExceptions(caplog) == 2
+    assert 'tests.test_t1.ZTestException: boo-2' in caplog.text
 
     # Test that can match against both err msg and stack trace
-    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'unhandled exception.*most recent call last.*raise ZTestException' } ] } }
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'unhandled exception.*gdie2' } ] } }
     await do_reload(cfg, hass, monkeypatch)
     hass.loop.call_soon_threadsafe(gdie2, 3)
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
+    assert countLoggedExceptions(caplog) == 3
+    assert 'tests.test_t1.ZTestException: boo-3' in caplog.text
 
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xxx',  'boo' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
     hass.loop.call_soon_threadsafe(gdie2, 4)
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
+    assert countLoggedExceptions(caplog) == 4
+    assert 'tests.test_t1.ZTestException: boo-4' in caplog.text
+    
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'boo',  'xxx' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
     hass.loop.call_soon_threadsafe(gdie2, 5)
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
+    assert countLoggedExceptions(caplog) == 5
+    assert 'tests.test_t1.ZTestException: boo-5' in caplog.text
 
-async def test_exception2(hass, service_calls, monkeypatch):
+# NOTE - this test has IGNORE_UNCAUGHT_EXCEPTIONS set.  Limit what's tested here.
+#
+async def test_exception2(hass, service_calls, monkeypatch, caplog):
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'xxx' } ] } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
@@ -4864,7 +4901,7 @@ async def test_exception2(hass, service_calls, monkeypatch):
     assert service_calls.isEmpty()
     async def gdie(astr):
         _LOGGER.info(f'----- about to die -----------: {astr}')
-        raise ZTestException('xoo')
+        raise ZTestException(f'xoo-{astr}')
     async def cb_gdie():
         _LOGGER.info('----- about to cb die -----------')
         raise ZTestException('xoo')
@@ -4874,29 +4911,50 @@ async def test_exception2(hass, service_calls, monkeypatch):
     await do_reload(cfg, hass, monkeypatch)
     service_calls.popNotifyEmpty('persistent_notification', 'failed to compile')
 
-    if False:
-       # Try hass task version.  It squashes exceptions
-        cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xxx' ] } ] } }
-        await do_reload(cfg, hass, monkeypatch)
-        hass.async_create_task(gdie('a'), 'gdie-a') # no eager_start
-        await hass.async_block_till_done()
-        await asyncio.sleep(0.25)
-        assert service_calls.isEmpty()
-        hass.async_create_task(gdie('b'), 'gdie-b', eager_start=True)
-        await hass.async_block_till_done()
-        await asyncio.sleep(0.25)
-        assert service_calls.isEmpty()
+    assert countLoggedExceptions(caplog) == 0
 
-       # Try hass job version. It also seems to squash exceptions
-        ajob = HassJob(cb_gdie, 'gdie2')
-        hass.async_run_hass_job(ajob, background=False)
+    #
+    # Try hass task version.  It squashes exceptions
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xxx' ] } ] } }
+    await do_reload(cfg, hass, monkeypatch)
+    async def xff(letter, eager_start):
+        atask = hass.async_create_task(gdie(letter), f'gdie-{letter}', eager_start=eager_start)
+        await asyncio.wait([atask])
         await hass.async_block_till_done()
-        await asyncio.sleep(0.25)
-        assert service_calls.isEmpty()
-        ajob = HassJob(cb_gdie, 'gdie3')
-        hass.async_run_hass_job(ajob, background=True)
+    await xff('a', eager_start=False)
+    gc.collect()
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'Exception.*xoo-a')
+    assert countLoggedExceptions(caplog) == 1
+    assert 'xoo-a' in caplog.text
+    # Now with eager_start
+    await xff('b', eager_start=True)
+    gc.collect()
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'Exception.*xoo-b')
+    assert countLoggedExceptions(caplog) == 2
+    assert 'xoo-b' in caplog.text
+    #
+    # Try hass job version. It also seems to squash exceptions
+    async def xff2(num, background):
+        ajob = HassJob(cb_gdie, f'gdie{num}')
+        afut = hass.async_run_hass_job(ajob, background=background)
+        # Don't await afut, so exception is not retreived
         await hass.async_block_till_done()
-        await asyncio.sleep(0.25)
+    await xff2('2', background=False)
+    gc.collect()
+    await asyncio.sleep(0.25)
+    service_calls.popNotifyEmpty('persistent_notification', 'Exception.*gdie2')
+    assert countLoggedExceptions(caplog) == 3
+    assert 'gdie2' in caplog.text
+    # No in background
+    await xff2('3', background=True)
+    gc.collect()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.25)
+    service_calls.popNotifyEmpty('persistent_notification', 'Exception.*gdie3')
+    assert countLoggedExceptions(caplog) == 4
+    assert 'gdie3' in caplog.text
         
     # Try alert2 version
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xxx' ] } ] } }
@@ -4904,11 +4962,16 @@ async def test_exception2(hass, service_calls, monkeypatch):
     alert2.create_task(hass, 'alert2', gdie('d'))
     await asyncio.sleep(0.25)
     service_calls.popNotifyEmpty('persistent_notification', 'Exception.*xoo')
+    assert countLoggedExceptions(caplog) == 6
+    assert 'xoo-d' in caplog.text
+    
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xoo.*raise ZTestException' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
     alert2.create_task(hass, 'alert2', gdie('e'))
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
+    assert countLoggedExceptions(caplog) == 8
+    assert 'xoo-e' in caplog.text
     
     # Try custom domain
     cfg = { 'alert2' : { 'tracked': [ { 'domain': 'foof', 'name': 'unhandled_exception', 'exception_ignore_regexes': [ 'xxx' ] } ] } }
@@ -4916,11 +4979,21 @@ async def test_exception2(hass, service_calls, monkeypatch):
     alert2.create_task(hass, 'foof', gdie('f'))
     await asyncio.sleep(0.25)
     service_calls.popNotifyEmpty('persistent_notification', 'foof_unhandled_exception.*xoo')
+    assert countLoggedExceptions(caplog) == 10
+    assert 'xoo-f' in caplog.text
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'foof', 'name': 'unhandled_exception', 'exception_ignore_regexes': [ 'xoo.*raise ZTestException' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
+    await asyncio.sleep(0.25)
+
     alert2.create_task(hass, 'foof', gdie('g'))
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
+    assert countLoggedExceptions(caplog) == 12
+    assert 'xoo-g' in caplog.text
+    #await asyncio.sleep(0.25)
+    #gc.collect()
+    #await asyncio.sleep(0.25)
+    #_LOGGER.info('------------ end of test --------------')
 
 async def test_err_trigger(hass, service_calls):
     # Set up HA declaring a single alert that triggers on system log error messages

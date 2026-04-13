@@ -633,7 +633,16 @@ class Alert2Data:
             self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.haStartedEv)
         
             self._hass.bus.async_listen(EVENT_TYPE, self.handle_event_report)
-            self._hass.services.async_register(DOMAIN, 'report', self.handle_service_report)
+            # Note - calls to report() use the event EVENT_TYPE, not the service call, so this schema
+            # is never used unless someone happens to call the alert2.report service.
+            REPORT_SCHEMA = vol.Schema({
+                vol.Required('domain'): cv.string,
+                vol.Required('name'): cv.string,
+                vol.Optional('message'): cv.string,
+                vol.Optional('traceback'): cv.string,
+                vol.Optional('data'): dict,
+            })
+            self._hass.services.async_register(DOMAIN, 'report', self.handle_service_report, schema=REPORT_SCHEMA)
             self._hass.services.async_register(DOMAIN, 'ack_all', self.ackAll)
             # gc_entity_registry:
             #    name: Clean entity registry
@@ -750,6 +759,10 @@ class Alert2Data:
         self.binarySensorDict['hastarted']._attr_extra_state_attributes['last_reload_time'] = dt.now()
         self.binarySensorDict['hastarted'].async_write_ha_state()
 
+        #self.hass.bus.async_fire(EVENT_ALERT2_RELOAD)
+
+
+        
     async def processConfig(self):
         # Validate the config in pieces. We want alert2 to successfully initialize no matter how messed up the config is.
         # And if the config has an error, to process the rest of itas much as it can.
@@ -1178,23 +1191,26 @@ class Alert2Data:
                 # The internal error was logged back up in report(), so no need to log again
                 return
         
-        if not domain in self.tracked or not name in self.tracked[domain]:
-            errmsg = f'domain={domain} name={name} (from {tmsg})'
-            report(DOMAIN, 'error', f'undeclared event {errmsg}. Creating event alert')
-            alertObj = self.declareEvent(domain, name)
-            if isinstance(alertObj, Entity):
-                await self.component.async_add_entities([alertObj])
-            else:
-                report(DOMAIN, 'error', alertObj) # errMsg
-        else:
-            alertObj = self.tracked[domain][name]
-
         message = ''
         if 'message' in evdata:
             if not isinstance(evdata['message'], str):
                 report(DOMAIN, 'error', f'Malformed call {tmsg} non-string "message" {evdata}')
                 return
             message = evdata['message']
+
+        if not domain in self.tracked or not name in self.tracked[domain]:
+            errmsg = f'domain={domain} name={name} (from {tmsg})'
+            _LOGGER.info(f'undeclared event {errmsg}. Trying to create event alert')
+            alertObj = self.declareEvent(domain, name)
+            if isinstance(alertObj, Entity):
+                await self.component.async_add_entities([alertObj])
+                report(DOMAIN, 'error', f'undeclared event {errmsg}. Created event alert')
+            else:
+                _LOGGER.info(f'undeclared event {errmsg}. Failed to create event alert: {alertObj}')
+                report(DOMAIN, 'error', f'undeclared event {errmsg}.  Domain and name must exactly match that specified in alert declaration.  Full err in HA logs. Not alerting with msg={message}')
+                return
+        else:
+            alertObj = self.tracked[domain][name]
 
         if alertObj.exception_ignore_regexes:
             for aregex in alertObj.exception_ignore_regexes:
@@ -1213,6 +1229,4 @@ class Alert2Data:
                 return
             data = evdata['data']
         await alertObj.record_event(message, extra_data=data)
-        # TODO - I'm not sure this line does anythign, and probably is wrong.
-        self.inHandler = False
 

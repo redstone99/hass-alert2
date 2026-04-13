@@ -1515,7 +1515,13 @@ class AlertBase(AlertCommon, RestoreEntity):
             pass
         else:
             action = NotificationReason.getActionStr(reason, self)
-            _LOGGER.warning(f'Activity {self.entity_id} {action}. Msg: {msg}')
+            msgStr = f'Activity {self.entity_id} {action}. Msg: {msg}'
+            if (self.alDomain == DOMAIN and self.alName == 'global_exception') or (self.alName == 'unhandled_exception'):
+                # For global_exception, a stack trace was already logged with level ERROR
+                # so logs already have "Error doing job" or something like it.
+                _LOGGER.info(msgStr)
+            else:
+                _LOGGER.warning(msgStr)
         #_LOGGER.warning(f'_notify_pre_debounce: {"".join(traceback.format_stack())}')
         
         last_fired_time = self.last_fired_time
