@@ -5026,6 +5026,8 @@ async def test_err_trigger(hass, service_calls):
     assert service_calls.isEmpty()
 
 async def test_update(hass, service_calls, monkeypatch):
+    # Test that template entities using states.alert2 can track aspects of alert2 entitites.
+    # E.g., make sure users can count the number of active alerts
     templ_ri.ALL_STATES_RATE_LIMIT = 1 # seconds
     cfg = { 'alert2' : { 'alerts': [
         { 'domain': 'd', 'name': 't2', 'condition': 'sensor.a', 'notifier': None },
