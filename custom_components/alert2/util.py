@@ -17,9 +17,6 @@ EVENT_ALERT2_ON = 'alert2_alert_on'
 EVENT_ALERT2_OFF = 'alert2_alert_off'
 EVENT_ALERT2_ACK = 'alert2_alert_ack'
 EVENT_ALERT2_UNACK = 'alert2_alert_unack'
-#EVENT_ALERT2_RELOAD = 'alert2_reload'
-#EVENT_ALERT2_ENABLE = 'alert2_alert_enable'
-#EVENT_ALERT2_DISABLE = 'alert2_alert_disable'
 shutting_down = False
 def isAlert2Internal(obj):
     try:

@@ -759,8 +759,6 @@ class Alert2Data:
         self.binarySensorDict['hastarted']._attr_extra_state_attributes['last_reload_time'] = dt.now()
         self.binarySensorDict['hastarted'].async_write_ha_state()
 
-        #self.hass.bus.async_fire(EVENT_ALERT2_RELOAD)
-
 
         
     async def processConfig(self):
