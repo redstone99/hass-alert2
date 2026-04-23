@@ -1452,7 +1452,9 @@ async def test_event(hass, service_calls):
         { 'domain': 'test', 'name': 't25a', 'target': '{{ "ab" + "cd" }}' },
         { 'domain': 'test', 'name': 't26', 'data': { 'd1': 'data-d1' } },
         { 'domain': 'test', 'name': 'Toxic Air' },
-    ], } }
+    ], 'alerts': [
+        { 'domain': 'test', 'name': 'cond1', 'condition': 'off' },
+    ]} }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -1527,7 +1529,15 @@ async def test_event(hass, service_calls):
     await hass.services.async_call('alert2','report', {'domain':'test','name':'toxic_air', 'message': 'foo2'})
     await hass.async_block_till_done()
     service_calls.popNotifyEmpty('persistent_notification', 'Domain and name must exactly match.*foo')
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'Toxic Air', 'message': 'foo2'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_Toxic Air: foo2')
 
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'cond1', 'message': 'foo2'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'xxx')
+
+    
     
 async def test_event2(hass, service_calls):
     # Check throttling
@@ -2979,6 +2989,22 @@ async def test_generator9(hass, service_calls, monkeypatch):
     registeredEnts.remove('alert2.test_t1')
     entities = er.async_get(hass).entities
     assert set(entities.keys()) == registeredEnts
+
+async def test_generator10(hass, service_calls, monkeypatch):
+    # Test event generator
+    await setAndWait(hass, "sensor.e1", '1')
+    cfg = { 'alert2' : { 'alerts' : [
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't1' ],
+          'trigger': {'trigger':'state','entity_id':'sensor.e1'}, 'condition': 'yes' },
+        { 'domain': 'test', 'name': '{{ genElem }}',
+          'generator': [ 't2' ], 'generator_name': 'g1',
+          'condition': 'yes', 'trigger': [{'platform':'state','entity_id':'sensor.e1'}] },
+    ] } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
     
 
 async def test_late_state(hass, service_calls):
