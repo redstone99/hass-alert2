@@ -1535,7 +1535,7 @@ async def test_event(hass, service_calls):
 
     await hass.services.async_call('alert2','report', {'domain':'test','name':'cond1', 'message': 'foo2'})
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'xxx')
+    service_calls.popNotifyEmpty('persistent_notification', 'only works for event alerts.*domain=test name=cond1')
 
     
     
@@ -2665,7 +2665,7 @@ async def test_generator3a(hass, service_calls):
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'required key not provided.*generator.*t64ab')
+    service_calls.popNotifyEmpty('persistent_notification', 'alert2generator.*is a reserved domain.*t64ab')
 
     # Generator can't create a duplicate alert
     await setAndWait(hass, "sensor.a", 't64ad')
@@ -2679,7 +2679,7 @@ async def test_generator3a(hass, service_calls):
     await setAndWait(hass, "sensor.b", 'test')
     assert list(gad.alerts['test'].keys()) == [ 't64aa', 't64ad', 't64ac' ]
     await setAndWait(hass, "sensor.b", GENERATOR_DOMAIN)
-    service_calls.popNotifyEmpty('persistent_notification', 'required key not provided.*generator.*t64ac')
+    service_calls.popNotifyEmpty('persistent_notification', 'alert2generator.*is a reserved domain.*t64ac')
     
     
 async def test_generator4(hass, service_calls):
@@ -2999,13 +2999,18 @@ async def test_generator10(hass, service_calls, monkeypatch):
         { 'domain': 'test', 'name': '{{ genElem }}',
           'generator': [ 't2' ], 'generator_name': 'g1',
           'condition': 'yes', 'trigger': [{'platform':'state','entity_id':'sensor.e1'}] },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't3' ],
+          'trigger': {'trigger':'state','entity_id':'sensor.e1'}, },
     ] } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
 
-    
+    await setAndWait(hass, "sensor.e1", '2')
+    service_calls.popNotifySearch('persistent_notification', 't1', '^Alert2 test_t1$')
+    service_calls.popNotifySearch('persistent_notification', 't2', '^Alert2 test_t2')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t3')
 
 async def test_late_state(hass, service_calls):
     cfg = { 'alert2' : { 'alerts' : [
@@ -3256,7 +3261,7 @@ async def test_bad2(hass, service_calls):
     await hass.async_start()
     await hass.async_block_till_done()
 
-    service_calls.popNotifySearch('persistent_notification', 't02a', 'required key not provided')
+    service_calls.popNotifySearch('persistent_notification', 't02a', 'Empty string not allowed.*name')
     service_calls.popNotifySearch('persistent_notification', 't02b', 'None for dictionary value')
     service_calls.popNotifySearch('persistent_notification', 't03', 'should be a string')
     service_calls.popNotifySearch('persistent_notification', 't04', 'should be a string')
@@ -4095,8 +4100,8 @@ async def test_priority(hass, service_calls):
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
-    service_calls.popNotifySearch('persistent_notification', 't3', 'required key not provided')
-    service_calls.popNotifySearch('persistent_notification', 't4', 'required key not provided')
+    service_calls.popNotifySearch('persistent_notification', 't3', 'not a valid value')
+    service_calls.popNotifySearch('persistent_notification', 't4', 'not a valid value')
     assert service_calls.isEmpty()
 
     gad = hass.data[DOMAIN]
