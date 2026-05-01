@@ -36,8 +36,10 @@ import homeassistant.util.dt as dt
 from .config import (
     DEFAULTS_SCHEMA,
     SINGLE_TRACKED_SCHEMA,
-    SINGLE_ALERT_SCHEMA_EVENT,
-    SINGLE_ALERT_SCHEMA_CONDITION,
+    SINGLE_ALERT_SCHEMA_EVENT_GEN,
+    SINGLE_ALERT_SCHEMA_EVENT_NO_GEN,
+    SINGLE_ALERT_SCHEMA_CONDITION_GEN,
+    SINGLE_ALERT_SCHEMA_CONDITION_NO_GEN,
     TOP_LEVEL_SCHEMA,
     TOP_LEVEL_SCHEMA_INTERNAL,
 )
@@ -834,23 +836,29 @@ class Alert2Data:
                 if checkForUpdate:
                     return True
                 newEnt = self.declareEventInt(aCfg)
-            elif 'trigger' in obj:
-                aCfg = SINGLE_ALERT_SCHEMA_EVENT(obj)
-                atrig = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger'])
-                aCfg['trigger'] = atrig
-                if checkForUpdate:
-                    return True
-                newEnt = self.declareEventInt(aCfg)
             else:
-                aCfg = SINGLE_ALERT_SCHEMA_CONDITION(obj)
-                if 'trigger_on' in aCfg:
-                    aCfg['trigger_on'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger_on'])
-                if 'trigger_off' in aCfg:
-                    aCfg['trigger_off'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger_off'])
+                # Break into four cases partly to hopefully improve voluptuous error messages
+                if 'trigger' in obj:
+                    if 'generator' in obj:
+                        aCfg = SINGLE_ALERT_SCHEMA_EVENT_GEN(obj)
+                    else:
+                        aCfg = SINGLE_ALERT_SCHEMA_EVENT_NO_GEN(obj)
+                    aCfg['trigger'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger'])
+                else:
+                    if 'generator' in obj:
+                        aCfg = SINGLE_ALERT_SCHEMA_CONDITION_GEN(obj)
+                    else:
+                        aCfg = SINGLE_ALERT_SCHEMA_CONDITION_NO_GEN(obj)
+                    if 'trigger_on' in aCfg:
+                        aCfg['trigger_on'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger_on'])
+                    if 'trigger_off' in aCfg:
+                        aCfg['trigger_off'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger_off'])
                 if checkForUpdate:
                     return True
-                if 'generator' in aCfg:
+                if 'generator' in obj:
                     newEnt = self.declareGenerator(aCfg, rawConfig=obj)
+                elif 'trigger' in obj:
+                    newEnt = self.declareEventInt(aCfg, genVars)
                 else:
                     newEnt = self.declareCondition(aCfg, genVars)
         except (vol.Invalid, HomeAssistantError) as v:
@@ -1078,7 +1086,7 @@ class Alert2Data:
     # NOTE - the validation code in UiMgr::updateAlert() assumes that
     # declareEventInt can't fail if the alert doesn't already exist.
     # so don't add any other error return paths here.
-    def declareEventInt(self, config):
+    def declareEventInt(self, config, genVars=None):
         domain = config['domain']
         name = config['name']
         errMsg = self.checkNewName(domain, name)
@@ -1086,7 +1094,7 @@ class Alert2Data:
             return errMsg
         if not domain in self.tracked:
             self.tracked[domain] = {}
-        entity = EventAlert(self._hass, self, config, self.topConfig)
+        entity = EventAlert(self._hass, self, config, self.topConfig, genVars=genVars)
         self.tracked[domain][name] = entity
         self.entityIdMap[getPreferredEntityId(domain, name)] = entity
         #self.notifiers.add(entity.notifier)
@@ -1198,6 +1206,10 @@ class Alert2Data:
 
         if not domain in self.tracked or not name in self.tracked[domain]:
             errmsg = f'domain={domain} name={name} (from {tmsg})'
+
+            if domain in self.alerts and name in self.alerts[domain]:
+                report(DOMAIN, 'error', f'report() only works for event alerts, not condition alerts: {errmsg}')
+                return
             _LOGGER.info(f'undeclared event {errmsg}. Trying to create event alert')
             alertObj = self.declareEvent(domain, name)
             if isinstance(alertObj, Entity):
@@ -1205,7 +1217,7 @@ class Alert2Data:
                 report(DOMAIN, 'error', f'undeclared event {errmsg}. Created event alert')
             else:
                 _LOGGER.info(f'undeclared event {errmsg}. Failed to create event alert: {alertObj}')
-                report(DOMAIN, 'error', f'undeclared event {errmsg}.  Domain and name must exactly match that specified in alert declaration.  Full err in HA logs. Not alerting with msg={message}')
+                report(DOMAIN, 'error', f'undeclared event {errmsg}.  Domain and name must exactly match that specified in event alert declaration.  Full err in HA logs. Not alerting with msg={message}')
                 return
         else:
             alertObj = self.tracked[domain][name]

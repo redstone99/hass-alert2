@@ -1735,8 +1735,9 @@ class EventAlert(AlertBase):
             alertData,
             config: dict[str, Any],
             defaultCfg: dict[str, any],
+            genVars = None
     ):
-        super().__init__(hass, alertData, config, defaultCfg)
+        super().__init__(hass, alertData, config=config, defaultCfg=defaultCfg, genVars=genVars)
         self.detach_trigger = None
 
         self.exception_ignore_regexes = []

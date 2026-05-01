@@ -415,7 +415,7 @@ Entity name related fields:
 |---|---|---|---|
 | `priority` | string | optional | Override the default value of `priority` |
 | `display_msg` | template | optional | Message to display in the Alert2 UI overview card below the alert line.  Appears while the alert is visible in the card. If not specified, no message is shown. |
-| `supersedes` | List | optional | A list of domain+name pairs of alerts that this alert supersedes. Notifications will be skipped for superseded alerts while this alert is firing.  Applies transitively. May use templates when used with generators. See [Supersedes](#supersedes) section below for examples. |
+| `supersedes` | List | optional | A list of domain+name pairs of alerts that this condition alert supersedes. Notifications will be skipped for superseded alerts while this alert is firing.  Applies transitively. May use templates when used with generators. See [Supersedes](#supersedes) section below for examples. |
 | `supersede_debounce_secs` | float | optional | Override the default value of `supersede_debounce_secs` |
 
 
@@ -846,6 +846,8 @@ The second generator example, above uses the `entity_regex` filter. Using that f
 The third generator lists strings that are not entity_ids.  In this case, those strings are available as `genElem` to template config fields and `genEntityId` is not defined.
 
 See the [Reference](#reference) section below for a complete list of possibilities.
+
+Generators may be used to create either condition alerts or event alerts.
 
 #### How it works
 

@@ -321,14 +321,15 @@ SINGLE_TRACKED_SCHEMA = vol.Any(
 SINGLE_ALERT_SCHEMA_PRE_NAME = SINGLE_TRACKED_SCHEMA_PRE_NAME.extend({
     vol.Optional('message'): cv.template,
 })
-
-SINGLE_ALERT_SCHEMA_EVENT = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
-    vol.Required('domain'): jDomain,
-    vol.Required('name'): jstringName,
+SINGLE_ALERT_SCHEMA_EVENT_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Required('trigger'): jProtectedTrigger,
     vol.Optional('condition'): boolTemplate,
     vol.Optional('early_start'): cv.boolean,
 })
+#SINGLE_ALERT_SCHEMA_EVENT = SINGLE_ALERT_SCHEMA_EVENT_PRE_NAME.extend({
+#    vol.Required('domain'): jDomain,
+#    vol.Required('name'): jstringName,
+#})
 
 THRESHOLD_SCHEMA = vol.Schema({
     vol.Required('value'): floatTemplate,
@@ -360,24 +361,33 @@ DOMAIN_NAME_DICT_GEN = {
     vol.Required('domain'): cv.template,
     vol.Required('name'): cv.template,
 }
-SUPERSEDES_GEN = vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT_GEN ]), supersedesTemplate)
-GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
+
+
+GENERATOR_EXTRA = {
     vol.Required('domain'): cv.template,
     vol.Required('name'): cv.template,
     vol.Required('generator'): jtemplate,
     vol.Optional('generator_name'): jstringName,
-    vol.Optional('supersedes'): SUPERSEDES_GEN,
     # Overrides 'priority'
     vol.Optional('priority'): cv.template,
-})
-NO_GENERATOR_SCHEMA = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend({
+}
+GENERATOR_EXTRA_CONDITION = {
+    vol.Optional('supersedes'): vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT_GEN ]), supersedesTemplate)
+}
+NO_GENERATOR_EXTRA = {
     vol.Required('domain'): jDomain,
     vol.Required('name'): jstringName,
+}
+NO_GENERATOR_EXTRA_CONDITION = {
     vol.Optional('supersedes'): vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT ])),
-})
+}
 
 # If alert is a generator, then 'name' is a template, otherwise 'name' is a string
-SINGLE_ALERT_SCHEMA_CONDITION = check_off(vol.Any(GENERATOR_SCHEMA, NO_GENERATOR_SCHEMA))
+SINGLE_ALERT_SCHEMA_CONDITION_GEN    = check_off(SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend(   GENERATOR_EXTRA).extend(   GENERATOR_EXTRA_CONDITION))
+SINGLE_ALERT_SCHEMA_CONDITION_NO_GEN = check_off(SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend(NO_GENERATOR_EXTRA).extend(NO_GENERATOR_EXTRA_CONDITION))
+    
+SINGLE_ALERT_SCHEMA_EVENT_GEN    = SINGLE_ALERT_SCHEMA_EVENT_PRE_NAME.extend(   GENERATOR_EXTRA)
+SINGLE_ALERT_SCHEMA_EVENT_NO_GEN = SINGLE_ALERT_SCHEMA_EVENT_PRE_NAME.extend(NO_GENERATOR_EXTRA)
 
 TOP_LEVEL_SCHEMA = vol.Schema({
     vol.Optional('defaults'): DEFAULTS_SCHEMA,

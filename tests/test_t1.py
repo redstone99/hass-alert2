@@ -2993,6 +2993,7 @@ async def test_generator9(hass, service_calls, monkeypatch):
 async def test_generator10(hass, service_calls, monkeypatch):
     # Test event generator
     await setAndWait(hass, "sensor.e1", '1')
+    await setAndWait(hass, "sensor.e2", '1')
     cfg = { 'alert2' : { 'alerts' : [
         { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't1' ],
           'trigger': {'trigger':'state','entity_id':'sensor.e1'}, 'condition': 'yes' },
@@ -3001,6 +3002,9 @@ async def test_generator10(hass, service_calls, monkeypatch):
           'condition': 'yes', 'trigger': [{'platform':'state','entity_id':'sensor.e1'}] },
         { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't3' ],
           'trigger': {'trigger':'state','entity_id':'sensor.e1'}, },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't4' ],
+          'message': 'x-{{ genElem }}-x',
+          'trigger': {'trigger':'state','entity_id':'sensor.e2'}, 'condition': "{{ states('sensor.e2') == genElem }}" },
     ] } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
@@ -3012,6 +3016,12 @@ async def test_generator10(hass, service_calls, monkeypatch):
     service_calls.popNotifySearch('persistent_notification', 't2', '^Alert2 test_t2')
     service_calls.popNotifyEmpty('persistent_notification', 'test_t3')
 
+    await setAndWait(hass, "sensor.e2", '3')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.e2", 't4')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t4: x-t4-x')
+
+    
 async def test_late_state(hass, service_calls):
     cfg = { 'alert2' : { 'alerts' : [
         # Check that template condition still becomes states("sensor.ick") even if sensor.ick doesn't yet exist

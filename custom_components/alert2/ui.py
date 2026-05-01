@@ -30,8 +30,8 @@ from .util import (
 )
 from .config import ( TOP_LEVEL_SCHEMA, DEFAULTS_SCHEMA, SINGLE_TRACKED_SCHEMA_PRE_NAME,
                       SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME, SINGLE_TRACKED_SCHEMA,
-                      SINGLE_ALERT_SCHEMA_EVENT, SINGLE_ALERT_SCHEMA_CONDITION, THRESHOLD_SCHEMA,
-                      GENERATOR_SCHEMA, NO_GENERATOR_SCHEMA, SUPERSEDES_GEN )
+                      SINGLE_ALERT_SCHEMA_EVENT_NO_GEN, THRESHOLD_SCHEMA,
+                      GENERATOR_EXTRA, GENERATOR_EXTRA_CONDITION, NO_GENERATOR_EXTRA_CONDITION )
 from .util import (     GENERATOR_DOMAIN )
 from .entities import (notifierTemplateToList, renderResultToList, generatorElemToVars, AlertGenerator, Tracker,
                        processSupersedes, getField, expandDataDict, NotificationReason, entNameFromDN, AlertBase,
@@ -216,21 +216,21 @@ class RenderValueView(HomeAssistantView):
                 simple = True
             elif name in ['supersedes']:
                 if extraVars:
-                    obj = { 'domain': 'foo', 'name': 'bar', 'generator':'f2', 'generator_name': 'f3' }
+                    obj = { }
                     obj[name] = ttxt
-                    tval = GENERATOR_SCHEMA(obj)[name]
+                    tval = vol.Schema(GENERATOR_EXTRA_CONDITION)(obj)[name]
                     (err, rez) = processSupersedes(tval, extraVars)
                     if err:
                         raise vol.Invalid(err)
-                    obj = { 'domain': 'foo', 'name': 'bar' }
+                    obj = {  }
                     obj[name] = rez
-                    tval = NO_GENERATOR_SCHEMA(obj)[name]
+                    tval = vol.Schema(NO_GENERATOR_EXTRA_CONDITION)(obj)[name]
                     #tval = rez
                     simple = True
                 else:
-                    obj = { 'domain': 'foo', 'name': 'bar' }
+                    obj = {}
                     obj[name] = ttxt
-                    tval = NO_GENERATOR_SCHEMA(obj)[name]
+                    tval = vol.Schema(NO_GENERATOR_EXTRA_CONDITION)(obj)[name]
                     simple = True
             elif name in ['friendly_name']:
                 tval = SINGLE_TRACKED_SCHEMA_PRE_NAME({ name: ttxt })[name]
@@ -258,7 +258,7 @@ class RenderValueView(HomeAssistantView):
                 if extraVars:
                     obj = { 'domain': 'foo', 'name': 'bar', 'generator':'f2', 'generator_name': 'f3' }
                     obj[name] = ttxt
-                    tval = GENERATOR_SCHEMA(obj)[name]
+                    tval = vol.Schema(GENERATOR_EXTRA)(obj)[name]
                     ttype = 'string'
                 else:
                     tval = DEFAULTS_SCHEMA({ name: ttxt })[name]
@@ -269,14 +269,14 @@ class RenderValueView(HomeAssistantView):
                 # so for rendering, we're lax and allow templates in case it's in a generator.
                 # when we validate/create, it'll get proper validation that restricts template to only
                 # when used with a generator
-                tval = GENERATOR_SCHEMA(obj)[name]
+                tval = vol.Schema(GENERATOR_EXTRA)(obj)[name]
                 ttype = 'string'
                 #simple = True
             elif name in ['trigger']:
                 obj = { 'domain': 'foo', 'name': 'bar', name: ttxt }
                 # Triggers can puke with TypeError :(
                 try:
-                    tval = SINGLE_ALERT_SCHEMA_EVENT(obj)[name]
+                    tval = SINGLE_ALERT_SCHEMA_EVENT_NO_GEN(obj)[name]
                 except TypeError as v:
                     return self.json({ 'error': f'parse error: {str(v)}' })
                 simple = True
@@ -299,7 +299,7 @@ class RenderValueView(HomeAssistantView):
                 ttype = 'bool'
             elif name in ['early_start']:
                 obj = { 'domain': 'foo', 'name': 'bar', 'trigger': dummyTriggerDict, name: ttxt }
-                tval = SINGLE_ALERT_SCHEMA_EVENT(obj)[name]
+                tval = SINGLE_ALERT_SCHEMA_EVENT_NO_GEN(obj)[name]
                 simple = True
             elif name in ['manual_on', 'manual_off', 'ack_required', 'ack_reminders_only']:
                 obj = { name: ttxt }
@@ -323,14 +323,14 @@ class RenderValueView(HomeAssistantView):
                     ttype = 'float'
             elif name in ['generator']:
                 obj = { 'domain': 'foo', 'name': 'bar', 'generator_name': 'ick', name: ttxt }
-                tval = GENERATOR_SCHEMA(obj)[name]
+                tval = vol.Schema(GENERATOR_EXTRA)(obj)[name]
                 ttype = 'generator'
                 if isinstance(tval, list):
                     tval = generatorListToResult(tval)
                     simple = True
             elif name in ['generator_name']:
                 obj = { 'domain': 'foo', 'name': 'bar', 'generator': 'ick', name: ttxt }
-                tval = GENERATOR_SCHEMA(obj)[name]
+                tval = vol.Schema(GENERATOR_EXTRA)(obj)[name]
                 simple = True
             elif name in ['skip_internal_errors', 'notifier_startup_grace_secs', 'defer_startup_notifications']:
                 tval = TOP_LEVEL_SCHEMA({name: ttxt})[name]
