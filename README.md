@@ -865,15 +865,16 @@ Really last implementation detail: any templates specified for `domain` or `name
 
 #### Generators and triggers
 
-Generator variables (eg `genElem`) will be available only to trigger fields that accept templates. For example, if you want to use `trigger_on` and specify a triggering entity as `genEntityId`, you can't use `trigger: state` because the `entity_id` field doesn't accept a template value. Instead you'd need to say:
+Generator variables (eg `genElem`) are available to trigger fields that accept templates.
 
+In addition, you may also specify a template in the `entity_id` field of a `state` trigger when used with generators (normally HA doesn't allow templates in the `entity_id` field).  That template will be rendered once when the generator creates an alert - the template does not track changes. So you can say:
 ````
   - domain: test
     name: my_alert
     generator: ...
-    trigger_on:
-      - trigger: template
-        value_template: "{{ states(genEntityId) }}"
+    trigger:
+      - trigger: state
+        entity_id: "{{ genEntityId }}"
 ````
 
 ### Reference

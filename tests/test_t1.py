@@ -32,6 +32,7 @@ from custom_components.alert2.util import (     GENERATOR_DOMAIN,
                                                 EVENT_ALERT2_ACK,
                                                 EVENT_ALERT2_UNACK,
                                            )
+from custom_components.alert2.config import (     jProtectedTrigger)
 import homeassistant.const
 from homeassistant.core import State, HassJob
 from homeassistant import config as conf_util
@@ -2991,25 +2992,65 @@ async def test_generator9(hass, service_calls, monkeypatch):
     assert set(entities.keys()) == registeredEnts
 
 async def test_generator10(hass, service_calls, monkeypatch):
+    # Test trigger preprocessing.  If this breaks, need to rethink
+    # jProtectedGeneratorTrigger
+    c = { 'trigger': 'state', 'entity_id': 'foo' }
+    assert jProtectedTrigger(c) == [ { 'platform': 'state', 'entity_id': 'foo' } ]
+    assert jProtectedTrigger(jProtectedTrigger(c)) == [ { 'platform': 'state', 'entity_id': 'foo' } ]
+    c = [ { 'trigger': 'state', 'entity_id': 'foo' } ]
+    assert jProtectedTrigger(c) == [ { 'platform': 'state', 'entity_id': 'foo' } ]
+    assert jProtectedTrigger(jProtectedTrigger(c)) == [ { 'platform': 'state', 'entity_id': 'foo' } ]
+    c = [ { 'trigger': 'state', 'entity_id': 'foo' }, { 'trigger': 'state', 'entity_id': 'foo2' } ]
+    assert jProtectedTrigger(c) == [ { 'platform': 'state', 'entity_id': 'foo' }, { 'platform': 'state', 'entity_id': 'foo2' } ]
+    assert jProtectedTrigger(jProtectedTrigger(c)) == [ { 'platform': 'state', 'entity_id': 'foo' }, { 'platform': 'state', 'entity_id': 'foo2' } ]
+    c = [ { 'trigger': 'state', 'entity_id': ['foo', 'foo2' ] } ]
+    assert jProtectedTrigger(c) == [ { 'platform': 'state', 'entity_id': ['foo','foo2'] } ]
+    assert jProtectedTrigger(jProtectedTrigger(c)) == [ { 'platform': 'state', 'entity_id': ['foo','foo2'] } ]
+
     # Test event generator
     await setAndWait(hass, "sensor.e1", '1')
     await setAndWait(hass, "sensor.e2", '1')
+    await setAndWait(hass, "sensor.x_t5", '1')
+    await setAndWait(hass, "sensor.x_t6", '1')
+    await setAndWait(hass, "sensor.x_t7", '1')
+    await setAndWait(hass, "sensor.y_t7", '1')
+    await setAndWait(hass, "sensor.x_t8", '1')
+    await setAndWait(hass, "sensor.x_t9", '1')
     cfg = { 'alert2' : { 'alerts' : [
         { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't1' ],
           'trigger': {'trigger':'state','entity_id':'sensor.e1'}, 'condition': 'yes' },
         { 'domain': 'test', 'name': '{{ genElem }}',
           'generator': [ 't2' ], 'generator_name': 'g1',
-          'condition': 'yes', 'trigger': [{'platform':'state','entity_id':'sensor.e1'}] },
+          'condition': 'yes', 'trigger': [{'trigger':'state','entity_id':'sensor.e1'}] },
         { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't3' ],
           'trigger': {'trigger':'state','entity_id':'sensor.e1'}, },
         { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't4' ],
           'message': 'x-{{ genElem }}-x',
           'trigger': {'trigger':'state','entity_id':'sensor.e2'}, 'condition': "{{ states('sensor.e2') == genElem }}" },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't5' ],
+          'trigger': {'trigger':'state','entity_id':"sensor.x_{{ genElem }}"} },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't6' ],
+          'trigger': [{'trigger':'state','entity_id':"sensor.x_{{ genElem }}"}] },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't7' ],
+          'trigger': {'trigger':'state','entity_id': ["sensor.x_{{ genElem }}", "sensor.y_{{ genElem }}"]} },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't8', 't9' ],
+          'trigger': {'platform':'state','entity_id': "sensor.x_{{ genElem }}"} },
+        # Make sure we didn't break non-state trigger validation
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 'txx' ],
+          'trigger': {'trigger':'template','value_template': "{{ genElem }}"} },
+
+        # Some error conditions
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't10' ],
+          'trigger': {'trigger':'state','entity_id':"sensor.x_{{ genElem "} },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't11' ],
+          'trigger': {'trigger':'state','entity_id':"sensor.x_{{ foof() }}"} },
     ] } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
-    assert service_calls.isEmpty()
+    service_calls.popNotifySearch('persistent_notification', 'foof', 'foof.*is undefined')
+    service_calls.popNotifyEmpty('persistent_notification', 'unexpected end of template.*t10')
+    #assert service_calls.isEmpty()
 
     await setAndWait(hass, "sensor.e1", '2')
     service_calls.popNotifySearch('persistent_notification', 't1', '^Alert2 test_t1$')
@@ -3020,6 +3061,21 @@ async def test_generator10(hass, service_calls, monkeypatch):
     assert service_calls.isEmpty()
     await setAndWait(hass, "sensor.e2", 't4')
     service_calls.popNotifyEmpty('persistent_notification', 'test_t4: x-t4-x')
+
+    await setAndWait(hass, "sensor.x_t5", '2')
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t5')
+    await setAndWait(hass, "sensor.x_t6", '2')
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t6')
+    await setAndWait(hass, "sensor.x_t7", '2')
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t7')
+    await setAndWait(hass, "sensor.y_t7", '2')
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t7')
+
+    await setAndWait(hass, "sensor.x_t8", '2')
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t8')
+    await setAndWait(hass, "sensor.x_t9", '2')
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t9')
+
 
     
 async def test_late_state(hass, service_calls):

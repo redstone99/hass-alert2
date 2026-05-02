@@ -231,6 +231,22 @@ def jProtectedTrigger(afield):
         raise vol.Invalid(f'Trigger spec cause type error: {ty}') from ty
     return atrigger
 
+# Allow a template to be specified in the entity_id field of state triggers if used with
+# a generator.
+def jProtectedGeneratorTrigger(afield):
+    alist = jProtectedTrigger(afield)
+    for idx in range(len(alist)):
+        ent = alist[idx]
+        # as per helpers/config_validation.py::_trigger_pre_validator,
+        # trigger internals still use 'platform' instead of 'trigger'
+        # include 'trigger' for whenever that code changes over
+        if ('platform' in ent and ent['platform'] == 'state') or \
+           ('trigger' in ent and ent['trigger'] == 'state'):
+            alist[idx] = vol.Schema({
+                                      vol.Required('entity_id'): vol.All(cv.ensure_list, [ cv.template ]),
+                                     }, extra=vol.ALLOW_EXTRA)(alist[idx])
+    return alist
+
 def jDomain(afield):
     dd = jstringName(afield)
     if dd == GENERATOR_DOMAIN:
@@ -321,8 +337,10 @@ SINGLE_TRACKED_SCHEMA = vol.Any(
 SINGLE_ALERT_SCHEMA_PRE_NAME = SINGLE_TRACKED_SCHEMA_PRE_NAME.extend({
     vol.Optional('message'): cv.template,
 })
+
+
 SINGLE_ALERT_SCHEMA_EVENT_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
-    vol.Required('trigger'): jProtectedTrigger,
+    #vol.Required('trigger'): jProtectedTrigger,
     vol.Optional('condition'): boolTemplate,
     vol.Optional('early_start'): cv.boolean,
 })
@@ -372,7 +390,12 @@ GENERATOR_EXTRA = {
     vol.Optional('priority'): cv.template,
 }
 GENERATOR_EXTRA_CONDITION = {
-    vol.Optional('supersedes'): vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT_GEN ]), supersedesTemplate)
+    vol.Optional('supersedes'): vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT_GEN ]), supersedesTemplate),
+    vol.Optional('trigger_off'): jProtectedGeneratorTrigger,
+    vol.Optional('trigger_on'): jProtectedGeneratorTrigger,
+}
+GENERATOR_EXTRA_EVENT = {
+    vol.Required('trigger'): jProtectedGeneratorTrigger,
 }
 NO_GENERATOR_EXTRA = {
     vol.Required('domain'): jDomain,
@@ -380,14 +403,19 @@ NO_GENERATOR_EXTRA = {
 }
 NO_GENERATOR_EXTRA_CONDITION = {
     vol.Optional('supersedes'): vol.Any(None, vol.All(cv.ensure_list, [ DOMAIN_NAME_DICT ])),
+    vol.Optional('trigger_off'): jProtectedTrigger,
+    vol.Optional('trigger_on'): jProtectedTrigger,
+}
+NO_GENERATOR_EXTRA_EVENT = {
+    vol.Required('trigger'): jProtectedTrigger,
 }
 
 # If alert is a generator, then 'name' is a template, otherwise 'name' is a string
 SINGLE_ALERT_SCHEMA_CONDITION_GEN    = check_off(SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend(   GENERATOR_EXTRA).extend(   GENERATOR_EXTRA_CONDITION))
 SINGLE_ALERT_SCHEMA_CONDITION_NO_GEN = check_off(SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME.extend(NO_GENERATOR_EXTRA).extend(NO_GENERATOR_EXTRA_CONDITION))
     
-SINGLE_ALERT_SCHEMA_EVENT_GEN    = SINGLE_ALERT_SCHEMA_EVENT_PRE_NAME.extend(   GENERATOR_EXTRA)
-SINGLE_ALERT_SCHEMA_EVENT_NO_GEN = SINGLE_ALERT_SCHEMA_EVENT_PRE_NAME.extend(NO_GENERATOR_EXTRA)
+SINGLE_ALERT_SCHEMA_EVENT_GEN    = SINGLE_ALERT_SCHEMA_EVENT_PRE_NAME.extend(   GENERATOR_EXTRA).extend(   GENERATOR_EXTRA_EVENT)
+SINGLE_ALERT_SCHEMA_EVENT_NO_GEN = SINGLE_ALERT_SCHEMA_EVENT_PRE_NAME.extend(NO_GENERATOR_EXTRA).extend(NO_GENERATOR_EXTRA_EVENT)
 
 TOP_LEVEL_SCHEMA = vol.Schema({
     vol.Optional('defaults'): DEFAULTS_SCHEMA,

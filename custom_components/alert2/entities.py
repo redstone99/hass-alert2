@@ -1,5 +1,6 @@
 import ast
 import asyncio
+import copy
 import datetime as rawdt
 from   enum import Enum
 import logging
@@ -664,6 +665,21 @@ def processSupersedes(cfgElem, svars):
     else:
         return (f'Supersedes variable has bad value: "{cfgElem}"', None)
 
+
+# Purpose of prepGeneratedTrigger is to copy the spec and swap out the entity_id templates for rendered
+# concrete entity_id strings
+def subTrigEntId(aTempl, genVars):
+    return aTempl.async_render(variables=genVars, parse_result=False)
+def prepGeneratedTrigger(aTrig, genVars):
+    # aTrig has been run through jProtectedGeneratorTrigger
+    if ('platform' in aTrig and aTrig['platform'] == 'state') or \
+       ('trigger' in aTrig and aTrig['trigger'] == 'state'):
+        newTrig = dict(aTrig) # shallow copy
+        newTrig['entity_id'] = [ subTrigEntId(x, genVars) for x in aTrig['entity_id'] ]
+        return newTrig
+    else:
+        return aTrig # no copy needed
+    
 # AlertCommon must be first in parent class list so super() calls it
 class AlertGenerator(AlertCommon, SensorEntity):
     #_attr_available = True  defaults to True
@@ -830,6 +846,24 @@ class AlertGenerator(AlertCommon, SensorEntity):
                         report(DOMAIN, 'error', f'{self.name} priority template returned err {err}')
                         sawError = True
                         break
+                # state triggers used with generators have templates in the entity_id fields,
+                # so render the template to replace those with (hopefully) entity names before creating the actual alert.
+                for triggerSect in [ 'trigger', 'trigger_on', 'trigger_off' ]:
+                    if triggerSect in self.config:
+                        # Mostly acfg is just rawConfig.  However, for triggers we
+                        # use the processed config (for canonicalization and template production), copying
+                        # and swapping out any template entity_id elements in state triggers.
+                        # acfg gets processed again during alert creation.  I think processing trigger specs twice
+                        # is ok, and a unittest checks that: test_t1.py::test_generator10
+                        assert isinstance(self.config[triggerSect], list)
+                        try:
+                            acfg[triggerSect] = [ prepGeneratedTrigger(x, svars) for x in self.config[triggerSect] ]
+                        except TemplateError as err:
+                            report(DOMAIN, 'error', f'{self.name} {triggerSect} entity_id template returned err {err}')
+                            sawError = True
+                if sawError:
+                    break
+    
                 #if 'friendly_name' in self.config:
                 #    try:
                 #        friendlyNameStr = self.config['friendly_name'].async_render(

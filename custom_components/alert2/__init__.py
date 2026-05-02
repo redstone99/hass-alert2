@@ -843,16 +843,16 @@ class Alert2Data:
                         aCfg = SINGLE_ALERT_SCHEMA_EVENT_GEN(obj)
                     else:
                         aCfg = SINGLE_ALERT_SCHEMA_EVENT_NO_GEN(obj)
-                    aCfg['trigger'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger'])
+                        aCfg['trigger'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger'])
                 else:
                     if 'generator' in obj:
                         aCfg = SINGLE_ALERT_SCHEMA_CONDITION_GEN(obj)
                     else:
                         aCfg = SINGLE_ALERT_SCHEMA_CONDITION_NO_GEN(obj)
-                    if 'trigger_on' in aCfg:
-                        aCfg['trigger_on'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger_on'])
-                    if 'trigger_off' in aCfg:
-                        aCfg['trigger_off'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger_off'])
+                        if 'trigger_on' in aCfg:
+                            aCfg['trigger_on'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger_on'])
+                        if 'trigger_off' in aCfg:
+                            aCfg['trigger_off'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger_off'])
                 if checkForUpdate:
                     return True
                 if 'generator' in obj:
