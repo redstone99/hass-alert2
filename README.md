@@ -1,5 +1,5 @@
 <!-- ~/tmp/general-env/bin/grip -b ~/tmp/hass-alert2/README.md
-To spin up a fresh HA for testing:
+To spin up a fresh HA for testing using HACS:
 mkdir -p ha-test/custom_components/hacs
 wget https://github.com/hacs/integration/releases/latest/download/hacs.zip
 unzip hacs.zip -d ha-test/custom_components/hacs  ; rm hacs.zip
