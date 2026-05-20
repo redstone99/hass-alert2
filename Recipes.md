@@ -21,6 +21,29 @@ alert2:
 
 Replace "foo" with whatever notifier you want to use. The default is `persistent_notification`, which adds notifications to the "Notifications" tab in HomeAssistant.
 
+### Telegram notifier defaults
+
+If you're using Telegram as your notifier, here is a recommended defaults setup. It uses `parse_mode: "plain_text"` to avoid Telegram failing to send messages that contain special characters, and `disable_notification` to send silent (no sound/vibration) notifications when an alert clears — so only new firings will disturb you.
+
+```yaml
+alert2:
+  defaults:
+    notifier: notifier_telegram
+    summary_notifier: notifier_telegram
+    reminder_frequency_mins: 10  # 10 minutes between reminders
+    throttle_fires_per_mins: [10, 60]  # Max 10 notifications per hour
+    annotate_messages: true
+    data:
+      parse_mode: "plain_text"
+      disable_notification: "{{ notify_reason in ['StopFiring'] }}"
+      # Other notify_reason values you could silence:
+      # 'Fire'          - alert starts firing      -> audible (default)
+      # 'ReminderOn'    - alert still firing        -> audible (default)
+      # 'StopFiring'    - alert clears              -> silent
+      # 'ReminderToAck' - alert not acked yet       -> audible (default)
+      # 'Summary'       - throttle/snooze summary   -> audible (default)
+```
+
 ## A few simple alerts
 
 A basic condition alert requires just `domain`, `name`, and `condition` to be set.  Everything else is optional. `domain` and `name` can be whatever you want. The purpose is to help you organize your alerts.
