@@ -21,27 +21,17 @@ alert2:
 
 Replace "foo" with whatever notifier you want to use. The default is `persistent_notification`, which adds notifications to the "Notifications" tab in HomeAssistant.
 
-### Telegram notifier defaults
-
-If you're using Telegram as your notifier, here is a recommended defaults setup. It uses `parse_mode: "plain_text"` to avoid Telegram failing to send messages that contain special characters, and `disable_notification` to send silent (no sound/vibration) notifications when an alert clears — so only new firings will disturb you.
-
+If you're using Telegram as your notifier, then you may be interested in the following additional defaults. The [README](README.md) has further documentation on [`parse_mode`](README.md#telegram-notifiers) and [`notify_reason`](README.md#common-alert-features-1).
 ```yaml
 alert2:
   defaults:
-    notifier: notifier_telegram
-    summary_notifier: notifier_telegram
-    reminder_frequency_mins: 10  # 10 minutes between reminders
-    throttle_fires_per_mins: [10, 60]  # Max 10 notifications per hour
-    annotate_messages: true
+    ...
     data:
+      # Telgram parse_mode defaults to "markdown", which throws errors when sending messages with certain characters, like \"
       parse_mode: "plain_text"
+      # Direct telegram to not trigger a mobile phone notification when Alert2 sends messages that an alert stopped firing.
+      # notify_reason is documented here: http://localhost:6420/#common-alert-features-1
       disable_notification: "{{ notify_reason in ['StopFiring'] }}"
-      # Other notify_reason values you could silence:
-      # 'Fire'          - alert starts firing      -> audible (default)
-      # 'ReminderOn'    - alert still firing        -> audible (default)
-      # 'StopFiring'    - alert clears              -> silent
-      # 'ReminderToAck' - alert not acked yet       -> audible (default)
-      # 'Summary'       - throttle/snooze summary   -> audible (default)
 ```
 
 ## A few simple alerts
