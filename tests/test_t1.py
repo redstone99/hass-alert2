@@ -961,31 +961,47 @@ async def test_annotate(hass, service_calls):
 async def test_delay_on(hass, service_calls):
     cfg = { 'alert2' : { 'alerts' : [
         { 'domain': 'test', 'name': 't12a', 'condition': 'sensor.a', 'delay_on_secs': 1, 'reminder_frequency_mins': 0.01 },
+        { 'domain': 'test', 'name': 't12b', 'condition': '{{ is_state("sensor.b", "yay") }}', 'delay_on_secs': 1, 'reminder_frequency_mins': 0.01 },
+        { 'domain': 'test', 'name': 't12c', 'condition': '{{ is_state("sensor.c", "yay") }}', 'delay_on_secs': 1, 'reminder_frequency_mins': 0.01 },
     ], } }
     hass.states.async_set("sensor.a", "off")
+    hass.states.async_set("sensor.b", "off")
+    hass.states.async_set("sensor.c", "yay")
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
 
     await setAndWait(hass, 'sensor.a', 'on')
+    await setAndWait(hass, 'sensor.b', 'yay')
     # alert should not have fired
     assert service_calls.isEmpty()
     assert hass.states.get('alert2.test_t12a').state == 'off'
+    assert hass.states.get('alert2.test_t12b').state == 'off'
+    assert hass.states.get('alert2.test_t12c').state == 'off'
     # it should fire after 0.9 secs more of sleeping + 1 sec bufer time
     await asyncio.sleep(2)
     assert hass.states.get('alert2.test_t12a').state == 'on'
-    service_calls.popNotifyEmpty('persistent_notification', 'test_t12a: turned on')
+    assert hass.states.get('alert2.test_t12b').state == 'on'
+    assert hass.states.get('alert2.test_t12c').state == 'on'
+    service_calls.popNotifySearch('persistent_notification', 't12a', 'test_t12a: turned on')
+    service_calls.popNotifySearch('persistent_notification', 't12b', 'test_t12b: turned on')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t12c: turned on')
     # reminder counts from when turned on, so should be 0.1s into reminder time of 0.6s
     # so sleeping a bit more shouldn't trigger reminder
     await asyncio.sleep(0.2)
     assert service_calls.isEmpty()
     # Sleeping a bit more should now trigger it
     await asyncio.sleep(0.8)
-    service_calls.popNotifyEmpty('persistent_notification', 'test_t12a:.*on for')
+    service_calls.popNotifySearch('persistent_notification', 't12a', 'test_t12a:.*on for')
+    service_calls.popNotifySearch('persistent_notification', 't12b', 'test_t12b:.*on for')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t12c:.*on for')
     await setAndWait(hass, 'sensor.a', 'off')
+    await setAndWait(hass, 'sensor.b', 'off')
     assert hass.states.get('alert2.test_t12a').state == 'off'
-    service_calls.popNotifyEmpty('persistent_notification', 'test_t12a: turned off')
+    assert hass.states.get('alert2.test_t12b').state == 'off'
+    service_calls.popNotifySearch('persistent_notification', 't12a', 'test_t12a: turned off')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t12b: turned off')
 
 async def test_delay_on2(hass, service_calls):
     hass.states.async_set("sensor.a", "off")
