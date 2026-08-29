@@ -3023,6 +3023,10 @@ async def test_generator10(hass, service_calls, monkeypatch):
     assert jProtectedTrigger(c) == [ { 'platform': 'state', 'entity_id': ['foo','foo2'] } ]
     assert jProtectedTrigger(jProtectedTrigger(c)) == [ { 'platform': 'state', 'entity_id': ['foo','foo2'] } ]
 
+    c = [ { 'trigger': 'numeric_state', 'entity_id': ['foo', 'foo2' ] } ]
+    assert jProtectedTrigger(c) == [ { 'platform': 'numeric_state', 'entity_id': ['foo','foo2'] } ]
+    assert jProtectedTrigger(jProtectedTrigger(c)) == [ { 'platform': 'numeric_state', 'entity_id': ['foo','foo2'] } ]
+    
     # Test event generator
     await setAndWait(hass, "sensor.e1", '1')
     await setAndWait(hass, "sensor.e2", '1')
@@ -3032,6 +3036,9 @@ async def test_generator10(hass, service_calls, monkeypatch):
     await setAndWait(hass, "sensor.y_t7", '1')
     await setAndWait(hass, "sensor.x_t8", '1')
     await setAndWait(hass, "sensor.x_t9", '1')
+    await setAndWait(hass, "sensor.x_t12", '1')
+    await setAndWait(hass, "sensor.x_t13", '1')
+    await setAndWait(hass, "sensor.x_t14", '1')
     cfg = { 'alert2' : { 'alerts' : [
         { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't1' ],
           'trigger': {'trigger':'state','entity_id':'sensor.e1'}, 'condition': 'yes' },
@@ -3052,14 +3059,20 @@ async def test_generator10(hass, service_calls, monkeypatch):
         { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't8', 't9' ],
           'trigger': {'platform':'state','entity_id': "sensor.x_{{ genElem }}"} },
         # Make sure we didn't break non-state trigger validation
-        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 'txx' ],
-          'trigger': {'trigger':'template','value_template': "{{ genElem }}"} },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't14' ],
+          'trigger': {'trigger':'template','value_template': "{{ is_state('sensor.x_' + genElem, 'foo') }}"} },
 
         # Some error conditions
         { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't10' ],
           'trigger': {'trigger':'state','entity_id':"sensor.x_{{ genElem "} },
         { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't11' ],
           'trigger': {'trigger':'state','entity_id':"sensor.x_{{ foof() }}"} },
+
+        # Test numeric_state
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't12' ],
+          'trigger': {'trigger':'numeric_state', 'above': '5', 'entity_id':"sensor.x_{{ genElem }}"} },
+        { 'domain': 'test', 'name': '{{ genElem }}', 'generator': [ 't13' ],
+          'trigger': [{'platform':'numeric_state','entity_id': "sensor.x_{{ genElem }}", 'above': '5'}] },
     ] } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
@@ -3069,9 +3082,11 @@ async def test_generator10(hass, service_calls, monkeypatch):
     #assert service_calls.isEmpty()
 
     await setAndWait(hass, "sensor.e1", '2')
-    service_calls.popNotifySearch('persistent_notification', 't1', '^Alert2 test_t1$')
-    service_calls.popNotifySearch('persistent_notification', 't2', '^Alert2 test_t2')
-    service_calls.popNotifyEmpty('persistent_notification', 'test_t3')
+    #await asyncio.sleep(1) # seems like a bit more sleep is needed
+    #_LOGGER.info(service_calls.allCalls)
+    service_calls.popNotifySearch('persistent_notification', 'test_t2', '^Alert2 test_t2') # disambiguate Alert2 from test_t2
+    service_calls.popNotifySearch('persistent_notification', 't3', '^Alert2 test_t3')
+    service_calls.popNotifyEmpty('persistent_notification', '^Alert2 test_t1$')
 
     await setAndWait(hass, "sensor.e2", '3')
     assert service_calls.isEmpty()
@@ -3092,6 +3107,26 @@ async def test_generator10(hass, service_calls, monkeypatch):
     await setAndWait(hass, "sensor.x_t9", '2')
     service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t9')
 
+    # Numeric_state
+    await setAndWait(hass, "sensor.x_t12", '2')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.x_t12", '6')
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t12')
+    #
+    await setAndWait(hass, "sensor.x_t13", '2')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.x_t13", '6')
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t13')
+    await setAndWait(hass, "sensor.x_t13", '7')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.x_t13", '2')
+    assert service_calls.isEmpty()
+
+    # Normal trigger templates
+    await setAndWait(hass, "sensor.x_t14", '2')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.x_t14", 'foo')
+    service_calls.popNotifyEmpty('persistent_notification', 'Alert2 test_t14')
 
     
 async def test_late_state(hass, service_calls):
@@ -3554,8 +3589,9 @@ async def test_onoff_cond(hass, service_calls, caplog):
         { 'domain': 'test', 'name': 't8', 'trigger_on': [{'platform':'state','entity_id':'sensor.8ton'}], 'manual_on': True, 'trigger_off': [{'platform':'state','entity_id':'sensor.8toff'}] },
         { 'domain': 'test', 'name': 't9', 'trigger_on': [{'platform':'state','entity_id':'sensor.9ton'}], 'manual_off': True },
         { 'domain': 'test', 'name': 't10', 'trigger_on': [{'trigger':'state','entity_id':'sensor.10ton','to':'on'}], 'condition_off': 'sensor.10toff' },
-        # triggers don't allow templates in state platform, so doesn't work easily with generators
-        #{ 'domain': 'test', 'name': '{{genElem}}', 'trigger_on': [{'platform':'state','entity_id':'sensor.foo_{{genElem}}'}], 'manual_off': True, 'generator_name':'g1', 'generator': 't11' },
+        
+        { 'domain': 'test', 'name': '{{genElem}}', 'trigger_on': [{'platform':'state','entity_id':'sensor.foo_{{genElem}}'}], 'manual_off': True, 'generator_name':'g1', 'generator': 't11' },
+        { 'domain': 'test', 'name': '{{genElem}}', 'trigger_on': [{'platform':'numeric_state','entity_id':'sensor.foo_{{genElem}}', 'above':'5'}], 'manual_off': True, 'generator_name':'g3', 'generator': 't13' },
         { 'domain': 'test', 'name': '{{genElem}}', 'trigger_on': [{'trigger':'template','value_template': '{{ states("sensor.foo_"+genElem) }}'}], 'manual_off': True, 'generator_name':'g2', 'generator': 't12' },
         # test delay_on_secs
     ]}}
@@ -3569,6 +3605,7 @@ async def test_onoff_cond(hass, service_calls, caplog):
     hass.states.async_set("sensor.10toff", 'off')
     hass.states.async_set("sensor.foo_t11", 'off')
     hass.states.async_set("sensor.foo_t12", 'off')
+    hass.states.async_set("sensor.foo_t13", '1')
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -3727,19 +3764,32 @@ async def test_onoff_cond(hass, service_calls, caplog):
     assert hass.states.get('alert2.test_t10').state == 'off'
     assert service_calls.isEmpty()
 
-    if False:
-        # t11 tests
-        await setAndWait(hass, "sensor.foo_t11", 'on')
-        service_calls.popNotifyEmpty('persistent_notification', 'test_t11: turned on')
-        assert hass.states.get('alert2.test_t11').state == 'on'
-        await setAndWait(hass, "sensor.foo_t11", 'off')
-        await asyncio.sleep(0.05)
-        assert hass.states.get('alert2.test_t10').state == 'on'
-        assert service_calls.isEmpty()
-        await hass.services.async_call('alert2', 'manual_off', {'entity_id':'alert2.test_t11'})
-        await hass.async_block_till_done()
-        service_calls.popNotifyEmpty('persistent_notification', 'test_t11: turned off')
-        assert hass.states.get('alert2.test_t11').state == 'off'
+    # t11 tests
+    await setAndWait(hass, "sensor.foo_t11", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t11: turned on')
+    assert hass.states.get('alert2.test_t11').state == 'on'
+    await setAndWait(hass, "sensor.foo_t11", 'off')
+    await asyncio.sleep(0.05)
+    assert hass.states.get('alert2.test_t11').state == 'on'
+    assert service_calls.isEmpty()
+    await hass.services.async_call('alert2', 'manual_off', {'entity_id':'alert2.test_t11'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t11: turned off')
+    assert hass.states.get('alert2.test_t11').state == 'off'
+    # t13 tests
+    await setAndWait(hass, "sensor.foo_t13", '2')
+    assert service_calls.isEmpty()
+    await setAndWait(hass, "sensor.foo_t13", '6')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13: turned on')
+    assert hass.states.get('alert2.test_t13').state == 'on'
+    await setAndWait(hass, "sensor.foo_t13", '1')
+    await asyncio.sleep(0.05)
+    assert hass.states.get('alert2.test_t13').state == 'on'
+    assert service_calls.isEmpty()
+    await hass.services.async_call('alert2', 'manual_off', {'entity_id':'alert2.test_t13'})
+    await hass.async_block_till_done()
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t13: turned off')
+    assert hass.states.get('alert2.test_t13').state == 'off'
     
     # t12 tests
     assert hass.states.get('alert2.test_t12').state == 'off'
