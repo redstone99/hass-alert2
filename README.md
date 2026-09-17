@@ -867,7 +867,7 @@ Really last implementation detail: any templates specified for `domain` or `name
 
 Generator variables (eg `genElem`) are available to trigger fields that accept templates.
 
-In addition, you may also specify a template in the `entity_id` field of a `state` trigger when used with generators (normally HA doesn't allow templates in the `entity_id` field).  That template will be rendered once when the generator creates an alert - the template does not track changes. So you can say:
+In addition, you may also specify a template in the `entity_id` field of a `state` or `numeric_state` trigger when used with generators (normally HA doesn't allow templates in the `entity_id` field).  That template will be rendered once when the generator creates an alert - the template does not track changes. So you can say:
 ````
   - domain: test
     name: my_alert
@@ -875,6 +875,10 @@ In addition, you may also specify a template in the `entity_id` field of a `stat
     trigger:
       - trigger: state
         entity_id: "{{ genEntityId }}"
+      # or
+      - trigger: numeric_state
+        entity_id: "{{ genEntityId }}"
+        above: 5
 ````
 
 ### Reference

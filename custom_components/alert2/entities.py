@@ -346,8 +346,7 @@ class TriggerCond:
             self.parentEnt.alDomain,
             self.fullName,
             log_cb,
-            home_assistant_start,
-            variables,
+            variables = variables,
         )
     # I think skip_condition is from triggers in automations, where, when you forcibly invoke the automation via the
     # front-end, you may want to bypass any condition logic that gates the automation.
@@ -673,7 +672,9 @@ def subTrigEntId(aTempl, genVars):
 def prepGeneratedTrigger(aTrig, genVars):
     # aTrig has been run through jProtectedGeneratorTrigger
     if ('platform' in aTrig and aTrig['platform'] == 'state') or \
-       ('trigger' in aTrig and aTrig['trigger'] == 'state'):
+       ('trigger' in aTrig and aTrig['trigger'] == 'state') or \
+       ('platform' in aTrig and aTrig['platform'] == 'numeric_state') or \
+       ('trigger' in aTrig and aTrig['trigger'] == 'numeric_state'):
         newTrig = dict(aTrig) # shallow copy
         newTrig['entity_id'] = [ subTrigEntId(x, genVars) for x in aTrig['entity_id'] ]
         return newTrig

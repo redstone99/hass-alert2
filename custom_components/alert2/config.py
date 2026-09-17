@@ -241,7 +241,9 @@ def jProtectedGeneratorTrigger(afield):
         # trigger internals still use 'platform' instead of 'trigger'
         # include 'trigger' for whenever that code changes over
         if ('platform' in ent and ent['platform'] == 'state') or \
-           ('trigger' in ent and ent['trigger'] == 'state'):
+           ('trigger' in ent and ent['trigger'] == 'state') or \
+           ('platform' in ent and ent['platform'] == 'numeric_state') or \
+           ('trigger' in ent and ent['trigger'] == 'numeric_state'):
             alist[idx] = vol.Schema({
                                       vol.Required('entity_id'): vol.All(cv.ensure_list, [ cv.template ]),
                                      }, extra=vol.ALLOW_EXTRA)(alist[idx])

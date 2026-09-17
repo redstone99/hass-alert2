@@ -203,3 +203,27 @@ template:
          |list|count }}
 ````
 Note the use of `states.alert2` instead of `states`.  As mentioned in [this disucsion thread](https://community.home-assistant.io/t/template-entities-referencing-states-can-miss-updates-diagnosed/1002663/2), avoid using the raw `states` object "at all costs".  In particular, templates of the form "{{ states | ... }}" may miss updates.
+
+### Automatically snoozing alerts at nighttime
+
+If you don't want to be notified of certain alerts firing at nighttime, you can set up an automation that snoozes them. Here's an example that snoozes all alerts except the alert2 internal alerts:
+````yaml
+automation auto_snoozes:
+    alias: Auto snooze alerts at night
+    description: Snooze alerts at 9pm until morning
+    triggers:
+      - at: "21:00:00"
+        trigger: time
+    actions:
+      - action: alert2.notification_control
+        data:
+          snooze_until: "{{ (now() + timedelta(hours=9)).strftime('%Y-%m-%d %H:%M:%S') }}"
+          ack_at_snooze_start: false
+        target:
+          entity_id: |
+            {{ states 
+               | map(attribute='entity_id') 
+               | select('search', '^alert2\\.') 
+               | reject('search', '^alert2\\.alert2') 
+               | list }}
+````

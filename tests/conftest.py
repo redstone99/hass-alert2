@@ -26,6 +26,7 @@ class CallCollector:
         assert len(self.allCalls) > 0
         idx = next((i for i, x in enumerate(self.allCalls) if x[1] == service and search in x[2]['message']), -1)
         assert idx >= 0
+        #_LOGGER.info(f'popNotifySearch found idx={idx}')
         self.doTest(service, rMsg, idx, useRegex, extraFields=extraFields)
     def popNotifyEmpty(self, service, rMsg, extraFields=None):
         self.popNotify(service, rMsg, extraFields=extraFields)

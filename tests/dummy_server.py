@@ -23,10 +23,17 @@ from aiohttp.web import middleware
 from homeassistant import config as conf_util
 #import homeassistant.auth as hauth
 from homeassistant.components import history
-from homeassistant.components.http.const import KEY_AUTHENTICATED
+from homeassistant.components.http.const import KEY_AUTHENTICATED, KEY_HASS_USER
+from homeassistant.components.http.config import async_get_and_load_store
 from homeassistant.components.http import HomeAssistantView
 import homeassistant.components.websocket_api.auth as wsauth
 from homeassistant.components.http.data_validator import RequestDataValidator
+from homeassistant.setup import (
+    SetupPhases,
+    async_start_setup,
+    #async_when_setup_or_start,
+)
+#from homeassistant.auth.models import  User
 import voluptuous as vol
 from aiohttp import web
 from typing import Any
@@ -125,7 +132,9 @@ class JTestView(HomeAssistantView):
         return self.json({})
 
 
+@pytest.mark.parametrize("enable_schema_validation", [False])
 async def test_server(recorder_mock, enable_custom_integrations, hass, hass_storage, monkeypatch, hass_access_token):
+    #async def test_server(recorder_mock, enable_custom_integrations, hass, hass_storage, monkeypatch, hass_access_token):
     cfg = {'alert2': {},
            http.DOMAIN: {http.CONF_SERVER_PORT: 50005}
            }
@@ -147,7 +156,7 @@ async def test_server(recorder_mock, enable_custom_integrations, hass, hass_stor
         http.DOMAIN,
         cfg )
     assert await async_setup_component(hass, "websocket_api", {})
-
+    
     #hass.states.async_set('alert2.d_nn', 'off')
     #await async_wait_recording_done(hass)
 
@@ -158,15 +167,25 @@ async def test_server(recorder_mock, enable_custom_integrations, hass, hass_stor
     assert isinstance(jsdir, str) and len(jsdir) > 0
     await hass.http.async_register_static_paths([
         http.StaticPathConfig('/jtest', jsdir, False)])
+    genUser = await hass.auth.async_create_user('dummery server')
     # Override http/auth.py::auth_middleware authentication to say everything's authenticated.
     @middleware
     async def auth_middleware(request, handler):
         request[KEY_AUTHENTICATED] = True
+        request[KEY_HASS_USER] = genUser
         return await handler(request)
     hass.http.app.middlewares.append(auth_middleware)
     hass.http.register_view(JTestView(hass, hass_storage, monkeypatch))
     #assert await async_setup_component(hass, "frontend", {})
-    await hass.http.start()
+    _LOGGER.info('test_server starting')
+    with async_start_setup(hass, integration="http", phase=SetupPhases.SETUP):
+        _LOGGER.info(hass.http.start)
+        await hass.http.start()
     await hass.async_start()
+    await asyncio.sleep(1)
+    store = await async_get_and_load_store(hass)
+    await store.async_promote_pending()
+    _LOGGER.info('test_server up and running')
     async with done:
         await done.wait()
+
