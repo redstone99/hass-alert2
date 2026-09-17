@@ -2122,6 +2122,42 @@ async def test_grace7(hass, service_calls):
     service_calls.popNotify('fooexist', 'Alert2 test_t49')
     service_calls.popNotifyEmpty('persistent_notification', 'not known to HA.*\'foono\'.*\'foono2\'')
 
+async def test_grace8(hass, service_calls):
+    # Test defer flush for an entity-platform (modern) notify entity, not just a legacy
+    # service-based notifier. DelayedNotifierMgr.loop() used to call
+    # async_call('notify', anotifier, args) unconditionally, which for an entity-platform
+    # notifier calls the nonexistent service <anotifier> under the notify domain instead of
+    # send_message with entity_id set - a broader case of the notify.-prefix bug in issue #74.
+    cfg = { 'alert2' : { 'notifier_startup_grace_secs': 1.5, 'defer_startup_notifications': True,
+                         'tracked': [ { 'domain': 'test', 'name': 't53', 'notifier': 'notify.entnotif' } ] } }
+    resetModuleLoadTime()
+    assert await async_setup_component(hass, "notify", {})
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    gotSendMsg = None
+    class TestNotifyEntity(NotifyEntity):
+        def __init__(self, aname) -> None:
+            self._attr_unique_id = f'unique-{aname}'
+            self._attr_name = aname
+        async def async_send_message(self, message: str, title: str | None = None) -> None:
+            nonlocal gotSendMsg
+            gotSendMsg = { 'msg': message }
+    x = ep.async_get_platforms(hass, 'notify')
+    assert len(x) == 1
+    notifyEntPlatform = x[0]
+    nEnt = TestNotifyEntity('entnotif')
+    await notifyEntPlatform.async_add_entities([nEnt])
+
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'t53'})
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    #   wait for rest of grace period
+    await asyncio.sleep(2)
+    service_calls.popNotifyEmpty('send_message', 'Alert2 test_t53')
+    assert gotSendMsg == { 'msg': 'Alert2 test_t53' }
+
 async def test_snooze(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True}, 'alerts' : [
         { 'domain': 'test', 'name': 't53c1', 'condition': 'sensor.a', 'reminder_frequency_mins': 0.01 },
