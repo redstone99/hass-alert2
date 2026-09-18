@@ -207,6 +207,11 @@ class DelayedNotifierMgr:
                         # apply persistent_notification grouping/dedup (notification_id) - a
                         # persistent_notification-targeted alert that gets deferred here will
                         # send ungrouped. See https://github.com/redstone99/hass-alert2/issues/74.
+                        # We don't have an alert object that caused the notification. Lacking
+                        # that, we can't process persistent_notifier_grouping as we do in the
+                        # case of immediate notifiers. dispatchNotify internally also can't call
+                        # alert.reportIfSafe(), and so we need the reportFn indirect and also
+                        # specify it to call report() here, which is probably wrong. TODO - fix
                         await dispatchNotify(self._hass, anotifier, args, lambda isInternal, msg: report(DOMAIN, 'error', msg))
             
             if self.startupWaitDone:
