@@ -78,7 +78,41 @@ def legacyNotifierExists(hass, anotifier):
     return suffix if hass.services.has_service('notify', suffix) else None
 def notifierExists(hass, anotifier):
     return newNotifierExists(hass, anotifier) or (legacyNotifierExists(hass, anotifier) is not None)
-    
+
+async def dispatchNotify(hass, notifier, args, reportFn):
+    """Send one notification via the new notify-entity mechanism or the legacy
+    notify-service mechanism, whichever applies to `notifier`. `args` is copied,
+    not mutated, so callers can safely reuse it across notifiers.
+    reportFn(isInternal, msg) is called on recoverable errors; isInternal is True
+    for a should-never-happen internal condition, False for an expected user
+    config-usage error."""
+    args = dict(args)
+    if newNotifierExists(hass, notifier):
+        args['entity_id'] = notifier
+    elif 'entity_id' in args:
+        del args['entity_id']
+    try:
+        if newNotifierExists(hass, notifier):
+            # Newer entity platform notify.
+            await hass.services.async_call('notify', 'send_message', args)
+        else:
+            # Legacy notify mechanism
+            lNotifier = legacyNotifierExists(hass, notifier)
+            if lNotifier is None:
+                reportFn(True, f'somehow notifier {notifier} is neither new nor old notifier?')
+            else:
+                await hass.services.async_call('notify', lNotifier, # eg 'raw_jtelegram'
+                                                args)
+    except ServiceNotFound:
+        # We check has_service and depend on notify in manifest,
+        # so this should never happen.
+        reportFn(True, f'Somehow notify of {notifier} failed with ServiceNotFound. args={args}')
+    except vol.error.MultipleInvalid as err:
+        if newNotifierExists(hass, notifier):
+            reportFn(False, f'The new entity-platform notifiers at present support only "message" and "title" parameters. If you want to specify extra parameters like "data", you must use the legacy service-based notifiers.  Actual error:  {err}')
+        else:
+            raise
+
 class ThresholdExeeded(Enum):
     Init = 1
     Max = 2
@@ -1683,39 +1717,20 @@ class AlertBase(AlertCommon, RestoreEntity):
             if len(notifier_list) > 0:
                 _LOGGER.info(f'{self.entity_id} notifying {notifier_list}: {args["message"]}')
                 async def foo():
+                    def reportFn(isInternal, msg):
+                        prefix = f'{gAssertMsg} {self.name} ' if isInternal else f'{self.name}: '
+                        self.reportIfSafe(DOMAIN, 'error', prefix + msg)
                     for notifier in notifier_list:
-                        if notifier == 'persistent_notification':
+                        # legacyNotifierExists() strips a 'notify.' prefix, so this matches
+                        # both 'persistent_notification' and 'notify.persistent_notification'.
+                        if legacyNotifierExists(self.hass, notifier) == 'persistent_notification':
                             self._used_persistent_notifier = True
                             if self._persistent_notifier_grouping != PersistantNotificationHelper.Separate:
                                 if 'data' not in args:
                                     args['data'] = {}
                                 args['data']['notification_id'] = PersistantNotificationHelper.genNotificationId(self)
-                        if newNotifierExists(self.hass, notifier):
-                            args['entity_id'] = notifier
-                        elif 'entity_id' in args:
-                            del args['entity_id']
-                        try:
-                            if newNotifierExists(self.hass, notifier):
-                                # Newer entity platform notify.
-                                await self.hass.services.async_call('notify', 'send_message', args)
-                            else:
-                                # Legacy notify mechanism
-                                lNotifier = legacyNotifierExists(self.hass, notifier)
-                                if lNotifier is None:
-                                    self.reportIfSafe(DOMAIN, 'error', f'{gAssertMsg} {self.name} somehow notifier {notifier} is neither new nor old notifier?')
-                                else:
-                                    await self.hass.services.async_call('notify', lNotifier, # eg 'raw_jtelegram'
-                                                                        args)
-                        except ServiceNotFound:
-                            # We check has_service and depend on notify in manifest,
-                            # so this should never happen.
-                            self.reportIfSafe(DOMAIN, 'error', f'{gAssertMsg} {self.name} Somehow notify of {notifier} failed with ServiceNotFound. args={args}')
-                        except vol.error.MultipleInvalid as err:
-                            if newNotifierExists(self.hass, notifier):
-                                self.reportIfSafe(DOMAIN, 'error', f'{self.name}: The new entity-platform notifiers at present support only "message" and "title" parameters. If you want to specify extra parameters like "data", you must use the legacy service-based notifiers.  Actual error:  {err}')
-                            else:
-                                raise
-                            
+                        await dispatchNotify(self.hass, notifier, args, reportFn)
+
                     #futures = [ self.hass.services.async_call(
                     #    'notify', notifier, # eg 'raw_jtelegram'
                     #    args) for notifier in notifier_list ]

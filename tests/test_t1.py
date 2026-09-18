@@ -2093,18 +2093,27 @@ async def test_grace6(hass, service_calls):
     service_calls.popNotifyEmpty('persistent_notification', 'not known to HA.*\'foo\'')
 
 async def test_grace7(hass, service_calls):
-    # Test defer naming specific list
+    # Test defer naming specific list. Also test defer flush for an entity-platform (modern)
+    # notify entity (t53/notify.entnotif), not just legacy service-based notifiers.
+    # DelayedNotifierMgr.loop() used to call async_call('notify', anotifier, args)
+    # unconditionally, which for an entity-platform notifier calls the nonexistent service
+    # <anotifier> under the notify domain instead of send_message with entity_id set - a
+    # broader case of the notify.-prefix bug in issue #74. notify.entnotif isn't in the
+    # defer_startup_notifications list below, so - like foono2 - it defers only because it
+    # doesn't exist yet when t53 fires; it's then registered mid-grace-period (like fooexist),
+    # so the end-of-grace flush has to dispatch to an actual entity-platform notifier.
     cfg = { 'alert2' : { 'notifier_startup_grace_secs': 1.5, 'defer_startup_notifications': ['fooexist','foono'],
                          'tracked': [ { 'domain': 'test', 'name': 't49', 'notifier': 'fooexist' },
                                       { 'domain': 'test', 'name': 't50', 'notifier': 'foono' },
                                       { 'domain': 'test', 'name': 't51', 'notifier': 'persistent_notification' },
-                                      { 'domain': 'test', 'name': 't52', 'notifier': 'foono2' } ] } }
+                                      { 'domain': 'test', 'name': 't52', 'notifier': 'foono2' },
+                                      { 'domain': 'test', 'name': 't53', 'notifier': 'notify.entnotif' } ] } }
     resetModuleLoadTime()
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     hass.services.async_register('notify','fooexist', mock_service_foo)
-    
+
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t49'})
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
@@ -2117,10 +2126,31 @@ async def test_grace7(hass, service_calls):
     await hass.services.async_call('alert2','report', {'domain':'test','name':'t52'})
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
+    await hass.services.async_call('alert2','report', {'domain':'test','name':'t53'})
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    gotSendMsg = None
+    class TestNotifyEntity(NotifyEntity):
+        def __init__(self, aname) -> None:
+            self._attr_unique_id = f'unique-{aname}'
+            self._attr_name = aname
+        async def async_send_message(self, message: str, title: str | None = None) -> None:
+            nonlocal gotSendMsg
+            gotSendMsg = { 'msg': message }
+    x = ep.async_get_platforms(hass, 'notify')
+    assert len(x) == 1
+    await x[0].async_add_entities([TestNotifyEntity('entnotif')])
+
     #   wait for rest of grace period
     await asyncio.sleep(2)
+    # notify.entnotif isn't in defer_startup_notifications above, so notifier_deferred() is
+    # unconditionally False for it - it flushes as soon as it's known (right after we register
+    # it above), well before fooexist (which is force-deferred for the full grace period).
+    service_calls.popNotify('send_message', 'Alert2 test_t53')
     service_calls.popNotify('fooexist', 'Alert2 test_t49')
     service_calls.popNotifyEmpty('persistent_notification', 'not known to HA.*\'foono\'.*\'foono2\'')
+    assert gotSendMsg == { 'msg': 'Alert2 test_t53' }
 
 async def test_snooze(hass, service_calls):
     cfg = { 'alert2' : { 'defaults': { 'summary_notifier': True}, 'alerts' : [
@@ -4729,11 +4759,14 @@ async def test_persistent_notification(hass, service_calls):
     await setAndWait(hass, "sensor.a1", 'off')
     await setAndWait(hass, "sensor.a2", 'off')
     await setAndWait(hass, "sensor.a3", 'off')
+    await setAndWait(hass, "sensor.a4", 'off')
     cfg = { 'alert2' : { 'alerts': [
         { 'domain': 'test', 'name': 't1', 'condition': 'sensor.a1' },
         { 'domain': 'test', 'name': 't2', 'condition': 'sensor.a2', 'persistent_notifier_grouping': 'collapse' },
         { 'domain': 'test', 'name': 't3', 'condition': 'sensor.a3', 'persistent_notifier_grouping': 'collapse_and_dismiss' },
         { 'domain': 'test', 'name': 't4', 'condition': 'off', 'persistent_notifier_grouping': 'badpng' },
+        { 'domain': 'test', 'name': 't5', 'condition': 'sensor.a4', 'notifier': 'notify.persistent_notification',
+          'persistent_notifier_grouping': 'collapse' },
     ]}}
     assert await async_setup_component(hass, "notify", {})
     assert await async_setup_component(hass, "persistent_notification", {})
@@ -4820,6 +4853,30 @@ async def test_persistent_notification(hass, service_calls):
     rez = getPersistentNotes()
     assert len(rez) == 0
     service_calls.popNotifyEmpty('persistent_notification', 'test_t3: turned off')
+
+    # Then on/off with collapse, but using the notify.-prefixed form of persistent_notification.
+    # This used to skip grouping/notification_id entirely (though the notify call itself still
+    # succeeded via legacyNotifierExists() stripping the prefix), because the grouping check
+    # compared the notifier string literally against 'persistent_notification' without
+    # accounting for the prefix.
+    #
+    await setAndWait(hass, "sensor.a4", 'on')
+    await hass.async_block_till_done()
+    rez = getPersistentNotes()
+    assert len(rez) == 1
+    assert rez[0]['message'] == 'Alert2 test_t5: turned on'
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t5: turned on')
+    #
+    await setAndWait(hass, "sensor.a4", 'off')
+    await hass.async_block_till_done()
+    rez = getPersistentNotes()
+    assert len(rez) == 1
+    assert rez[0]['message'].startswith('Alert2 test_t5: turned off')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t5: turned off')
+
+    await hass.services.async_call('persistent_notification','dismiss_all', {})
+    await hass.async_block_till_done()
+    assert getPersistentNotes() == []
 
 async def test_new_vars(hass, service_calls):
     await setAndWait(hass, "sensor.a", 'off')
