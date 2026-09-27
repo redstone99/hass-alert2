@@ -5304,3 +5304,160 @@ async def test_update(hass, service_calls, monkeypatch):
     await asyncio.sleep(1.1)
     assert hass.states.get('sensor.st1').state == "['alert2.alert2_error', 'alert2.alert2_warning', 'alert2.alert2_global_exception', 'alert2.d_t2', 'alert2.d_foo']"
     assert hass.states.get('sensor.st2').state == "[]"
+
+async def test_actions(hass, service_calls, caplog):
+    await setAndWait(hass, "sensor.a1", 'off')
+    await setAndWait(hass, "sensor.a3", 'off')
+    await setAndWait(hass, "sensor.a4", 'off')
+    await setAndWait(hass, "sensor.a7", 'off')
+    await setAndWait(hass, "sensor.a8", 'off')
+    cfg = { 'alert2' : { 'alerts': [
+        { 'domain': 'test', 'name': 't01', 'condition': 'sensor.a1', 'actions_on': {
+            'actions': [ { 'action': 'input_text.set_value', 'data': { 'value': 'ran' }, 'target': { 'entity_id': 'input_text.txt1' } } ], }},
+        # Test validation works during alert setup
+        { 'domain': 'test', 'name': 't2', 'condition': 'sensor.a1', 'actions_on': {
+            'actions': [ { 'actionz': 'input_text.set_value', 'data': { 'value': 'ran' }, 'target': { 'entity_id': 'input_text.txt1' } } ], }},
+        # Test error during script exection
+        { 'domain': 'test', 'name': 't3', 'condition': 'sensor.a3', 'actions_on': {
+            'actions': [ { 'action': 'input_text.set_value', 'data': { 'valuez': 'ran' }, 'target': { 'entity_id': 'input_text.txt1' } } ], }},
+        # test bad action name
+        { 'domain': 'test', 'name': 't4', 'condition': 'sensor.a4', 'actions_on': {
+            'actions': [ { 'action': 'input_text.set_valuezz', 'data': { 'value': 'ran' }, 'target': { 'entity_id': 'input_text.txt1' } } ], }},
+        # test bad form
+        { 'domain': 'test', 'name': 't5', 'condition': 'sensor.a4', 'actions_on': { } },
+        { 'domain': 'test', 'name': 't6', 'condition': 'sensor.a4', 'actions_on': { 'foo': 3 } },
+        # multiple actions & explicit mode
+        { 'domain': 'test', 'name': 't7', 'condition': 'sensor.a7', 'actions_on': {
+            'mode': 'single',
+            'actions': [ { 'action': 'input_text.set_value', 'data': { 'value': 'ran1' }, 'target': { 'entity_id': 'input_text.txt7a' } },
+                         { 'action': 'input_text.set_value', 'data': { 'value': 'ran2' }, 'target': { 'entity_id': 'input_text.txt7b' } },
+                        ], }},
+        # delay
+        { 'domain': 'test', 'name': 't8', 'condition': 'sensor.a8', 'actions_on': {
+            'mode': 'single',
+            'actions': [ { 'delay': '0.25' },
+                         { 'action': 'input_text.set_value', 'data': { 'value': 'ran' }, 'target': { 'entity_id': 'input_text.txt8' } },
+                        ], }},
+        # bad mode
+        { 'domain': 'test', 'name': 't9', 'condition': 'sensor.a1', 'actions_on': {
+            'modez': 'foo',
+            'actions': [ { 'action': 'input_text.set_value', 'data': { 'value': 'ran' }, 'target': { 'entity_id': 'input_text.txt1' } } ], }},
+        { 'domain': 'test', 'name': 't10', 'condition': 'sensor.a1', 'actions_on': {
+            'mode': 'foo',
+            'actions': [ { 'action': 'input_text.set_value', 'data': { 'value': 'ran' }, 'target': { 'entity_id': 'input_text.txt1' } } ], }},
+    ]}}
+    assert await async_setup_component(hass, "notify", {})
+    assert await async_setup_component(hass, "persistent_notification", {})
+    assert await async_setup_component(hass, "input_text", { 'input_text': {'txt1':{'initial':'foo'}, 'txt3':{'initial':'foo3'},
+                                                                            'txt7a':{'initial':'f'},'txt7b':{'initial':'f'},
+                                                                            'txt8':{'initial':'f'}}})
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    service_calls.popNotifySearch('persistent_notification', 't2', 'Unable to determine action')
+    service_calls.popNotifySearch('persistent_notification', 't5', 'actions_on section missing "actions"')
+    service_calls.popNotifySearch('persistent_notification', 't6', 'extra keys not allowed')
+    service_calls.popNotifySearch('persistent_notification', 't9', 'extra keys not allowed')
+    service_calls.popNotifySearch('persistent_notification', 't10', 'value must be one of.*parallel')
+    assert service_calls.isEmpty()
+    entities = er.async_get(hass).entities
+    _LOGGER.info(list(entities.keys()))
+    assert hass.states.get('input_text.txt1').state == 'foo'
+    await hass.services.async_call('input_text','set_value', { 'value': '1', 'entity_id': 'input_text.txt1' })
+    assert hass.states.get('input_text.txt1').state == '1'
+
+    # Check script runs when alert fires
+    await setAndWait(hass, "sensor.a1", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't01: turned on')
+    await hass.async_block_till_done()
+    assert hass.states.get('input_text.txt1').state == 'ran'
+    assert service_calls.isEmpty()
+    # Check script doesn't run when alert turns off
+    await hass.services.async_call('input_text','set_value', { 'value': '1', 'entity_id': 'input_text.txt1' })
+    assert hass.states.get('input_text.txt1').state == '1'
+    await setAndWait(hass, "sensor.a1", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't01: turned off')
+    await hass.async_block_till_done()
+    assert hass.states.get('input_text.txt1').state == '1'
+    assert service_calls.isEmpty()
+    # Check script runs second time alert fires
+    await setAndWait(hass, "sensor.a1", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't01: turned on')
+    await hass.async_block_till_done()
+    assert hass.states.get('input_text.txt1').state == 'ran'
+    assert service_calls.isEmpty()
+
+    await setAndWait(hass, "sensor.a3", 'on')
+    service_calls.popNotifySearch('persistent_notification', 'turned on', 't3: turned on')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t3 action_on .* extra keys not allowed')
+
+    await setAndWait(hass, "sensor.a4", 'on')
+    service_calls.popNotifySearch('persistent_notification', 'turned on', 't4: turned on')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t4 action_on .*set_valuezz not found')
+
+    await setAndWait(hass, "sensor.a7", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't7: turned on')
+    await hass.async_block_till_done()
+    assert hass.states.get('input_text.txt7a').state == 'ran1'
+    assert hass.states.get('input_text.txt7b').state == 'ran2'
+    assert service_calls.isEmpty()
+
+    # Test run status
+    assert hass.states.get('alert2.test_t8').attributes['actions_on_script_running'] == False
+    hass.states.async_set("sensor.a8", 'on')  # don't call setAndWait since it calls async_block_till_done
+    await asyncio.sleep(0.05)
+    service_calls.popNotifyEmpty('persistent_notification', 't8: turned on')
+    assert hass.states.get('input_text.txt8').state == 'f'
+    assert hass.states.get('alert2.test_t8').attributes['actions_on_script_running'] == True
+    await hass.async_block_till_done()
+    assert hass.states.get('input_text.txt8').state == 'ran'
+    assert hass.states.get('alert2.test_t8').attributes['actions_on_script_running'] == False
+    await setAndWait(hass, "sensor.a8", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't8: turned off')
+
+    # double run
+    await hass.services.async_call('input_text','set_value', { 'value': 'f', 'entity_id': 'input_text.txt8' })
+    hass.states.async_set("sensor.a8", 'on')  # don't call setAndWait since it calls async_block_till_done
+    await asyncio.sleep(0.05)
+    service_calls.popNotifyEmpty('persistent_notification', 't8: turned on')
+    hass.states.async_set("sensor.a8", 'off')  # don't call setAndWait since it calls async_block_till_done
+    await asyncio.sleep(0.05)
+    service_calls.popNotifyEmpty('persistent_notification', 't8: turned off')
+    assert 'test_t8: Already running' not in caplog.text
+    # when we turn this on again, it'll trigger a second run that is skipped cuz mode is "single"
+    # we just check for the warning to appear in the logs.
+    hass.states.async_set("sensor.a8", 'on')  # don't call setAndWait since it calls async_block_till_done
+    await asyncio.sleep(0.05)
+    service_calls.popNotifyEmpty('persistent_notification', 't8: turned on')
+    assert 'test_t8: Already running' in caplog.text
+    await hass.async_block_till_done()
+    await hass.services.async_call('input_text','set_value', { 'value': 'f', 'entity_id': 'input_text.txt8' })
+    await setAndWait(hass, "sensor.a8", 'off')
+    service_calls.popNotifyEmpty('persistent_notification', 't8: turned off')
+
+    # Test manual action run
+    assert hass.states.get('input_text.txt8').state == 'f'
+    await hass.services.async_call('alert2','action_control', { 'operation': 'run', 'entity_id': 'alert2.test_t8' })
+    await hass.async_block_till_done()
+    assert hass.states.get('input_text.txt8').state == 'ran'
+    assert hass.states.get('alert2.test_t8').attributes['actions_on_script_running'] == False
+    assert service_calls.isEmpty()
+
+    _LOGGER.info('--------------------------------------')
+    
+    # Test cancel
+    await hass.services.async_call('input_text','set_value', { 'value': 'f', 'entity_id': 'input_text.txt8' })
+    assert hass.states.get('input_text.txt8').state == 'f'
+    hass.states.async_set("sensor.a8", 'on')
+    await asyncio.sleep(0.05)
+    service_calls.popNotifyEmpty('persistent_notification', 't8: turned on')
+    assert hass.states.get('alert2.test_t8').attributes['actions_on_script_running'] == True
+    assert hass.states.get('input_text.txt8').state == 'f'
+    await hass.services.async_call('alert2','action_control', { 'operation': 'cancel', 'entity_id': 'alert2.test_t8' })
+    await hass.async_block_till_done()
+    assert hass.states.get('alert2.test_t8').attributes['actions_on_script_running'] == False
+    assert hass.states.get('input_text.txt8').state == 'f'
+    
+
+    # Test bad args to new service calls
+    # see if domain/name printed is pretty
