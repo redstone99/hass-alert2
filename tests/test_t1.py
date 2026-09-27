@@ -5356,8 +5356,8 @@ async def test_actions(hass, service_calls, caplog):
     await hass.async_block_till_done()
     service_calls.popNotifySearch('persistent_notification', 't2', 'Unable to determine action')
     service_calls.popNotifySearch('persistent_notification', 't5', 'actions_on section missing "actions"')
-    service_calls.popNotifySearch('persistent_notification', 't6', 'extra keys not allowed')
-    service_calls.popNotifySearch('persistent_notification', 't9', 'extra keys not allowed')
+    service_calls.popNotifySearch('persistent_notification', 't6', 'not a valid option')
+    service_calls.popNotifySearch('persistent_notification', 't9', 'not a valid option')
     service_calls.popNotifySearch('persistent_notification', 't10', 'value must be one of.*parallel')
     assert service_calls.isEmpty()
     entities = er.async_get(hass).entities
@@ -5389,7 +5389,7 @@ async def test_actions(hass, service_calls, caplog):
 
     await setAndWait(hass, "sensor.a3", 'on')
     service_calls.popNotifySearch('persistent_notification', 'turned on', 't3: turned on')
-    service_calls.popNotifyEmpty('persistent_notification', 'test_t3 action_on .* extra keys not allowed')
+    service_calls.popNotifyEmpty('persistent_notification', 'test_t3 action_on .* not a valid option')
 
     await setAndWait(hass, "sensor.a4", 'on')
     service_calls.popNotifySearch('persistent_notification', 'turned on', 't4: turned on')
@@ -5457,7 +5457,17 @@ async def test_actions(hass, service_calls, caplog):
     await hass.async_block_till_done()
     assert hass.states.get('alert2.test_t8').attributes['actions_on_script_running'] == False
     assert hass.states.get('input_text.txt8').state == 'f'
-    
 
+    # Test bad op
+    ok=False
+    try:
+        await hass.services.async_call('alert2','action_control', { 'operation': 'runx', 'entity_id': 'alert2.test_t8' })
+        await hass.async_block_till_done()
+    except Exception as ex:
+        assert 'expected \'run\' or \'cancel\'' in str(ex)
+        ok=True
+    assert ok == True
+
+    
     # Test bad args to new service calls
     # see if domain/name printed is pretty
