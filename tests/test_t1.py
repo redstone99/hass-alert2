@@ -1763,10 +1763,10 @@ async def test_err_args(hass, service_calls):
 
     # let's crash a task
     async def gdie():
-        raise Exception('boo')
+        raise Exception('FakeException')
     alert2.create_task(hass, 'alert2', gdie())
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'Exception.*boo')
+    service_calls.popNotifyEmpty('persistent_notification', 'Exception.*FakeException')
     
     gad = hass.data[DOMAIN]
     assert gad.tracked['alert2']['error'].movingSum is None
@@ -1788,10 +1788,10 @@ async def test_err_args1a(hass, service_calls):
 
     # let's crash a task
     async def gdie():
-        raise Exception('boo')
+        raise Exception('FakeException')
     alert2.create_task(hass, 'alert2', gdie())
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('foo', 'Exception.*boo')
+    service_calls.popNotifyEmpty('foo', 'Exception.*FakeException')
     assert service_calls.isEmpty()
     
 @pytest.mark.parametrize("cfg, errMsg", [
@@ -5121,10 +5121,10 @@ async def test_exception2(hass, service_calls, monkeypatch, caplog):
     assert service_calls.isEmpty()
     async def gdie(astr):
         _LOGGER.info(f'----- about to die -----------: {astr}')
-        raise ZTestException(f'xoo-{astr}')
+        raise ZTestException(f'FakeException-{astr}')
     async def cb_gdie():
         _LOGGER.info('----- about to cb die -----------')
-        raise ZTestException('xoo')
+        raise ZTestException('FakeException')
 
     # Try regex that doesn't compile
     cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': 'foo(' } ] } }
@@ -5144,16 +5144,16 @@ async def test_exception2(hass, service_calls, monkeypatch, caplog):
     await xff('a', eager_start=False)
     gc.collect()
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'Exception.*xoo-a')
+    service_calls.popNotifyEmpty('persistent_notification', 'Exception.*FakeException-a')
     assert countLoggedExceptions(caplog) == 1
-    assert 'xoo-a' in caplog.text
+    assert 'FakeException-a' in caplog.text
     # Now with eager_start
     await xff('b', eager_start=True)
     gc.collect()
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'Exception.*xoo-b')
+    service_calls.popNotifyEmpty('persistent_notification', 'Exception.*FakeException-b')
     assert countLoggedExceptions(caplog) == 2
-    assert 'xoo-b' in caplog.text
+    assert 'FakeException-b' in caplog.text
     #
     # Try hass job version. It also seems to squash exceptions
     async def xff2(num, background):
@@ -5181,27 +5181,27 @@ async def test_exception2(hass, service_calls, monkeypatch, caplog):
     await do_reload(cfg, hass, monkeypatch)
     alert2.create_task(hass, 'alert2', gdie('d'))
     await asyncio.sleep(0.25)
-    service_calls.popNotifyEmpty('persistent_notification', 'Exception.*xoo')
+    service_calls.popNotifyEmpty('persistent_notification', 'Exception.*FakeException')
     assert countLoggedExceptions(caplog) == 6
-    assert 'xoo-d' in caplog.text
+    assert 'FakeException-d' in caplog.text
     
-    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'xoo.*raise ZTestException' ] } ] } }
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'alert2', 'name': 'global_exception', 'exception_ignore_regexes': [ 'FakeException.*raise ZTestException' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
     alert2.create_task(hass, 'alert2', gdie('e'))
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
     assert countLoggedExceptions(caplog) == 8
-    assert 'xoo-e' in caplog.text
+    assert 'FakeException-e' in caplog.text
     
     # Try custom domain
     cfg = { 'alert2' : { 'tracked': [ { 'domain': 'foof', 'name': 'unhandled_exception', 'exception_ignore_regexes': [ 'xxx' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
     alert2.create_task(hass, 'foof', gdie('f'))
     await asyncio.sleep(0.25)
-    service_calls.popNotifyEmpty('persistent_notification', 'foof_unhandled_exception.*xoo')
+    service_calls.popNotifyEmpty('persistent_notification', 'foof_unhandled_exception.*FakeException')
     assert countLoggedExceptions(caplog) == 10
-    assert 'xoo-f' in caplog.text
-    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'foof', 'name': 'unhandled_exception', 'exception_ignore_regexes': [ 'xoo.*raise ZTestException' ] } ] } }
+    assert 'FakeException-f' in caplog.text
+    cfg = { 'alert2' : { 'tracked': [  { 'domain': 'foof', 'name': 'unhandled_exception', 'exception_ignore_regexes': [ 'FakeException.*raise ZTestException' ] } ] } }
     await do_reload(cfg, hass, monkeypatch)
     await asyncio.sleep(0.25)
 
@@ -5209,7 +5209,7 @@ async def test_exception2(hass, service_calls, monkeypatch, caplog):
     await asyncio.sleep(0.25)
     assert service_calls.isEmpty()
     assert countLoggedExceptions(caplog) == 12
-    assert 'xoo-g' in caplog.text
+    assert 'FakeException-g' in caplog.text
     #await asyncio.sleep(0.25)
     #gc.collect()
     #await asyncio.sleep(0.25)
@@ -5467,7 +5467,6 @@ async def test_actions(hass, service_calls, caplog):
         assert 'expected \'run\' or \'cancel\'' in str(ex)
         ok=True
     assert ok == True
-
     
-    # Test bad args to new service calls
-    # see if domain/name printed is pretty
+async def test_afailure(hass, service_calls):
+    assert False, "testing to see if github records test failures"
