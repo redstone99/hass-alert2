@@ -5468,5 +5468,3 @@ async def test_actions(hass, service_calls, caplog):
         ok=True
     assert ok == True
     
-async def test_afailure(hass, service_calls):
-    assert False, "testing to see if github records test failures"
