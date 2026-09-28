@@ -42,6 +42,7 @@ from .config import (
     SINGLE_ALERT_SCHEMA_CONDITION_NO_GEN,
     TOP_LEVEL_SCHEMA,
     TOP_LEVEL_SCHEMA_INTERNAL,
+    async_validate_condition_alert
 )
 from .entities import (
     EventAlert, ConditionAlert, AlertGenerator, NotificationReason, mergeDataDict, getPreferredEntityId,
@@ -107,6 +108,9 @@ NOTIFICATION_CONTROL_SCHEMA = {
     vol.Required("enable"): cv.boolean, #vol.Any(STATE_ON, STATE_OFF, NOTIFICATION_SNOOZE),  ( from homeassistant.const )
     vol.Optional("snooze_until"): cv.datetime,
     vol.Optional("ack_at_snooze_start"): cv.boolean,
+}
+ACTION_CONTROL_SCHEMA = {
+    vol.Required("operation"): vol.Any('run', 'cancel')
 }
 EMPTY_SCHEMA = {}
 
@@ -665,6 +669,11 @@ class Alert2Data:
                 "async_notification_control",
             )
             self.component.async_register_entity_service(
+                'action_control',
+                cv.make_entity_service_schema(ACTION_CONTROL_SCHEMA),
+                "async_action_control",
+            )
+            self.component.async_register_entity_service(
                 'ack',
                 cv.make_entity_service_schema(EMPTY_SCHEMA),
                 "async_ack",
@@ -862,6 +871,7 @@ class Alert2Data:
                             aCfg['trigger_on'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger_on'])
                         if 'trigger_off' in aCfg:
                             aCfg['trigger_off'] = await trigger_helper.async_validate_trigger_config(self._hass, aCfg['trigger_off'])
+                        await async_validate_condition_alert(self._hass, aCfg)
                 if checkForUpdate:
                     return True
                 if 'generator' in obj:

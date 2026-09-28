@@ -8,6 +8,7 @@ import re
 from functools import lru_cache
 from   homeassistant.core import callback
 from   homeassistant.helpers import template as template_helper
+from   homeassistant.helpers import script
 from homeassistant.util.hass_dict import HassKey
 from .util import (GENERATOR_DOMAIN, PersistantNotificationHelper)
 
@@ -341,6 +342,21 @@ SINGLE_ALERT_SCHEMA_PRE_NAME = SINGLE_TRACKED_SCHEMA_PRE_NAME.extend({
 })
 
 
+ACTIONS_BLOCK = script.make_script_schema(
+    {
+        vol.Optional('actions'): cv.SCRIPT_SCHEMA,
+    },
+    script.SCRIPT_MODE_SINGLE)
+
+# Handle validation that requires async
+async def async_validate_condition_alert(hass, cfg):
+    if 'actions_on' in cfg:
+        aon = cfg['actions_on']
+        if 'actions' not in aon:
+            raise vol.Invalid(f'actions_on section missing "actions" field')
+        aon['actions'] = await script.async_validate_actions_config(hass, aon['actions'])
+
+
 SINGLE_ALERT_SCHEMA_EVENT_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     #vol.Required('trigger'): jProtectedTrigger,
     vol.Optional('condition'): boolTemplate,
@@ -376,6 +392,7 @@ SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME = SINGLE_ALERT_SCHEMA_PRE_NAME.extend({
     vol.Optional('supersede_debounce_secs'): vol.All(vol.Coerce(float), vol.Range(min=0)),
     vol.Optional('ack_reminders_only'): cv.boolean,
     vol.Optional('delay_on_secs'): floatLitOrTemplate(minZero=True),
+    vol.Optional('actions_on'): ACTIONS_BLOCK,
 })
 DOMAIN_NAME_DICT_GEN = {
     vol.Required('domain'): cv.template,
@@ -433,3 +450,6 @@ TOP_LEVEL_SCHEMA = vol.Schema({
 
 TOP_LEVEL_SCHEMA_INTERNAL = TOP_LEVEL_SCHEMA.extend({
     vol.Optional('defaults'): DEFAULTS_SCHEMA_INTERNAL })
+
+#async def async_validate_config(hass, config):
+#    _LOGGER.warning(f'!!!!!!!!: {config}')

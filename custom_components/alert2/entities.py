@@ -15,7 +15,7 @@ import homeassistant.helpers.config_validation as cv
 from   homeassistant.helpers.entity import Entity
 from   homeassistant.helpers.restore_state import RestoreEntity, ExtraStoredData, RestoredExtraData
 import homeassistant.const as haConst
-from   homeassistant.core import HomeAssistant, Context, callback, Event, EventStateChangedData
+from   homeassistant.core import HomeAssistant, Context, callback, Event, EventStateChangedData, Context
 from   homeassistant.exceptions import TemplateError, ServiceNotFound, HomeAssistantError
 from   homeassistant.helpers import template as template_helper
 import homeassistant.helpers.entity_registry as er
@@ -25,6 +25,8 @@ from   homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from   homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 import homeassistant.util.dt as dt
 from   homeassistant.util import slugify
+import homeassistant.helpers.script as script
+import homeassistant.helpers.trace as trace
 
 from .util import (
     create_task,
@@ -1255,6 +1257,8 @@ class AlertBase(AlertCommon, RestoreEntity):
             self.ack_int(now)
         self.async_write_ha_state()
         self.reminder_check(now)
+    async def async_action_control(self, operation: str) -> None:
+        raise HomeAssistantError(f'Only condition alerts support actions')
     
     async def async_get_display_msg(self):
         if self._display_msg_template is None:
@@ -1938,6 +1942,28 @@ class ConditionAlert(AlertBase):
 
         self.threshold_exceeded = ThresholdExeeded.Init
 
+        if 'actions_on' in config:
+            action_name = f'{entNameFromDN(self.alDomain, self.alName)}_actions_on'
+            action_domain = 'alert2'
+            config_block = config['actions_on']
+            logger = logging.getLogger(f"{__name__}.{action_domain}_{action_name}")
+            self.actions_on_script = script.Script(
+                hass,
+                config_block['actions'],
+                action_name,
+                action_domain,
+                running_description=f"actions_on", # for alert {self.name}",
+                script_mode=config_block[script.CONF_MODE],
+                max_runs=config_block[script.CONF_MAX],
+                max_exceeded=config_block[script.CONF_MAX_EXCEEDED],
+                logger=logger,
+                change_listener=self.async_write_ha_state
+                # We don't pass variables here
+                # We'll pass when we invoke the script
+            )
+        else:
+            self.actions_on_script = None
+
         # Populated in lateInit
         self.delayOnSecsTracker = None
         self.offTracker = None
@@ -1994,6 +2020,19 @@ class ConditionAlert(AlertBase):
             templs = [{'fieldName': 'condition_off', 'type': Tracker.Type.Bool, 'template': self.config['condition_off'] }]
             self.offTracker = Tracker(self, 'condition_off', self.hass, templs, self.cond_off_update, self.extraVariables, allowEntRef=False)
             
+    async def async_action_control(self, operation: str) -> None:
+        if not self.actions_on_script:
+            raise HomeAssistantError(f'Alert missing actions_on in config')
+        if operation == 'cancel':
+            await self.actions_on_script.async_stop()
+        elif operation == 'run':
+            # run synchronously rather than fire off a task to run it
+            await self.run_actions_on()
+        else:
+            msg = f'{gAssertMsg} action_control got unknown operation "{operation}"'
+            report(DOMAIN, 'error', msg)
+            raise HomeAssistantError(msg)
+    
     async def trigger_on(self, variables):
         self.update_state_internal(True)
     def cond_on_update(self, results):
@@ -2044,6 +2083,8 @@ class ConditionAlert(AlertBase):
         # Don't add attribute if it is None
         if 'supersedes' in self.config and self.config['supersedes']:
             rez['supersedes'] = self.config['supersedes']
+        if self.actions_on_script:
+            rez['actions_on_script_running'] = self.actions_on_script.is_running
         return rez
 
     # State we'd like restored when HA restarts, but not expose as an attribute
@@ -2075,6 +2116,10 @@ class ConditionAlert(AlertBase):
         if self.delayOnSecsTracker:
             self.delayOnSecsTracker.shutdown()
             self.delayOnSecsTracker = None
+        if self.actions_on_script:
+            await self.actions_on_script.async_unload()
+            # Leave object cuz attributes use presence or absence.
+            #self.actions_on_script = None
         
     async def async_added_to_hass(self) -> None:
         """Restore state and register callbacks."""
@@ -2197,7 +2242,34 @@ class ConditionAlert(AlertBase):
         else:
             notificationVars = self.getNotificationVars(reason)
             return self._message_template.async_render(variables=notificationVars, parse_result=False)
-    
+    async def run_actions_on(self):
+        # We don't support an action triggering the alert again, so we don't call
+        #    script_stack_cv.set([])
+        # like automation/__init__.py::async_trigger does
+        # This action invocation doesn't support tracing at all.
+        #
+        # self._context (from helper/entity.py) is set via async_set_context in the tracker. Hopefully.
+        context = Context(parent_id=self._context.id) if self._context else Context()
+        notificationVars = self.getNotificationVars(NotificationReason.Fire)
+        def started_action() -> None:
+            # This is always a callback from a coro so there is no
+            # risk of this running in a thread which allows us to use
+            # async_fire_internal
+            #self.hass.bus.async_fire_internal(EVENT_AUTOMATION_TRIGGERED, event_data, context=trigger_context)
+            pass
+        try:
+            #with trace.trace_path("action_on"):
+            return await self.actions_on_script.async_run(notificationVars, context, started_action)
+            #except ServiceNotFound as err:
+            #    report(DOMAIN, 'warning', f'{self.name} action_on tried to invoke missing service: {err.domain}.{err.service}')
+            #    automation_trace.set_error(err)
+        except (ServiceNotFound, vol.Invalid, HomeAssistantError) as err:
+            report(DOMAIN, 'warning', f'{self.name} action_on saw err: {err}')
+            #automation_trace.set_error(err)
+        except Exception as err:
+            report(DOMAIN, 'warning', f'{self.name} action_on saw unexpected err: {err}')
+            #automation_trace.set_error(err)
+
     def update_state_internal(self, state:bool):
         if not isinstance(state, bool):
             report(DOMAIN, 'error', f'{gAssertMsg} update_state_internal ignoring call with non-bool {state} type={type(state)} for {self.name}')
@@ -2231,6 +2303,9 @@ class ConditionAlert(AlertBase):
                     return
                 self._notify_pre_debounce(now, reason, msg)
                 self.reminder_check(now)
+                if self.actions_on_script:
+                    # Normal (not a background) task - i.e., do not cancel when shutting down
+                    create_task(self.hass, DOMAIN, self.run_actions_on())
             else:
                 reason = NotificationReason.StopFiring
                 #is_acked = self.last_ack_time and self.last_on_time and self.last_ack_time > self.last_on_time
@@ -2251,11 +2326,12 @@ class ConditionAlert(AlertBase):
                 if self._used_persistent_notifier and self._persistent_notifier_grouping == PersistantNotificationHelper.CollapseAndDismiss:
                     async def foo():
                         await self.hass.services.async_call('persistent_notification', 'dismiss', { 'notification_id': PersistantNotificationHelper.genNotificationId(self)})
-                    create_background_task(self.hass, DOMAIN, foo())
+                    # Normal (not a background) task - i.e., do not cancel when shutting down
+                    create_task(self.hass, DOMAIN, foo())
 
 
-                
-            
+
+                    
             if self.annotate_messages and (msg.startswith('command_') or \
                                            any([msg.startswith(x) for x in ['clear_badge', 'clear_notification', 'update_widgets', 'remove_channel'] ])):
                 if self.alertData.uiMgr.setOneTime('set_annotate_messages_for_commands'):

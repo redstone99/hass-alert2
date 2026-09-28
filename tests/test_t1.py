@@ -96,7 +96,7 @@ async def test_badarg1(hass, service_calls):
     } }
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_block_till_done()
-    service_calls.popNotify('persistent_notification', r'extra keys not allowed')
+    service_calls.popNotify('persistent_notification', r'not a valid option')
     assert service_calls.isEmpty()
 
 async def test_ack(hass, service_calls):
@@ -1616,7 +1616,7 @@ async def test_event3(hass, service_calls):
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'expected a dictionary.*t28b')
+    service_calls.popNotifyEmpty('persistent_notification', 'expected a mapping.*t28b')
     #assert service_calls.isEmpty()
 
     # condition is false, so no alert
@@ -1796,11 +1796,11 @@ async def test_err_args1a(hass, service_calls):
     
 @pytest.mark.parametrize("cfg, errMsg", [
     ({ 'alert2' : { 'tracked': [ { 'domain': 'alert2', 'nname': 'error', 'friendly_name': 'happy-terr2' }, ] } },
-     'extra keys.*nname'),
-    ({ 'alert2' : { 'tracked': ['ffstr'] } }, 'expected a dictionary'),
+     'not a valid option.*nname'),
+    ({ 'alert2' : { 'tracked': ['ffstr'] } }, 'expected a mapping'),
     ({ 'alert2' : { 'tracked': 3 } }, 'expected list'),
-    ({ 'alert2' : { 'ttracked': 3 } }, 'extra keys.*ttracked'),
-    ({ 'alert2' : 'foo' }, 'expected a dictionary'),
+    ({ 'alert2' : { 'ttracked': 3 } }, 'not a valid option.*ttracked'),
+    ({ 'alert2' : 'foo' }, 'expected a mapping'),
 ])    
 async def test_err_args2(hass, service_calls, cfg, errMsg):
     assert await async_setup_component(hass, DOMAIN, cfg)
@@ -3642,7 +3642,7 @@ async def test_onoff_cond(hass, service_calls, caplog):
     
     service_calls.popNotifySearch('persistent_notification', 't1', 'Can not mix condition')
     service_calls.popNotifySearch('persistent_notification', 't5', 'off. criteria must also include an .on')
-    service_calls.popNotifySearch('persistent_notification', 't2', 'extra keys not allowed')
+    service_calls.popNotifySearch('persistent_notification', 't2', 'not a valid option')
     assert service_calls.isEmpty()
     # Invalid call, so nothing turns on
     await hass.services.async_call('alert2', 'manual_on', {'entity_id':'alert2.test_t3'})
@@ -4149,12 +4149,12 @@ async def test_supersede3(hass, service_calls, monkeypatch):
     await hass.async_start()
     await hass.async_block_till_done()
     await asyncio.sleep(0.05)
-    service_calls.popNotifySearch('persistent_notification', 't8', 'expected a dictionary')
+    service_calls.popNotifySearch('persistent_notification', 't8', 'expected a mapping')
     service_calls.popNotifySearch('persistent_notification', 'g2', 'trying to parse.*was never closed')
     service_calls.popNotifySearch('persistent_notification', 'tg6', 'Illegal characters')
     service_calls.popNotifySearch('persistent_notification', 'tg8', 'Illegal characters')
     service_calls.popNotifySearch('persistent_notification', 't10', 'Illegal characters')
-    service_calls.popNotifySearch('persistent_notification', 'tg3a', 'extra keys not allowed.*domainzz')
+    service_calls.popNotifySearch('persistent_notification', 'tg3a', 'not a valid option.*domainzz')
     service_calls.popNotifyEmpty('persistent_notification', 'unexpected end of template.*g7')
     gad = hass.data[DOMAIN]
     assert list(gad.alerts['test'].keys()) == [ 'tg1', 'tg2', 'tg3', 'tg3b', 'tg4', 'tg7' ]
@@ -5423,13 +5423,13 @@ async def test_actions(hass, service_calls, caplog):
     hass.states.async_set("sensor.a8", 'off')  # don't call setAndWait since it calls async_block_till_done
     await asyncio.sleep(0.05)
     service_calls.popNotifyEmpty('persistent_notification', 't8: turned off')
-    assert 'test_t8: Already running' not in caplog.text
+    assert 'test_t8_actions_on: Already running' not in caplog.text
     # when we turn this on again, it'll trigger a second run that is skipped cuz mode is "single"
     # we just check for the warning to appear in the logs.
     hass.states.async_set("sensor.a8", 'on')  # don't call setAndWait since it calls async_block_till_done
     await asyncio.sleep(0.05)
     service_calls.popNotifyEmpty('persistent_notification', 't8: turned on')
-    assert 'test_t8: Already running' in caplog.text
+    assert 'test_t8_actions_on: Already running' in caplog.text
     await hass.async_block_till_done()
     await hass.services.async_call('input_text','set_value', { 'value': 'f', 'entity_id': 'input_text.txt8' })
     await setAndWait(hass, "sensor.a8", 'off')

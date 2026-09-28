@@ -21,3 +21,13 @@ jobs:
     steps:
         - uses: "actions/checkout@v4"
         - uses: "home-assistant/actions/hassfest@master"
+  unittest:
+    name: Run unittests
+    runs-on: "ubuntu-latest"
+    steps:
+        - uses: "actions/checkout@v7"
+        - uses: "actions/setup-python@v7"
+          with:
+            python-version: "3.14"
+        - run: pip install -r requirements.txt -r requirements_test.txt
+        

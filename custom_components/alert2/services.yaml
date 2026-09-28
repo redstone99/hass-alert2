@@ -103,3 +103,23 @@ get_display_msg:
   target:
     entity:
       domain: alert2
+
+action_control:
+  name: Action Control
+  description: Manually trigger or cancel the actions_on actions.
+  target:
+    entity:
+      domain: alert2
+  fields:
+    operation:
+      name: Operation
+      description: Trigger or canel any running actions_on
+      example: true
+      required: true
+      selector:
+        select:
+          options:
+            - label: "Run"
+              value: "run"
+            - label: "Cancel"
+              value: "cancel"
