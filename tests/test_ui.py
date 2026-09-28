@@ -147,7 +147,7 @@ async def test_defaults(hass, service_calls, hass_client, hass_storage):
     resp = await client.post("/api/alert2/saveTopConfig", json={'topConfig': { 'bad': 'dd' }})
     assert resp.status == 200
     rez = await resp.json()
-    assert re.search('extra keys not allowed', rez['error'])
+    assert re.search('not a valid option at \'bad', rez['error'])
 
     # Check bad values for all parameters
     #
@@ -800,11 +800,11 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert rez == { 'rez': [2,4] }
     #    problem is that "1" is a string, not an int
     rez = await tpost("/api/alert2/renderValue", {'name': 'throttle_fires_per_mins', 'txt': '["1",4]' })
-    assert re.search('not a valid value', rez['error'])
+    assert re.search('expected int ', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'throttle_fires_per_mins', 'txt': 'null' })
     assert rez == { 'rez': None }
     rez = await tpost("/api/alert2/renderValue", {'name': 'throttle_fires_per_mins', 'txt': '[-3,4]' })
-    assert re.search('not a valid value', rez['error'])
+    assert re.search('value must be at least 1.0', rez['error'])
 
     # priority
     rez = await tpost("/api/alert2/renderValue", {'name': 'priority', 'txt': 'low' })
@@ -1153,7 +1153,7 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[]' })
     assert rez == { 'rez': [] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ 3 > xx }}' })
-    assert re.search('expected a dictionary', rez['error'])
+    assert re.search('expected a mapping', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ 3 > xx }}', 'extraVars': {'z':3} })
     assert re.search('is undefined', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ {"domain":"x","name":"y"} }}', 'extraVars': {'z': 'yay'} })
@@ -1169,9 +1169,9 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ {"domain":"x","name":"y"} }}', 'extraVars': { 'x': 22 } })
     assert rez == { 'rez': [{ 'domain': 'x', 'name': 'y'}] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '{{ {"domainzz":"x","name":"y"} }}', 'extraVars': { 'x': 22 } })
-    assert re.search('extra keys not allowed', rez['error'])
+    assert re.search('not a valid option', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[ { "foo":3 } ]' })
-    assert re.search('extra keys not allowed', rez['error'])
+    assert re.search('not a valid option', rez['error'])
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[ { "domain":"d","name":"x" } ]' })
     assert rez == { 'rez': [ { 'domain':'d', 'name':'x' } ] }
     rez = await tpost("/api/alert2/renderValue", {'name': 'supersedes', 'txt': '[ { "domain":"d","name":"x" },{ "domain":"d","name":"x2" } ]' })
@@ -1984,7 +1984,7 @@ async def test_supersede(hass, service_calls, hass_storage):
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'extra keys.*\'x\'')
+    service_calls.popNotifyEmpty('persistent_notification', 'not a valid option')
     gad = hass.data[DOMAIN]
     #_LOGGER.info(set(gad.alerts['d'].keys()))
     assert gad.supersedeMgr.supersedesMap == {
@@ -2403,7 +2403,7 @@ async def test_bad_store(hass, service_calls, hass_storage, hass_client,  monkey
     cfg = { 'alert2' : { 'defaults': {    }, 'alerts' : []}}
     hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage', 'data': 'foobar' }
     (tpost, client, gad) = await startAndTpost(hass, service_calls, hass_client, cfg, noErrors=False)
-    service_calls.popNotifyEmpty('persistent_notification', 'loaded bad storage.*expected a dict.*from foobar')
+    service_calls.popNotifyEmpty('persistent_notification', 'loaded bad storage.*expected a mapping.*from foobar')
 
     rez = await tpost("/api/alert2/manageAlert", {'create': { 'domain':'d', 'name':'t1', 'condition': "no" } })
     assert re.search('Preventing updates', rez['error'])
@@ -2427,7 +2427,7 @@ async def test_bad_store3(hass, service_calls, hass_storage, hass_client,  monke
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
-    service_calls.popNotifyEmpty('persistent_notification', 'loaded bad storage.*extra keys not allowed')
+    service_calls.popNotifyEmpty('persistent_notification', 'loaded bad storage.*not a valid option')
 
 async def test_regex(hass, service_calls, hass_storage):
     # Test regex replace and escaping
