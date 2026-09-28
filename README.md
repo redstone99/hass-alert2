@@ -172,7 +172,7 @@ Each alert can specify a priority. Priority affects how the alert is displayed i
 
 ### Notifications
 
-Notifications are sent when an event alert fires, when a condition alert starts or stops firing, and periodically as a reminder that a condition alert is still firing.  You can optionally, via `acq_required`, request reminders until an alert is acked.  You can optionally request that notifications be sent at the end of periods when notifications where snoozed or throttled if there was any alert activity in the interval. This is via the `summary_notifier` config option.  We recommend setting `summary_notifier` to be notified when e.g., throttling ends.
+Notifications are sent when an event alert fires, when a condition alert starts or stops firing, and periodically as a reminder that a condition alert is still firing.  You can optionally, via `ack_required`, request reminders until an alert is acked.  You can optionally request that notifications be sent at the end of periods when notifications where snoozed or throttled if there was any alert activity in the interval. This is via the `summary_notifier` config option.  We recommend setting `summary_notifier` to be notified when e.g., throttling ends.
 
 Each notification by default includes some basic context information (detailed below).  An alert can also specify a template `message` to be sent  each time the alert fires. That message is sent out with notifications and also is viewable in the front-end UI.  Condition alerts can also specify a `done_message` to be sent when the alert stops firing, a `reminder_message` to customize reminder notifications, and if using `ack_required` an `ack_reminder_message` to customize the reminder that an alert has not yet been acked.
 
@@ -417,7 +417,7 @@ Entity name related fields:
 | `display_msg` | template | optional | Message to display in the Alert2 UI overview card below the alert line.  Appears while the alert is visible in the card. If not specified, no message is shown. |
 | `supersedes` | List | optional | A list of domain+name pairs of alerts that this condition alert supersedes. Notifications will be skipped for superseded alerts while this alert is firing.  Applies transitively. May use templates when used with generators. See [Supersedes](#supersedes) section below for examples. |
 | `supersede_debounce_secs` | float | optional | Override the default value of `supersede_debounce_secs` |
-
+| `actions_on` | dict | optional | For condition alerts, specifies an automation action to run each time the alert starts firing. See [Automation actions](#automation-actions) |
 
 #### Event-based alert
 
@@ -551,6 +551,26 @@ The following example creates two alerts, test_low_disk_20 and test_low_disk_10.
           generator_name: g1
 
 To reduce spurious notifications due to races between two hierarchically-related alerts turning on or off at almost the same time, we offer the parameter `supersede_debounce_secs`, that defaults to 0.5 seconds. When an alert starts firing, the notification is delayed for `supersede_debounce_secs` to see if a superseding alert also starts firing.  Similarly, when an alert stops firing, the notifications of any superseded alerts are suppressed for the next `supersede_debounce_secs`.
+
+##### Automation actions
+
+Conditional alerts allow you to specify automation actions to run at the time the alert starts firing, via a config field, `actions_on`.
+
+`actions_on` is a dict containing a field, `actions`, that lists action dicts to perform, each action dict follows standard HA [script syntax](https://www.home-assistant.io/docs/scripts/perform-actions/).  The `actions_on` dict also allows fields controlling the [automation mode](https://www.home-assistant.io/docs/automation/modes/) including `mode`, `max`, and `max_exeeded`. So an example might look like:
+
+    alert2:
+      alerts:
+        - domain: test
+          name: ..
+          condition: "{{ states('sensor.water_leak_detected')|bool }}"
+          actions_on:
+             actions:
+                - service: switch.turn_off
+                  data:
+                     entity_id: switch.water_valve
+             mode: single # Default, so no need to specify
+    
+You may also find it useful to set `ack_required` to continue to get reminders that the alert fired even if the original condition resolves itself.  In above example, you may want to keep getting reminders so you remember to investigate and turn the water valve back on.
 
 #### Common alert features
 
@@ -1041,7 +1061,9 @@ In your YAML config:
 
 ## Actions and events
 
-Alert2 defines a few new actions.
+Alert2 supports two kinds of actions related to alerts:
+1. An automation action to be run in response to an alert firing: See [Automation actions](#automation-actions)
+1. Actions you can use to control alert behavior from scripts: keep reading.
 
 Action `alert2.report` notifies the system that an event-based alert has fired. It takes two parameters, the "domain" and "name" of the alert that fired.  You can also pass an optional `message` argument specifying a template for a message to include with the firing notification. That domain/name should be declared in either the `tracked` or `alerts` section of your config (described above).  `alert2.report` overrides any `condition` and `trigger` specified in the event alert declaration.
 
