@@ -27,5 +27,5 @@ jobs:
              HA_VERSION=$(pip show homeassistant | grep Version)
              PYTEST_HA_VERSION=$(pip show pytest-homeassistant-custom-component | grep Version)
              echo "::notice title=HA version used::ha $HA_VERSION,  pytest $PYTEST_HA_VERSION"
-        #- name: Test with pytest
-        #  run: pytest
+        - name: Test with pytest
+          run: pytest
