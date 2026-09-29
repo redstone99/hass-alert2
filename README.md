@@ -570,7 +570,9 @@ Conditional alerts allow you to specify automation actions to run at the time th
                      entity_id: switch.water_valve
              mode: single # Default, so no need to specify
     
-You may also find it useful to set `ack_required` to continue to get reminders that the alert fired even if the original condition resolves itself.  In above example, you may want to keep getting reminders so you remember to investigate and turn the water valve back on.
+You may want to set `ack_required` to continue to get reminders that the alert fired even if the original condition resolves itself.  In the above example, you may want to keep getting reminders so you remember to investigate and turn the water valve back on.
+
+Lastly, you can test your automation action in the UI.  The lovelace "more-info" dailog (that pops up when you click on the entity in the UI) has a line at the bottom showing whether the automation is running and buttons to cancel the ru n as well as to manually invoke the automation action.
 
 #### Common alert features
 
@@ -1092,6 +1094,7 @@ A few other actions are available, some of which are used internally by [Alert2 
 <br>`alert2.manual_on` turns on a condition alert that was configured with `manual_on: true`.
 <br>`alert2.manual_off` turns off a condition alert that was configured with `manual_off: true`.
 <br>`alert2.get_display_msg` renders the `display_msg` field for an alert and returns it.
+<br>`alert2.action_control` can either invoke the `actions_on` automation action or cancel any running invocation.
 
 More details on these calls are in the [`services.yaml`](https://github.com/redstone99/hass-alert2/blob/master/custom_components/alert2/services.yaml) file in this repo, or in the UI by going to "Developer tools" -> "Actions".
 
