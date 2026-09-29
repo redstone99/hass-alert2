@@ -24,8 +24,8 @@ jobs:
             pip install -r requirements.txt -r requirements_test.txt
         - name: Show homeasssistant version
           run: |
-             HA_VERSION=$(python -c "import homeassistant; print(homeassistant.__version__)")
-             PYTEST_HA_VERSION=$(python -c "import pytest-homeassistant-custom-component; print(pytest-homeassistant-custom-component.__version__)")
-             echo "::notice title=HA version used::ha=$HA_VERSION,  pytest ha=$PYTEST_HA_VERSION"
+             HA_VERSION=$(pip show homeassistant | grep Version)
+             PYTEST_HA_VERSION=$(pip show pytest-homeassistant-custom-component | grep Version)
+             echo "::notice title=HA version used::ha $HA_VERSION,  pytest $PYTEST_HA_VERSION"
         #- name: Test with pytest
         #  run: pytest
