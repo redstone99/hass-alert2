@@ -5311,6 +5311,7 @@ async def test_actions(hass, service_calls, caplog):
     await setAndWait(hass, "sensor.a4", 'off')
     await setAndWait(hass, "sensor.a7", 'off')
     await setAndWait(hass, "sensor.a8", 'off')
+    await setAndWait(hass, "sensor.a10", 'off')
     cfg = { 'alert2' : { 'alerts': [
         { 'domain': 'test', 'name': 't01', 'condition': 'sensor.a1', 'actions_on': {
             'actions': [ { 'action': 'input_text.set_value', 'data': { 'value': 'ran' }, 'target': { 'entity_id': 'input_text.txt1' } } ], }},
@@ -5345,12 +5346,16 @@ async def test_actions(hass, service_calls, caplog):
         { 'domain': 'test', 'name': 't10', 'condition': 'sensor.a1', 'actions_on': {
             'mode': 'foo',
             'actions': [ { 'action': 'input_text.set_value', 'data': { 'value': 'ran' }, 'target': { 'entity_id': 'input_text.txt1' } } ], }},
+        # check variables with generator
+        { 'domain': 'test', 'name': '{{ genElem }}', 'condition': 'sensor.a10', 'generator': [ 't10' ],
+          'actions_on': {
+            'actions': [ { 'action': 'input_text.set_value', 'data': { 'value': 'x={{genElem}} r={{notify_reason}}' }, 'target': { 'entity_id': 'input_text.txt10' } } ], }},
     ]}}
     assert await async_setup_component(hass, "notify", {})
     assert await async_setup_component(hass, "persistent_notification", {})
     assert await async_setup_component(hass, "input_text", { 'input_text': {'txt1':{'initial':'foo'}, 'txt3':{'initial':'foo3'},
                                                                             'txt7a':{'initial':'f'},'txt7b':{'initial':'f'},
-                                                                            'txt8':{'initial':'f'}}})
+                                                                            'txt8':{'initial':'f'},'txt10':{'initial':'f'}}})
     assert await async_setup_component(hass, DOMAIN, cfg)
     await hass.async_start()
     await hass.async_block_till_done()
@@ -5443,8 +5448,6 @@ async def test_actions(hass, service_calls, caplog):
     assert hass.states.get('alert2.test_t8').attributes['actions_on_script_running'] == False
     assert service_calls.isEmpty()
 
-    _LOGGER.info('--------------------------------------')
-    
     # Test cancel
     await hass.services.async_call('input_text','set_value', { 'value': 'f', 'entity_id': 'input_text.txt8' })
     assert hass.states.get('input_text.txt8').state == 'f'
@@ -5467,4 +5470,10 @@ async def test_actions(hass, service_calls, caplog):
         assert 'expected \'run\' or \'cancel\'' in str(ex)
         ok=True
     assert ok == True
+    assert service_calls.isEmpty()
     
+    # Test t10
+    await setAndWait(hass, "sensor.a10", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 't10: turned on')
+    await hass.async_block_till_done()
+    assert hass.states.get('input_text.txt10').state == 'x=t10 r=Fire'

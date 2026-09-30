@@ -956,6 +956,13 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
     assert rez == { 'rez': 'joeFire' }
     rez = await tpost("/api/alert2/renderValue", {'name': 'ack_reminder_message', 'txt': '{{ "joe"+ggg }}' , 'extraVars': { 'ggg': 'yay' }})
     assert rez == { 'rez': 'joeyay' }
+
+    # actions_on
+    rez = await tpost("/api/alert2/renderValue", {'name': 'actions_on', 'txt':
+            "{'actions':[ { 'service': 'alert2.ack_all' } ]}" })
+    assert rez == { 'rez': {'actions':[ { 'service': 'alert2.ack_all' }]}}
+    rez = await tpost("/api/alert2/renderValue", {'name': 'actions_on', 'txt': "yes" })
+    assert re.search("'bool' is not .*iterable", rez['error'])
     
     # trigger
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger', 'txt': "[{'platform':'state','entity_id':'sensor.zz'}]" })
@@ -2261,6 +2268,28 @@ async def test_data4(hass, service_calls, hass_storage):
     service_calls.popNotifySearch('persistent_notification', 'n2', 'd_n2: turned on', extraFields={ 'data': { 'a':1,'b':2,'c':3 }})
     assert service_calls.isEmpty()
 
+async def test_actions(hass, service_calls, hass_storage, caplog):
+    await setAndWait(hass, "sensor.a", 'off')
+    cfg = { 'alert2': { } }
+    uiCfg = getInitUiCfg()
+    uiCfg.update({ 'nextAlertUiId': 2, 'alertInfos': [
+        { 'uiId': 1, 'cfg': { 'domain': 'd', 'name': 'n1', 'condition':'sensor.a',
+                              'actions_on': "{ actions: [ { action: system_log.write, data: { level: info, message: happy }}]}" }}
+    ]})
+    hass_storage['alert2.storage'] = { 'version': 2, 'minor_version': 1, 'key': 'alert2.storage',
+                                       'data': uiCfg }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    assert await async_setup_component(hass, 'system_log', cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    logMsg = 'INFO happy'
+    assert logMsg not in caplog.text
+    await setAndWait(hass, "sensor.a", 'on')
+    service_calls.popNotifyEmpty('persistent_notification', 'd_n1: turned on')
+    assert logMsg in caplog.text
+    
 async def test_conflict(hass, service_calls, hass_storage, hass_client):
     # Was bug where conflicting alert definitions made manageAlert:search to die
     cfg = { 'alert2' : { 'defaults': { }, 'alerts' : [
