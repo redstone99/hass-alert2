@@ -451,5 +451,6 @@ TOP_LEVEL_SCHEMA = vol.Schema({
 TOP_LEVEL_SCHEMA_INTERNAL = TOP_LEVEL_SCHEMA.extend({
     vol.Optional('defaults'): DEFAULTS_SCHEMA_INTERNAL })
 
+# Called automatically as some part of startup.
 #async def async_validate_config(hass, config):
 #    _LOGGER.warning(f'!!!!!!!!: {config}')

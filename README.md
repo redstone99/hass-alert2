@@ -554,7 +554,7 @@ To reduce spurious notifications due to races between two hierarchically-related
 
 ##### Automation actions
 
-Conditional alerts allow you to specify automation actions to run at the time the alert starts firing, via a config field, `actions_on`.
+Conditional alerts allow you to specify [automation actions](https://www.home-assistant.io/docs/automation/action/) to run at the time the alert starts firing, via a config field, `actions_on`.
 
 `actions_on` is a dict containing a field, `actions`, that lists action dicts to perform, each action dict follows standard HA [script syntax](https://www.home-assistant.io/docs/scripts/perform-actions/).  The `actions_on` dict also allows fields controlling the [automation mode](https://www.home-assistant.io/docs/automation/modes/) including `mode`, `max`, and `max_exeeded`. So an example might look like:
 
@@ -569,10 +569,11 @@ Conditional alerts allow you to specify automation actions to run at the time th
                   data:
                      entity_id: switch.water_valve
              mode: single # Default, so no need to specify
-    
+          ack_required: true
+
 You may want to set `ack_required` to continue to get reminders that the alert fired even if the original condition resolves itself.  In the above example, you may want to keep getting reminders so you remember to investigate and turn the water valve back on.
 
-Lastly, you can test your automation action in the UI.  The lovelace "more-info" dailog (that pops up when you click on the entity in the UI) has a line at the bottom showing whether the automation is running and buttons to cancel the ru n as well as to manually invoke the automation action.
+Lastly, you can test your automation action in the UI.  The lovelace "more-info" dailog (that pops up when you click on the alert2 entity in the UI) has a line at the bottom showing whether the `actions_on` automation action is running and buttons to cancel the run as well as to manually start a run.
 
 #### Common alert features
 
@@ -1065,7 +1066,7 @@ In your YAML config:
 
 Alert2 supports two kinds of actions related to alerts:
 1. An automation action to be run in response to an alert firing: See [Automation actions](#automation-actions)
-1. Actions you can use to control alert behavior from scripts: keep reading.
+1. Actions you can use in scripts to control alert behavior from scripts: keep reading.
 
 Action `alert2.report` notifies the system that an event-based alert has fired. It takes two parameters, the "domain" and "name" of the alert that fired.  You can also pass an optional `message` argument specifying a template for a message to include with the firing notification. That domain/name should be declared in either the `tracked` or `alerts` section of your config (described above).  `alert2.report` overrides any `condition` and `trigger` specified in the event alert declaration.
 
