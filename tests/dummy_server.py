@@ -132,7 +132,12 @@ class JTestView(HomeAssistantView):
         return self.json({})
 
 
-@pytest.mark.parametrize("enable_schema_validation", [False])
+#@pytest.mark.parametrize("enable_schema_validation", [False])
+#
+# pytest_homeassistant_custom_component/plugins.py::async_test_recorder is broken
+# you need to comment out autoSpec=True from the 'with' block except for first two and second to last one.
+# And also set autouse to False in disable_http_server
+#
 async def test_server(recorder_mock, enable_custom_integrations, hass, hass_storage, monkeypatch, hass_access_token):
     #async def test_server(recorder_mock, enable_custom_integrations, hass, hass_storage, monkeypatch, hass_access_token):
     cfg = {'alert2': {},
@@ -178,14 +183,15 @@ async def test_server(recorder_mock, enable_custom_integrations, hass, hass_stor
     hass.http.register_view(JTestView(hass, hass_storage, monkeypatch))
     #assert await async_setup_component(hass, "frontend", {})
     _LOGGER.info('test_server starting')
-    with async_start_setup(hass, integration="http", phase=SetupPhases.SETUP):
-        _LOGGER.info(hass.http.start)
-        await hass.http.start()
+    #with async_start_setup(hass, integration="http", phase=SetupPhases.SETUP):
+    #    _LOGGER.info(f'And hass.http.start is {hass.http.start}')
+    #    await hass.http.start()
     await hass.async_start()
     await asyncio.sleep(1)
     store = await async_get_and_load_store(hass)
     await store.async_promote_pending()
-    _LOGGER.info('test_server up and running')
+    assert hass.http._server and hass.http.runner, f'does not look like http started. start() is {hass.http.start}. Make sure in pytest_homeassistant_custom_component/plugins.py you set autouse to False for disable_http_server'
+    _LOGGER.info('test_server up and running.')
     async with done:
         await done.wait()
 
