@@ -125,7 +125,7 @@ def prepStrConfigField(fname, tval, doReport=True):
         if stripped_tval.startswith('{%') or stripped_tval.startswith('{{') or stripped_tval.startswith('{#') :
             return tval
         return parse_yaml(tval)
-    elif fname in [ 'trigger', 'trigger_on', 'trigger_off', 'exception_ignore_regexes' ]:
+    elif fname in [ 'trigger', 'trigger_on', 'trigger_off', 'exception_ignore_regexes', 'actions_on' ]:
         return parse_yaml(tval)
     elif fname in [ 'annotate_messages', 'ack_required', 'manual_off', 'manual_on', 'priority', 'icon', 'friendly_name',
                     'title', 'target', 'domain', 'name', 'message', 'done_message',
@@ -272,6 +272,13 @@ class RenderValueView(HomeAssistantView):
                 tval = vol.Schema(GENERATOR_EXTRA)(obj)[name]
                 ttype = 'string'
                 #simple = True
+            elif name in ['actions_on']:
+                # If triggers can puke with TypeError, maybe action parsing can as well?
+                try:
+                    tval = SINGLE_ALERT_SCHEMA_CONDITION_PRE_NAME({ name: ttxt})[name]
+                except TypeError as v:
+                    return self.json({ 'error': f'parse error: {str(v)}' })
+                simple = True
             elif name in ['trigger']:
                 obj = { 'domain': 'foo', 'name': 'bar', name: ttxt }
                 # Triggers can puke with TypeError :(

@@ -959,10 +959,11 @@ async def test_render_v(hass, service_calls, hass_client, hass_storage):
 
     # actions_on
     rez = await tpost("/api/alert2/renderValue", {'name': 'actions_on', 'txt':
-            "{'actions':[ { 'service': 'alert2.ack_all' } ]}" })
-    assert rez == { 'rez': {'actions':[ { 'service': 'alert2.ack_all' }]}}
+            "{'actions':[ { 'action': 'alert2.ack_all' } ]}" })
+    assert rez['rez']['actions'] == [ { 'action': 'alert2.ack_all' }] # config processing adds default other fields as well
+    #assert rez == { 'rez': {'actions':[ { 'service': 'alert2.ack_all' }]}}
     rez = await tpost("/api/alert2/renderValue", {'name': 'actions_on', 'txt': "yes" })
-    assert re.search("'bool' is not .*iterable", rez['error'])
+    assert re.search("expected a mapping", rez['error'])
     
     # trigger
     rez = await tpost("/api/alert2/renderValue", {'name': 'trigger', 'txt': "[{'platform':'state','entity_id':'sensor.zz'}]" })
