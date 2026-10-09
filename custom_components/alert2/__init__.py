@@ -11,10 +11,13 @@ import copy
 import ast
 import datetime as rawdt
 import logging
+from pathlib import Path
 from functools import partial
 _LOGGER = logging.getLogger(__name__)
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.components import persistent_notification, websocket_api
+from homeassistant.components.http import StaticPathConfig
 from   homeassistant.const import (
     SERVICE_RELOAD,
     EVENT_HOMEASSISTANT_STOP,
@@ -31,6 +34,7 @@ from   homeassistant.helpers.service import async_register_admin_service
 from   homeassistant.helpers.typing import ConfigType
 from   homeassistant.helpers import template as template_helper
 from   homeassistant.helpers import trigger as trigger_helper
+from   homeassistant.loader import async_get_loaded_integration, IntegrationNotLoaded
 import homeassistant.util.dt as dt
 
 from .config import (
@@ -57,6 +61,7 @@ from .util import (
     DOMAIN,
     GENERATOR_DOMAIN,
     EVENT_TYPE,
+    JS_FILENAME,
     set_global_hass,
     get_global_hass,
     set_shutting_down,
@@ -130,6 +135,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     yaml_config = {}
     data = Alert2Data(hass, {})
     hass.data[DOMAIN] = data
+    await data.init1()  # get report() set up
+    # I believe this waits for platform to be setup
     await hass.config_entries.async_forward_entry_setups(entry, ['binary_sensor'])
     await data.init2()
     return True
@@ -145,18 +152,17 @@ async def async_setup(hass, config: ConfigType):
     set_global_hass(hass)
     data = Alert2Data(hass, config)
     hass.data[DOMAIN] = data
+    await data.init1() # get report() set up
 
     # Load binary_sensor.py wtihout requiring users put an extra line in their configuuration.yaml
     platform_domain = 'binary_sensor'
-    hass.async_create_task(
-        discovery.async_load_platform(
-            hass,
-            platform_domain,
-            DOMAIN,
-            { 'happy': 7 },  # can be None? I think this is the config that gets passed to the binary_sensor module.
-            config,
-        )
-        , eager_start=True)
+    await discovery.async_load_platform(
+        hass,
+        platform_domain,
+        DOMAIN,
+        { 'happy': 7 },  # can be None? I think this is the config that gets passed to the binary_sensor module.
+        config,
+    )
     
     # Note, sensor/binary_sensor init may happen later, so init2() may create templates before sensor entities exist for early_start ones.
     await data.init2()
@@ -477,7 +483,7 @@ def updateConfigDict(currConfig, newConfig):
         currConfig['data'] = newData
     #if newDoneData:
     #    currConfig['done_data'] = newDoneData
-
+    
 class Alert2Data:
     def __init__(self, hass, config):
         # Call set_shutting_down mostly for unittests which create sequentially multiple Alert2Data
@@ -492,6 +498,7 @@ class Alert2Data:
         self.binarySensorDict = None
         self.haStarted = False
         self.delayedNotifierMgr = None
+        self.isFirstInit = True
         self.declEvMultiArr = [] # cumulative alert configs from all calls to alert.declareEventMulti
         self.uiMgr = None
         self.rawYamlBaseTopConfig = None # stores global settings not including the UI config
@@ -523,7 +530,7 @@ class Alert2Data:
             return f'UI config: {v}'
         return None
     
-    async def init2(self):
+    async def init1(self):
         # report() isn't available yet, so defer error reporting until later in init
         self.earlyErrors = []
 
@@ -578,8 +585,7 @@ class Alert2Data:
 
         # Try updating defaults with ui
         #
-        isFirstInit = (self.delayedNotifierMgr is None)
-        if isFirstInit:
+        if self.isFirstInit:
             self.uiMgr = UiMgr(self._hass, self)
         rez = await self.uiMgr.startup()
         if rez is not None:
@@ -613,14 +619,15 @@ class Alert2Data:
                 else:
                     pass # validation error.  It will be handled below in loadAlertBlock
 
-        if isFirstInit:
+        if self.isFirstInit:
             self.delayedNotifierMgr = DelayedNotifierMgr(self._hass,
                                                          self.topConfig['notifier_startup_grace_secs'],
                                                          self.topConfig['defer_startup_notifications'])
+            self._hass.bus.async_listen(EVENT_TYPE, self.handle_event_report)
             
         # Now that report() is available, continue init that might use it
         
-        if isFirstInit:
+        if self.isFirstInit:
             loop = asyncio.get_running_loop()
             # Gives traceback info on asyncio 'Unclosed client session' errors
             #loop.set_debug(True)
@@ -643,11 +650,16 @@ class Alert2Data:
                     oldHandler(loop, context)
                 self.inHandler = False
             loop.set_exception_handler(newHandler)
+            
+        # And now unexpected exception handler is installed
+            
+
+    async def init2(self):
+        if self.isFirstInit:
             self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self.shutdown)
             #self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, self.startShutdown)
             self._hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, self.haStartedEv)
         
-            self._hass.bus.async_listen(EVENT_TYPE, self.handle_event_report)
             # Note - calls to report() use the event EVENT_TYPE, not the service call, so this schema
             # is never used unless someone happens to call the alert2.report service.
             REPORT_SCHEMA = vol.Schema({
@@ -710,9 +722,74 @@ class Alert2Data:
                 SERVICE_RELOAD,
                 self.reload_service_handler,
             )
+            #await self.setup_frontend()
+
+            self.isFirstInit = False
             
         await self.processConfig()
+        
+    #@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/getVersion"})
+    #@websocket_api.async_response
+    #async def getVersion(hass: HomeAssistant, connection: websocket_api.ActiveConnection,
+    #    msg: dict[str, Any],
+    #) -> None:
+    #    integration = await async_get_integration(hass, DOMAIN)
+    #    connection.send_result(msg["id"], {"version": str(integration.version)})
+    async def setup_frontend(self):
+        JS_URL_BASE = f"/{DOMAIN}/frontend"
+        JS_URL = f"{JS_URL_BASE}/{JS_FILENAME}"
+        # websocket may not be loaded, but it's ok to call this func in that case
+        #websocket_api.async_register_command(hass, getVersion)
 
+        # Alert2 depends on http, so should be available by the time this func runs
+        await self._hass.http.async_register_static_paths([
+            StaticPathConfig(JS_URL_BASE, str(Path(__file__).parent / "frontend"), False)
+        ])
+        
+        integration = async_get_loaded_integration(self._hass, DOMAIN)
+        url = f"{JS_URL}?v={integration.version}"
+
+        # Now register alert2.js with Lovelace
+        lovelace = self._hass.data.get("lovelace")
+        fallbackRegister = True
+        if lovelace:
+            if hasattr(lovelace, 'resources'):
+                resources = lovelace.resources
+                if hasattr(resources, "async_create_item"):
+                    # We're in storage mode
+                    fallbackRegister = False
+
+                    if not getattr(resources, "loaded", True):
+                        await resources.async_load()
+
+                    foundLovelaceResource = False
+                    for item in resources.async_items():
+                        if (item.get("url") or "").split("?")[0] != JS_URL:
+                            continue
+                        if item["url"] != url:
+                            await resources.async_update_item(item["id"], {"res_type": "module", "url": url})
+                            _LOGGER.info("Updated Lovelace resource to %s", url)
+                        foundLovelaceResource = True
+                        break
+                    if not foundLovelaceResource:
+                        await resources.async_create_item({"res_type": "module", "url": url})
+                        _LOGGER.info("Registered Lovelace resource %s", url)
+                else:
+                    pass # yaml mode
+            else:
+                report(DOMAIN, 'error', f'{gAssertMsg} lovelace exists but missing resources')
+        else:
+            pass # no lovelace declared, maybe HA running without frontend?
+
+        if fallbackRegister:
+            try:
+                frontend_integration = async_get_loaded_integration(self._hass, 'frontend')
+                from homeassistant.components.frontend import add_extra_js_url
+                add_extra_js_url(self._hass, url)
+                _LOGGER.info("Registered fallback JS resource %s", url)
+            except IntegrationNotLoaded:
+                pass  # no frontend, so fine if we don't load JS
+    
     async def shutdown_alerts(self):
         for aName in list(self.generators.keys()):
             await self.generators[aName].shutdown()

@@ -1029,18 +1029,136 @@ alert2:
 
 ## Front-end UI
 
-We recommend also installing the [Alert2 UI](https://github.com/redstone99/hass-alert2-ui), which includes one card for viewing recently active alerts and another card for creating or editing alerts. Alert2 UI also enhances the information shown in the "more-info" dialog when viewing Alert2 entities.
+Alert2 automatically loads two custom Lovelace cards called "Alert2 Overview" and "Alert2 Manager" into your HA frontend. The cars allow you to view recent alerts and create new alerts via the UI.  Alerts2 also loads extra functionality to the more-info popup that appears when you click on an Alert2 entity.  Details below.
 
-Defaults set via the UI take priority over defaults set in YAML for both YAML alerts and UI-created alerts.  Alert2 does not allow any two alerts created via the UI or YAML to have the same domain and name.
+If you configure dashboards via the UI, start editing a dashboard, then click on "Add Card" (or the "+" icon), then search for either card and click to add.
 
-Alert2 supports reloading configuration via the UI.  Go to "Developer Tools" -> "YAML" and click on "Alert2".  That will reload the YAML config as well as all UI-created alerts.
+If you're using yaml to specify a dashboard, you can add the Alert2 Overview and Alert2 Manager card to your dashboard by adding it to the list of cards in a view, like (in bold):
+    <pre>views:
+    - title: Monitoring
+      name: Example
+      cards:
+      <b>- type: "custom:alert2-overview"</b>
+      <b>- type: "custom:alert2-manager"</b>
+      - type: entities
+        ...</pre>
+
+### Alert2 Overview card
+
+The `alert2-overview` Lovelace card lists recently active Alert2 alerts, as well as snoozed or disabled alerts.  A slider at the top of the card controls the time window covered.
+
+Each line shows the status of the alert, including when it last fired, how many times it fired since the last notification, and whether it has been ack'ed, snoozed or disabled.  Each alert will show an "ACK" button if it hasn't been acked already.
+
+The badge shown at the left of the alert will be colored based on priority and status. A condition alert that is on, or a condition alert that has not yet been acked and `ack_required` was set, or an event alert that has not yet been acked will be colored based on priority. The default is blue for low, orange for medium and red for high.  Otherwise the badge will be grey.  These colors may be customized (see "Config", below).
+
+The button "ACK ALL" will ack all alerts, not just the ones displayed.
+
+Note - `alert2-overview` will show currently firing old Alert-1 alerts, but it will not show recent activity for the old alerts.
+
+![Alert2 overview card](resources/overview.png)
+
+The order of displayed alerts is:
+1. Alerts currently on and unacked, sorted by priority and then recency.
+1. Alerts currently off and unacked, sorted by priority and then recency. This includes event alerts.
+1. Alerts currently on and acked, sorted by priority and then recency.
+1. Alerts currently off and acked, sorted by priority and then recency. This includes event alerts.
+
+For the purpose of ordering, alerts that are snoozed or disabled are treated as if acked.
+
+If alert A is superseded by another alert that's firing, alert A will appear in UI without a badge, directly below the alert that supersedes it.
+
+#### Config
+
+The Overview card supports a few configuration options:
+
+| Name | Description |
+|---|---|
+| `title` | Text to display at top of Overview card. Defaults to "Alerts" |
+| `include_old_unacked` | A boolean incidating whether to always show unacked alerts, even if they have fallen out of the display time window.  Can be truthy string values like "true", "on", "yes", or the opposites. Defaults to false.<br><br>Note: This flag is closely related to the config flag `ack_required`.  Both cause unacked alerts to show up in Alert Overview even if they are off and outside the display time window.  In addition, `ack_required` causes such alerts to continue to send notifications until acked. |
+| `filter_entity_id` |  A glob or regex filter that restricts the candidate set of Alert2 entities to be displayed. A glob is a string with \* in it at least once.  A regex is a string that begins and ends with "/". Defaults to "*" (i.e., do not exclude any entities) |
+| `hide_superseded` | When truthy (string values like "true", "on", or "yes"), do not display in the Overview card any alert that is superseded by a currently firing alert. |
+| `low_priority_color` | A string representing the CSS color value used for the badge of low-priority alerts. Default is "blue". |
+| `medium_priority_color` | A string representing the CSS color value used for the badge of medium-priority alerts. Default is "orange". |
+| `high_priority_color` | A string representing the CSS color value used for the badge of high-priority alerts. Default is "red". |
+| `off_color` | A string representing the CSS color value used for the badge of alerts that are off or have been acked. Default is "grey". |
+
+Example Lovelace YAML config:
+
+    views:
+    - title: Monitoring
+      name: Example
+      cards:
+      - type: "custom:alert2-overview"
+        title: House Alerts
+        include_old_unacked: yes
+
+        # Glob filter
+        filter_entity_id: "alert2.house_*"
+        #
+        # OR
+        # Regex filter
+        filter_entity_id: "/house[12]_/"
+    
+The same config options are available in the UI itself.  When you add the Overview card, you can directly edit the "code" in YAML to specify options:
+
+    type: custom:alert2-overview
+    title: House Alerts
+    filter_entity_id: ...
+
+
+### Alert2 Manager card
+
+The `alert2-manager` Lovelace card allows you to adjust default settings, create/edit/delete alerts, and search over alerts created via the UI.  The search box lets you filter UI-created alerts by the text you type. Clicking on any result will bring up a dialog that lets you edit the alert.
+
+<img src="resources/search.png" width="500"/>
+
+Any defaults adjusted via the UI override any defaults specified in your YAML config. The defaults apply to alerts created either via the UI or in your YAML config.  After adjusting defaults, you can reload the alert config to have the new defaults apply to all alerts, whether defined in YAML or via the UI.  You can reload the config by going to "Developer Tool" -> "YAML" and clicking on "Alert2".
+
+Alert2 does not allow any two alerts created via the UI or YAML to have the same domain and name.
+
+To configure alert2 internal alerts such as `alert2_error` and `alert2_global_exception`, use the "Create New Alert" button to create a UI config entry for the alert and set the domain to "alert2" and the name to e.g., "global_exception". Then configure the fields you want, such as `exception_ignore_regexes`, and finally press "Create".
+
+Each time you press "Create", the UI creates a config entry for the alert and then creates the alert itself from the config. The config entry is assigned a unique number.  If you click on an alert in the "Alert2 Manager" list, you will see that number at the top of the popup and next to the "Update" and "Delete" buttons.  Clicking "Update" updates the config entry and will result in the alert being recreated.  So for example, if you change the "name" field from "n1" to "n2" and click "Update", the alert with name "n1" will be deleted and a new alert with name "n2" will be created.
+
+#### Editing config fields
+
+When editing a config field for defaults or an alert, a line will appear with "Render result", showing how Alert2 interprets what you've written.
+
+![Editing config fields](resources/edit-field.png)
+
+You can also click on the config field name to show some help info, including examples of what you can enter:
+
+![Editing config help](resources/edit-help.png)
+
+Most fields are interpreted as YAML, with the exception that if you enter template characters (e.g., "{{" ), then the input is automatically quoted, to simplify typing.
+
+
+### Detailed alert info (more-info)
+
+If you click on a specific alert listed in the alert overview, a dialog pops up (called the "more-info" dialog) with detailed info on the alert and notification controls. Example:
+
+![Alert2 overview card](resources/more-info.png)
+
+The first line is a repeat of the alert status.
+
+The second "Previous Firings" section lists each firing over the previous 24 hours, limited to the most recent 20 events.  The time when the alert turned on or off is listed as well as the message template text rendered when the alert fired.  The "PREV" button lets you go back further in time and "RESET" returns the listing to the firings over the past 24 hours and refreshes the listing.
+
+The "Notifications" section lets you snooze or disable notifications. Select an option and click "Update".  The "Status" line will update dynamically.
+
+Snoozing an alert implicitly acks it once and prevents notifications during the snooze interval.  When the interval ends you can opt to get a summary notification of any alert activity during the period. See `summary_notifier` in the [Alert2](https://github.com/redstone99/hass-alert2) docs.
+
+Times are displayed in the browser local time zone.
+
+Lastly, if the alert config specifies an [automation action](https://github.com/redstone99/hass-alert2#automation-actions), you will see a line reporting the run status of the automation along with buttons to cancel or initiate a run.
+
+### Other ways to view alerts
+
+You may also add alert2 entities to entities cards and other cards that support entities.  If you click on an alert shown in such a situation, you'll see a popup (called a "more-info dialog") similar to the one shown above.  However, since Alert2 isn't integrated into the core HomeAssistant, that dialog will include some extra default sections like "history", but will also include the sections described above.
+
+Finally, you can also view alert information by going to Settings -> Devices & Services -> Entities, typing "alert2." in the search box and browsing the list.  Clicking on one will popup the "more-info dialog".
 
 If you ever need to know, Alert2 stores the UI state, including entities defined, in your configuration directory in a JSON file called `.storage/alert2.storage`.
 
-![Alert2 overview card](resources/overview.png)
-![Alert2 management card](resources/manager.png)
-
-Without [Alert2 UI](https://github.com/redstone99/hass-alert2-ui) you can still view and do some management of Alert2 alerts, but the process is a bit more involved.
 
 ### Editing Alert2 entity settings
 

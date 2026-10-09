@@ -1,8 +1,10 @@
-from . import DOMAIN, moduleLoadTime
+from . import DOMAIN, moduleLoadTime, JS_FILENAME, report
 import homeassistant.util.dt as dt
 from homeassistant.components.binary_sensor import BinarySensorEntity
 import homeassistant.loader as loader
 import logging
+import re
+from pathlib import Path
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, _config_entry, async_add_entities):
@@ -21,8 +23,21 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
         manifestVer = inte.version
     except Exception:
         manifestVer = "unknown"
+
+    jsPath = Path(__file__).parent / "frontend" / JS_FILENAME
+    def getUiVersion():
+        with open(str(jsPath), "r", encoding="utf-8") as file:
+            content = file.read(400)  # 400 bytes should be enough
+        g = re.search(r'const VERSION = \'([^\']+)\';', content)
+        if g:
+            return g.group(1)
+        report(DOMAIN, 'error', f'{gAssertMsg} could not find "const VERSION = "  string in alert2.js')
+        return 'unknown'
+    jsVersionStr = await hass.async_add_executor_job(getUiVersion)
+        
     aSensor._attr_extra_state_attributes = { 'start_time' : moduleLoadTime,
-                                             'manifest_version': manifestVer
+                                             'manifest_version': manifestVer,
+                                             'js_version': jsVersionStr
                                             }
     async_add_entities([ aSensor ])
     hass.data[DOMAIN].setBinarySensorDict({ 'hastarted' : aSensor })
