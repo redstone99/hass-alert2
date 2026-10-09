@@ -1106,6 +1106,12 @@ The same config options are available in the UI itself.  When you add the Overvi
     filter_entity_id: ...
 
 
+
+After installing or upgrading Alert2, you can view the Alert2 frontend and backend version you're running by clicking on the "Alerts" header of the Lovelace card:
+
+![Alert2 overview card with version info](resources/overview2.png)
+
+
 ### Alert2 Manager card
 
 The `alert2-manager` Lovelace card allows you to adjust default settings, create/edit/delete alerts, and search over alerts created via the UI.  The search box lets you filter UI-created alerts by the text you type. Clicking on any result will bring up a dialog that lets you edit the alert.
@@ -1150,6 +1156,31 @@ Snoozing an alert implicitly acks it once and prevents notifications during the 
 Times are displayed in the browser local time zone.
 
 Lastly, if the alert config specifies an [automation action](https://github.com/redstone99/hass-alert2#automation-actions), you will see a line reporting the run status of the automation along with buttons to cancel or initiate a run.
+
+
+
+
+
+
+
+
+### Updating the frontend.
+
+
+After installing or upgrading, you can verify the Alert2 UI version you're running by clicking on the "Alerts" header of the Lovelace card:
+
+![Alert2 overview card with version info](resources/overview2.png)
+
+
+
+
+
+
+
+
+
+
+
 
 ### Other ways to view alerts
 

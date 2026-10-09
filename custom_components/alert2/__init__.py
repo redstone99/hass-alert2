@@ -849,6 +849,7 @@ class Alert2Data:
             self._rawYamlConfig = {}
         else:
             self._rawYamlConfig = conf[DOMAIN]
+        await self.init1()
         await self.init2()
         # Redo prior calls to declareEventMulti() from other components
         if self.declEvMultiArr:
