@@ -722,7 +722,7 @@ class Alert2Data:
                 SERVICE_RELOAD,
                 self.reload_service_handler,
             )
-            #await self.setup_frontend()
+            await self.setup_frontend()
 
             self.isFirstInit = False
             
