@@ -11,6 +11,7 @@ logging.basicConfig(level=logging.INFO)
 _LOGGER = logging.getLogger('dummy_server') # or None for root logger
 import sys
 import os
+from pathlib import Path
 from homeassistant.setup import async_setup_component
 if os.environ.get('JTESTDIR'):
     sys.path.insert(0, os.environ['JTESTDIR'])
@@ -168,10 +169,14 @@ async def test_server(recorder_mock, enable_custom_integrations, hass, hass_stor
     #        {http.DOMAIN: {http.CONF_SERVER_PORT: 50005}},  )
     cfg = { 'alert2': {} }
     assert await async_setup_component(hass, DOMAIN, cfg)
-    jsdir = os.environ.get('JTEST_JS_DIR')
-    assert isinstance(jsdir, str) and len(jsdir) > 0
-    await hass.http.async_register_static_paths([
-        http.StaticPathConfig('/jtest', jsdir, False)])
+    jsTestdir = str(Path(__file__).parent / "frontend")
+    jsDir = str(Path(__file__).parent.parent / "custom_components" / "alert2" / "frontend")
+    _LOGGER.info(f'---------{jsDir}')
+    #envJsdir = os.environ.get('JTEST_JS_DIR')
+    #if isinstance(envJsdir, str) and len(envJsdir) > 0:
+    #    jsdir = envJsdir
+    await hass.http.async_register_static_paths([ http.StaticPathConfig('/jtest', jsTestdir, False)])
+    await hass.http.async_register_static_paths([ http.StaticPathConfig('/js', jsDir, False)])
     genUser = await hass.auth.async_create_user('dummery server')
     # Override http/auth.py::auth_middleware authentication to say everything's authenticated.
     @middleware

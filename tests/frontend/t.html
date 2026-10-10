@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+    <!-- 
+         Run server with (from the Alert2 repo):
+              JTESTDIR=~/home-monitoring/homeassistant venv/bin/pytest tests/dummy_server.py
+         View page at:
+             http://localhost:50005/jtest/t.html
+         
+    -->
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+         html {
+             --primary-text-color: #212121;
+             --secondary-text-color: #727272;
+             --text-primary-color: #ffffff;
+             --text-light-primary-color: #212121;
+             --disabled-text-color: #bdbdbd;
+             --primary-color: #03a9f4;
+             --dark-primary-color: #0288d1;
+             --light-primary-color: #b3e5fc;
+             --accent-color: #ff9800;
+             --divider-color: rgba(0, 0, 0, 0.12);
+             --outline-color: rgba(0, 0, 0, 0.12);
+             --outline-hover-color: rgba(0, 0, 0, 0.24);
+             --scrollbar-thumb-color: rgb(194, 194, 194);
+             --error-color: #db4437;
+             --warning-color: #ffa600;
+             --success-color: #43a047;
+             --info-color: #039be5;
+             --card-background-color: #ffffff;
+             --primary-background-color: #fafafa;
+             --secondary-background-color: #e5e5e5;
+             --clear-background-color: #ffffff;
+
+             --paper-font-body1_-_font-family: var(--paper-font-common-base_-_font-family);
+             --paper-font-body1_-_-webkit-font-smoothing: var(--paper-font-common-base_-_-webkit-font-smoothing);
+             --paper-font-body1_-_font-size: 14px;
+             --paper-font-body1_-_font-weight: 400;
+             --paper-font-body1_-_line-height: 20px;
+             --paper-font-common-base_-_font-family: Roboto, Noto, sans-serif;
+             --paper-font-common-base_-_-webkit-font-smoothing: antialiased;
+             --paper-font-common-code_-_font-family: 'Roboto Mono', Consolas, Menlo, monospace;
+             --paper-font-common-code_-_-webkit-font-smoothing: antialiased;
+             --paper-font-common-expensive-kerning_-_text-rendering: optimizeLegibility;
+             --paper-font-common-nowrap_-_white-space: nowrap;
+             --paper-font-common-nowrap_-_overflow: hidden;
+             --paper-font-common-nowrap_-_text-overflow: ellipsis;         
+             --mdc-theme-primary: var(--primary-color);
+             --mdc-theme-secondary: var(--accent-color);
+             --mdc-theme-background: var(--primary-background-color);
+             --mdc-theme-surface: var(--card-background-color);
+             --mdc-theme-on-primary: var(--text-primary-color);
+             --mdc-theme-on-secondary: var(--text-primary-color);
+             --mdc-theme-on-surface: var(--primary-text-color);
+             --mdc-theme-text-disabled-on-light: var(--disabled-text-color);
+             --mdc-theme-text-primary-on-background: var(--primary-text-color);
+             --mdc-theme-text-secondary-on-background: var(--secondary-text-color);
+             --mdc-theme-text-hint-on-background: var(--secondary-text-color);
+             --mdc-theme-text-icon-on-background: var(--secondary-text-color);
+             --mdc-theme-error: var(--error-color);
+         }
+         ha-progress-button {
+             
+         }
+        </style>
+        <script>
+         const connection = {
+             subscribeMessage: function (cb, mdata) { return new Promise((resolve)=>{ resolve( ()=>{} ); } ); },
+             sendMessagePromise: async function (mdata) { return []; }
+         };
+
+         function waitForEvent(element, eventName) {
+             return new Promise((resolve) => {
+                 element.addEventListener(eventName, (event) => {
+                     resolve(event);
+                 });
+             });
+         }
+         let scriptIds = 100;
+         async function loadScript(src, ttype) {
+             var script = document.createElement('script');
+             script.src = src;
+             if (ttype) {
+                 script.type = ttype;
+             }
+             script.id = `jalid-${scriptIds}`;
+             scriptIds += 1;
+             document.head.appendChild(script);
+             await waitForEvent(script, 'load');
+         }
+         //let createRowElementHass = null;
+         window.loadCardHelpers = async function() {
+             return { createRowElement: function(cfg) {
+                 if (cfg.type === 'custom:hui-alert2-entity-row') {
+                     var er = document.createElement('hui-alert2-entity-row');
+                     er.setConfig(cfg);
+                     return er;
+                 } else {
+                     var er = document.createElement('div');
+                     er.className = 'alert1';
+                     er.innerHTML = `A row for ${cfg.entity}`;
+                     return er;
+                 }
+             }};
+         }
+         window.addEventListener('DOMContentLoaded', async function() {
+             await loadScript('ha-lib.js', 'module');
+             await loadScript('../js/alert2.js');
+             await startTest(doTest);
+             await startTest(doTest2);
+             await startTest(doTest3);
+             await startTest(doTest4);
+             await startTest(doTest5);
+             await startTest(doTest6);
+             await startTest(doTest7, withAO=false);
+             await startTest(doTest8);
+             await startTest(doTestOld);
+             let testStatusEl = document.querySelector('#testStatus');
+             if (jassertFailCount == 0) {
+                 testStatusEl.innerHTML = `Test: All done`;
+             } else {
+                 testStatusEl.innerHTML = `Test: Ended with errors`;
+             }
+         });
+         function jassert(abool) {
+             if (!abool) {
+                 throw new Error("assert failed");
+             }
+         }
+         function jasserteq(a, b) {
+             if (a !== b) {
+                 throw new Error(`assert failed "${a}" != "${b}"`);
+             }
+         }
+         function sleepMs(ms) {
+             return new Promise(resolve => setTimeout(resolve, ms));
+         }
+         function getRecentIso(msAgo) {
+             return (new Date((new Date()).getTime() - msAgo)).toISOString();
+         }
+         function cloneHass(ahass) {
+                 return {
+                     states: Object.assign({}, ahass['states']),
+                     connection: connection
+                 };
+         }
+         function createStateAlert1(name, onAgoMs, ackAgoMs) {
+             return { state: (onAgoMs < ackAgoMs) ? 'on':'off',
+                      last_changed: getRecentIso(Math.min(ackAgoMs, onAgoMs)),
+                      attributes: { },
+                      entity_id: 'alert.'+name };
+         }
+         function createState(name, onAgoMs, offAgoMs, ackAgoMs=200) {
+             return { state: (offAgoMs < onAgoMs) ? 'off':'on',
+                      attributes: { 'last_on_time': getRecentIso(onAgoMs),
+                                    'last_off_time': getRecentIso(offAgoMs),
+                                    'notification_control': NOTIFICATIONS_ENABLED,
+                                    'last_ack_time': getRecentIso(ackAgoMs),
+                                    'is_acked': ackAgoMs < onAgoMs,
+                                    'fires_since_last_notify': 0 },
+                      entity_id: 'alert2.'+name };
+         }
+         function createEventState(name, fireAgoMs, ackAgoMs=200) {
+             return { state: getRecentIso(fireAgoMs),
+                      attributes: { 'notification_control': NOTIFICATIONS_ENABLED,
+                                    'last_ack_time': getRecentIso(ackAgoMs),
+                                    'is_acked': ackAgoMs < fireAgoMs,
+                                    'fires_since_last_notify': 0 },
+                      entity_id: 'alert2.'+name };
+         }
+         async function startTest(afunc, withAO = true) {
+             let testStatusEl = document.querySelector('#testStatus');
+             let testDiv = document.querySelector('#testDiv');
+             testStatusEl.innerHTML = `Test: Running ${afunc.name}...`;
+             let newHass = {
+                 states: { 'binary_sensor.alert2_ha_startup_done' : { attributes: { manifest_version: 'v.a.b.c' } } },
+                 connection: connection
+             };
+             if (withAO) {
+                 let ao = document.createElement('alert2-overview');
+                 // set timer vars before hass, cuz set hass() references them
+                 ao._updateIntervalFactor = (4*60*60) * (1000 / 1000); // so updates every 1s
+                 ao._updateCooldownMs = 50;
+                 ao.hass = newHass;
+                 testDiv.appendChild(ao);
+                 await sleepMs(5);
+                 await afunc(ao, newHass);
+                 ao.remove();
+             } else {
+                 await afunc(null, newHass);
+             }
+             testStatusEl.innerHTML = `Test: Done ${afunc.name}`;
+         }
+         async function doTest(ao, newHass) {
+             let tEl = ao.shadowRoot.querySelector('div#jempt');
+             jassert(tEl.innerHTML.includes('No alerts active'));
+             jassert(tEl.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+
+             // Updating hass, shouldn't change anything
+             newHass = cloneHass(newHass);
+             ao.hass = newHass;
+             await sleepMs(10);
+             tEl = ao.shadowRoot.querySelector('div#jempt');
+             jassert(tEl.innerHTML.includes('No alerts active'));
+             jassert(tEl.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+             
+             // Wait a bit for a slow refresh cycle, no update should happen.
+             newHass = cloneHass(newHass);
+             ao.hass = newHass;
+             await sleepMs(1005);
+             tEl = ao.shadowRoot.querySelector('div#jempt');
+             jassert(tEl.innerHTML.includes('No alerts active'));
+             jassert(tEl.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+
+             // Old alert should not show up.
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo'] = createState('foo', 7 * 60*60*1000, 6 * 60 * 60 * 1000);
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEl = ao.shadowRoot.querySelector('div#jempt');
+             jassert(tEl.innerHTML.includes('No alerts active'));
+             jassert(tEl.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+
+             // Alert fires. It should show up immediately
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo'] = createState('foo', 100, 150);
+             ao.hass = newHass;
+             await sleepMs(10);
+             tEl = ao.shadowRoot.querySelector('hui-alert2-entity-row');
+             jassert(tEl);
+
+             // 2nd alert will be delayed by throttling
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo2'] = createState('foo2', 100, 150);
+             ao.hass = newHass;
+             await sleepMs(10);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jassert(tEls.length == 1);
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jassert(tEls.length == 2);
+             // Most recent one is first
+             jassert(tEls[0].shadowRoot.innerHTML.includes('alert2.foo2'));
+
+             // If alert has age almost within time window, should still apear
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo3'] = createState('foo3', 5*60*60*1000, 4*60*60*1000 - 50);
+             ao.hass = newHass;
+             await sleepMs(10);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jasserteq(tEls.length, 3);
+             jassert(tEls[2].shadowRoot.innerHTML.includes('alert2.foo3'));
+             // And then if we wait a bit, alert will age out of window interval
+             await sleepMs(1005);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jassert(tEls.length == 2);
+
+             // And if we delete an alert entity, it should disappear
+             console.log('delete test');
+             newHass = cloneHass(newHass);
+             delete newHass.states['alert2.foo2'];
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jasserteq(tEls.length, 1);
+         }
+         async function doTest2(ao, newHass) {
+             let tEls;
+             let tEl;
+             // Test ordering of alerts that are on and unacked
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo4'] = createState('foo4', 4000, 10000, 11000);
+             newHass.states['alert2.foo5'] = createState('foo5', 2000, 10000, 11000);
+             newHass.states['alert2.foo6'] = createState('foo6', 6000, 10000, 11000);
+             console.log('about to set hass');
+             ao.hass = newHass;
+             await sleepMs(60);
+             console.log('Now will check');
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jasserteq(tEls.length, 3);
+             jassert(tEls[0].shadowRoot.innerHTML.includes('alert2.foo5'));
+             jassert(tEls[1].shadowRoot.innerHTML.includes('alert2.foo4'));
+             jassert(tEls[2].shadowRoot.innerHTML.includes('alert2.foo6'));
+             jassert(ao.shadowRoot.querySelector('div#ackbar') == null);
+             tEls = ao.shadowRoot.querySelectorAll('div#ackbar ~ hui-alert2-entity-row');
+             jasserteq(tEls.length, 0);
+
+             // Add in alerts that are off and unacked. They should be after the on ones.
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo7'] = createState('foo7', 1000, 800, 11000);
+             newHass.states['alert2.foo8'] = createState('foo8', 1100, 600, 11000);
+             newHass.states['alert2.foo9'] = createState('foo9', 1200, 700, 11000);
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jassert(tEls.length == 6);
+             jassert(tEls[0].shadowRoot.innerHTML.includes('alert2.foo5'));
+             jassert(tEls[1].shadowRoot.innerHTML.includes('alert2.foo4'));
+             jassert(tEls[2].shadowRoot.innerHTML.includes('alert2.foo6'));
+             jassert(tEls[3].shadowRoot.innerHTML.includes('alert2.foo8'));
+             jassert(tEls[4].shadowRoot.innerHTML.includes('alert2.foo9'));
+             jassert(tEls[5].shadowRoot.innerHTML.includes('alert2.foo7'));
+             jassert(ao.shadowRoot.querySelector('div#ackbar') == null);
+             tEls = ao.shadowRoot.querySelectorAll('div#ackbar ~ hui-alert2-entity-row');
+             jasserteq(tEls.length, 0);
+             
+             // Add in some on alerts that are acked and on
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo10'] = createState('foo10', 990, 2000, 500);
+             newHass.states['alert2.foo11'] = createState('foo11', 950, 2000, 500);
+             newHass.states['alert2.foo12'] = createState('foo12', 970, 2000, 500);
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jassert(tEls.length == 9);
+             jassert(tEls[0].shadowRoot.innerHTML.includes('alert2.foo5'));
+             jassert(tEls[1].shadowRoot.innerHTML.includes('alert2.foo4'));
+             jassert(tEls[2].shadowRoot.innerHTML.includes('alert2.foo6'));
+             jassert(tEls[3].shadowRoot.innerHTML.includes('alert2.foo8'));
+             jassert(tEls[4].shadowRoot.innerHTML.includes('alert2.foo9'));
+             jassert(tEls[5].shadowRoot.innerHTML.includes('alert2.foo7'));
+             jassert(tEls[6].shadowRoot.innerHTML.includes('alert2.foo11'));
+             jassert(tEls[7].shadowRoot.innerHTML.includes('alert2.foo12'));
+             jassert(tEls[8].shadowRoot.innerHTML.includes('alert2.foo10'));
+             let ackbar = ao.shadowRoot.querySelector('div#ackbar');
+             jassert(ackbar.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+             tEls = ao.shadowRoot.querySelectorAll('div#ackbar ~ hui-alert2-entity-row');
+             jasserteq(tEls.length, 3);
+
+             // Add in some on alerts that are acked and off
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo13'] = createState('foo13', 990, 870, 500);
+             newHass.states['alert2.foo14'] = createState('foo14', 950, 850, 500);
+             newHass.states['alert2.foo15'] = createState('foo15', 970, 890, 500);
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jassert(tEls.length == 12);
+             jassert(tEls[0].shadowRoot.innerHTML.includes('alert2.foo5'));
+             jassert(tEls[1].shadowRoot.innerHTML.includes('alert2.foo4'));
+             jassert(tEls[2].shadowRoot.innerHTML.includes('alert2.foo6'));
+             jassert(tEls[3].shadowRoot.innerHTML.includes('alert2.foo8'));
+             jassert(tEls[4].shadowRoot.innerHTML.includes('alert2.foo9'));
+             jassert(tEls[5].shadowRoot.innerHTML.includes('alert2.foo7'));
+             jassert(tEls[6].shadowRoot.innerHTML.includes('alert2.foo11'));
+             jassert(tEls[7].shadowRoot.innerHTML.includes('alert2.foo12'));
+             jassert(tEls[8].shadowRoot.innerHTML.includes('alert2.foo10'));
+             jassert(tEls[9].shadowRoot.innerHTML.includes('alert2.foo14'));
+             jassert(tEls[10].shadowRoot.innerHTML.includes('alert2.foo13'));
+             jassert(tEls[11].shadowRoot.innerHTML.includes('alert2.foo15'));
+             ackbar = ao.shadowRoot.querySelector('div#ackbar');
+             jassert(ackbar.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+             tEls = ao.shadowRoot.querySelectorAll('div#ackbar ~ hui-alert2-entity-row');
+             jasserteq(tEls.length, 6);
+
+             // For grins, let's try setting an alert to ack
+             // First make sure that refreshing hass doesn't change anything by itself
+             newHass = cloneHass(newHass);
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jasserteq(tEls.length, 12);
+             jassert(tEls[5].shadowRoot.innerHTML.includes('alert2.foo7'));
+             tEls = ao.shadowRoot.querySelectorAll('div#ackbar ~ hui-alert2-entity-row');
+             jasserteq(tEls.length, 6);
+             // Now try with ack time set, that should bump foo7 below ackbar
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo7'] = createState('foo7', 1905, 1895, 10);
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jassert(tEls.length == 12);
+             jassert(!tEls[5].shadowRoot.innerHTML.includes('alert2.foo7'));
+             jassert(tEls[11].shadowRoot.innerHTML.includes('alert2.foo7'));
+             tEls = ao.shadowRoot.querySelectorAll('div#ackbar ~ hui-alert2-entity-row');
+             jasserteq(tEls.length, 7);
+             // And then unack should bring it back up
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo7'] = createState('foo7', 1905, 1895, 10);
+             //newHass.states['alert2.foo7'].attributes['last_ack_time'] = null;
+             newHass.states['alert2.foo7'].attributes['is_acked'] = false;
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jassert(tEls.length == 12);
+             jassert(tEls[5].shadowRoot.innerHTML.includes('alert2.foo7'));
+             tEls = ao.shadowRoot.querySelectorAll('div#ackbar ~ hui-alert2-entity-row');
+             jasserteq(tEls.length, 6);
+         }
+         async function doTest3(ao, newHass) {
+             let tEls;
+             let tEl;
+             // Old acked or unacked alert should not show up
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo16'] = createState('foo16', 7*60*60*1000, 6*60*60*1000, 100);
+             newHass.states['alert2.foo17'] = createState('foo17', 7*60*60*1000, 6*60*60*1000, 8*60*60*1000);
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jasserteq(tEls.length, 0);
+
+             // Old disabled and snoozed alerts should show up
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo18_disabled'] = createState('foo18_disabled', 7*60*60*1000, 6*60*60*1000, 100);
+             newHass.states['alert2.foo19_snoozed'] = createState('foo19_snoozed', 7*60*60*1000, 6.1*60*60*1000, 100);
+             newHass.states['alert2.foo18_disabled'].attributes.notification_control = NOTIFICATIONS_DISABLED;
+             newHass.states['alert2.foo19_snoozed'].attributes.notification_control = 'snooze date';
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jassert(tEls.length == 2);
+             jassert(tEls[0].shadowRoot.innerHTML.includes('alert2.foo18_disabled'));
+             jassert(tEls[1].shadowRoot.innerHTML.includes('alert2.foo19_snoozed'));
+             //let noun = ao.shadowRoot.querySelector('div#nounacks');
+             //jassert(noun.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+             let ackbar = ao.shadowRoot.querySelector('div#ackbar');
+             jassert(ackbar.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+             tEls = ao.shadowRoot.querySelectorAll('div#ackbar ~ hui-alert2-entity-row');
+             jasserteq(tEls.length, 2);
+             //jassert(ao.shadowRoot.querySelector('div#ackbar') == null);
+
+             // Now try new alerts, mixing snoozed and disabled with ack'd ones
+             // and let's delete some alerts
+             newHass = cloneHass(newHass);
+             delete newHass.states['alert2.foo18_disabled'];
+             delete newHass.states['alert2.foo19_snoozed'];
+             newHass.states['alert2.foo18'] = createState('foo18', 5000, 10000, 12000);
+             newHass.states['alert2.foo18'].attributes.notification_control = NOTIFICATIONS_DISABLED;
+             newHass.states['alert2.foo19'] = createState('foo19', 1000, 10000, 12000);
+             newHass.states['alert2.foo19'].attributes.notification_control = NOTIFICATIONS_DISABLED;
+             newHass.states['alert2.foo20'] = createState('foo20', 6000, 10000, 12000);
+             newHass.states['alert2.foo20'].attributes.notification_control = 'snooze date';
+             newHass.states['alert2.foo21'] = createState('foo21', 2000, 10000, 12000);
+             newHass.states['alert2.foo21'].attributes.notification_control = 'snooze date';
+             newHass.states['alert2.foo22'] = createState('foo22', 900, 10000, 100);
+             newHass.states['alert2.foo23'] = createState('foo23', 8000, 10000, 100);
+             newHass.states['alert2.foo24'] = createState('foo24', 1000, 900, 12000);
+             newHass.states['alert2.foo24'].attributes.notification_control = NOTIFICATIONS_DISABLED;
+             ao.hass = newHass;
+             await sleepMs(60);
+             ackbar = ao.shadowRoot.querySelector('div#ackbar');
+             jassert(ackbar.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jassert(tEls.length == 7);
+             jassert(tEls[0].shadowRoot.innerHTML.includes('alert2.foo22'));
+             jassert(tEls[1].shadowRoot.innerHTML.includes('alert2.foo19'));
+             jassert(tEls[2].shadowRoot.innerHTML.includes('alert2.foo21'));
+             jassert(tEls[3].shadowRoot.innerHTML.includes('alert2.foo18'));
+             jassert(tEls[4].shadowRoot.innerHTML.includes('alert2.foo20'));
+             jassert(tEls[5].shadowRoot.innerHTML.includes('alert2.foo23'));
+             jassert(tEls[6].shadowRoot.innerHTML.includes('alert2.foo24'));
+             tEls = ao.shadowRoot.querySelectorAll('div#ackbar ~ hui-alert2-entity-row');
+             jasserteq(tEls.length, 7);
+         }
+         async function doTest4(ao, newHass) {
+             let tEls;
+             let tEl;
+             // Test ack'd and unack'd event alert
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo25'] = createEventState('foo25', 5200, 100);
+             newHass.states['alert2.foo26'] = createEventState('foo26', 5000, 6000);
+             newHass.states['alert2.foo27'] = createEventState('foo27', 5*60*60*1000, 6*60*60*1000);
+             newHass.states['alert2.foo28'] = createEventState('foo28', 5*60*60*1000, 100);
+             newHass.states['alert2.foo29'] = createState('foo29', 6000, 4000, 10000);
+             newHass.states['alert2.foo30'] = createState('foo30', 6000, 5500, 10000);
+             newHass.states['alert2.foo31'] = createState('foo31', 6000, 4000, 100);
+             newHass.states['alert2.foo32'] = createState('foo32', 6000, 5500, 100);
+             newHass.states['alert2.foo32a'] = createEventState('foo32a', 5*60*60*1000, 6*60*60*1000);
+             newHass.states['alert2.foo32a'].state = '';
+             ao.hass = newHass;
+             await sleepMs(100);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jassert(tEls.length == 6);
+             jassert(tEls[0].shadowRoot.innerHTML.includes('alert2.foo29'));
+             jassert(tEls[1].shadowRoot.innerHTML.includes('alert2.foo26'));
+             jassert(tEls[2].shadowRoot.innerHTML.includes('alert2.foo30'));
+             jassert(tEls[3].shadowRoot.innerHTML.includes('alert2.foo31'));
+             jassert(tEls[4].shadowRoot.innerHTML.includes('alert2.foo25'));
+             jassert(tEls[5].shadowRoot.innerHTML.includes('alert2.foo32'));
+         }
+         async function doTest5(ao, newHass) {
+             let tEls;
+             let tEl;
+             // Test slider
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo33'] = createEventState('foo33', 5*60*60*1000, 6*60*60*1000);
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jasserteq(tEls.length, 0);
+             // Now adjust slider to take in more
+             ao.shadowRoot.querySelector("ha-slider").value = 4;
+             ao.slideCh({}); // emulate the click event
+             await sleepMs(10);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jasserteq(tEls.length, 1);
+             ao.shadowRoot.querySelector("ha-slider").value = 1;
+             ao.slideCh({}); // emulate the click event
+             await sleepMs(10);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jassert(tEls.length == 0);
+         }
+         async function doTest6(ao, newHass) {
+             let tEls;
+             let tEl;
+             // Check state text
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo33'] = createState('foo33', 5000, 6000, 10000); // on
+             newHass.states['alert2.foo34'] = createState('foo34', 6000, 5100, 10000); // off
+             newHass.states['alert2.foo35'] = createState('foo35', 5200, 6000, 10000); // on
+             newHass.states['alert2.foo35'].attributes.fires_since_last_notify = 3;
+             newHass.states['alert2.foo36'] = createState('foo36', 6000, 5300, 10000); // off
+             newHass.states['alert2.foo36'].attributes.fires_since_last_notify = 4;
+             newHass.states['alert2.foo37'] = createEventState('foo37', 5400, 10000);
+             newHass.states['alert2.foo38'] = createEventState('foo38', 5700, 10000);
+             newHass.states['alert2.foo38'].attributes.fires_since_last_notify = 5;
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jassert(tEls.length == 6);
+             function reduceAllText(node) {
+                 let rez = '';
+                 if(node.shadowRoot){
+                     rez += reduceAllText(node.shadowRoot);
+                 }
+                 let achild = node.firstChild;
+                 while (achild) {
+                     if (achild.nodeName == '#text') {
+                         rez += achild.textContent;
+                     } else {
+                         rez += reduceAllText(achild);
+                     }
+                     achild = achild.nextSibling;
+                 }
+                 return rez;
+             }
+             jassert(tEls[0].shadowRoot.innerHTML.includes('alert2.foo33'));
+             jasserteq(reduceAllText(tEls[0].shadowRoot.querySelector('ha-alert2-state').shadowRoot.querySelectorAll('div.onerow')[1]), 'on5 s ago');
+             jassert(tEls[1].shadowRoot.innerHTML.includes('alert2.foo35'));
+             jasserteq(reduceAllText(tEls[1].shadowRoot.querySelector('ha-alert2-state').shadowRoot.querySelectorAll('div.onerow')[1]), 'on5 s ago+2x');
+             jassert(tEls[2].shadowRoot.innerHTML.includes('alert2.foo34'));
+             jasserteq(reduceAllText(tEls[2].shadowRoot.querySelector('ha-alert2-state').shadowRoot.querySelectorAll('div.onerow')[1]), 'off5 s ago');
+             jassert(tEls[3].shadowRoot.innerHTML.includes('alert2.foo36'));
+             jasserteq(reduceAllText(tEls[3].shadowRoot.querySelector('ha-alert2-state').shadowRoot.querySelectorAll('div.onerow')[1]), 'off5 s ago+4x');
+             jassert(tEls[4].shadowRoot.innerHTML.includes('alert2.foo37'));
+             jasserteq(reduceAllText(tEls[4].shadowRoot.querySelector('ha-alert2-state').shadowRoot.querySelectorAll('div.onerow')[1]), '5 s ago');
+             jassert(tEls[5].shadowRoot.innerHTML.includes('alert2.foo38'));
+             jasserteq(reduceAllText(tEls[5].shadowRoot.querySelector('ha-alert2-state').shadowRoot.querySelectorAll('div.onerow')[1]), '6 s ago+5x');
+         }
+         async function doTest7(ao, newHass) {
+             // And check a few variations of alarms in a state when HA first starts.
+             // eg never fired, or never turned off.
+             ao = document.createElement('alert2-overview');
+             newHass.states['alert2.foo39'] = createState('foo39', 5000, 6000, 10000); // on
+             newHass.states['alert2.foo39a'] = createState('foo39a', 6000, 5000, 10000);  // never fired
+             newHass.states['alert2.foo39a'].attributes['last_ack_time'] = null;
+             newHass.states['alert2.foo39a'].attributes['last_on_time'] = null;
+             newHass.states['alert2.foo39a'].attributes['last_off_time'] = null;
+             newHass.states['alert2.foo39b'] = createState('foo39b', 5300, 6000, 10000);  // never turned off
+             newHass.states['alert2.foo39b'].attributes['last_ack_time'] = null;
+             newHass.states['alert2.foo39b'].attributes['last_off_time'] = null;
+             newHass.states['alert2.foo39c'] = createEventState('foo39c', 5700, 10000); // event never fired
+             newHass.states['alert2.foo39c'].attributes['last_ack_time'] = null;
+             newHass.states['alert2.foo39c'].state = null;
+             ao.hass = newHass;
+             let testDiv = document.querySelector('#testDiv');
+             testDiv.appendChild(ao);
+             await sleepMs(5);
+             let tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jasserteq(tEls.length, 2);
+             jassert(tEls[0].shadowRoot.innerHTML.includes('alert2.foo39'));
+             jassert(tEls[1].shadowRoot.innerHTML.includes('alert2.foo39b'));
+             ao.remove();
+             
+         }
+         async function doTest8(ao, newHass) {
+             let tEls;
+             let tEl;
+             // Test ack an alert that does not change its position in list
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo40'] = createState('foo40', 1000, 2000, 10000);
+             newHass.states['alert2.foo41'] = createState('foo41', 6000, 5500, 1000);
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jassert(tEls.length == 2);
+             jassert(tEls[0].shadowRoot.innerHTML.includes('alert2.foo40'));
+             jassert(tEls[1].shadowRoot.innerHTML.includes('alert2.foo41'));
+             tEls = ao.shadowRoot.querySelectorAll('div#ackbar ~ hui-alert2-entity-row');
+             jassert(tEls.length == 1);
+             jassert(tEls[0].shadowRoot.innerHTML.includes('alert2.foo41'));
+             let ackbar = ao.shadowRoot.querySelector('div#ackbar');
+             jassert(ackbar.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+             // Now ack the alert
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo40'] = createState('foo40', 1000, 2000, 100);
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jasserteq(tEls.length, 2);
+             tEls = ao.shadowRoot.querySelectorAll('div#ackbar ~ hui-alert2-entity-row');
+             jasserteq(tEls.length, 2);
+             jassert(tEls[0].shadowRoot.innerHTML.includes('alert2.foo40'));
+             ackbar = ao.shadowRoot.querySelector('div#ackbar');
+             jassert(ackbar.checkVisibility({ opacityProperty: true, visibilityProperty: true }));
+         }
+         async function doTestOld(ao, newHass) {
+             let tEls;
+             let tEl;
+             // Test ordering of alerts that are on and unacked
+             newHass = cloneHass(newHass);
+             newHass.states['alert2.foo1'] = createState('foo4', 4000, 10000, 11000);
+             newHass.states['alert.foo2'] = createStateAlert1('foo2', 5000, 6000);
+             newHass.states['alert.foo3'] = createStateAlert1('foo3', 2000, 6000);
+             newHass.states['alert.foo4'] = createStateAlert1('foo4', 5000, 3000);
+             ao.hass = newHass;
+             await sleepMs(60);
+             tEls = ao.shadowRoot.querySelectorAll('hui-alert2-entity-row, div.alert1');
+             jasserteq(tEls.length, 3);
+             jassert(tEls[0].innerHTML.includes('alert.foo3'));
+             jassert(tEls[1].shadowRoot.innerHTML.includes('alert2.foo4'));
+             jassert(tEls[2].innerHTML.includes('alert.foo2'));
+             jassert(ao.shadowRoot.querySelector('div#ackbar') == null);
+             tEls = ao.shadowRoot.querySelectorAll('div#ackbar ~ hui-alert2-entity-row');
+             jasserteq(tEls.length, 0);
+         }
+        </script>
+    </head>
+    <body>
+        <h2 id="testStatus">Test: Loading libraries...</h2>
+        <div id="testDiv" style="width: 100%; max-width: 30em;"></div>
+    </body>
+</html>

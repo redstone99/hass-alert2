@@ -1,0 +1,2420 @@
+<!DOCTYPE html>
+<html lang="en">
+    <!-- 
+         Run server with (from the Alert2 repo):
+              JTESTDIR=/home/redstone/home-monitoring/homeassistant JTEST_JS_DIR=/home/redstone/tmp/hass-alert2-ui venv/bin/pytest tests/dummy_server.py
+         View page at:
+             http://localhost:50005/jtest/tests/t2.html
+         
+    -->
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="stylesheet" href="https://ka-f.webawesome.com/webawesome@3.6.0/styles/webawesome.css">
+        <script type="module" src="https://ka-f.webawesome.com/webawesome@3.6.0/webawesome.loader.js"></script>
+        <style>
+         html {
+             --primary-text-color: #212121;
+             --secondary-text-color: #727272;
+             --text-primary-color: #ffffff;
+             --text-light-primary-color: #212121;
+             --disabled-text-color: #bdbdbd;
+             --primary-color: #03a9f4;
+             --dark-primary-color: #0288d1;
+             --light-primary-color: #b3e5fc;
+             --accent-color: #ff9800;
+             --divider-color: rgba(0, 0, 0, 0.12);
+             --outline-color: rgba(0, 0, 0, 0.12);
+             --outline-hover-color: rgba(0, 0, 0, 0.24);
+             --scrollbar-thumb-color: rgb(194, 194, 194);
+             --error-color: #db4437;
+             --warning-color: #ffa600;
+             --success-color: #43a047;
+             --info-color: #039be5;
+             --card-background-color: #ffffff;
+             --primary-background-color: #fafafa;
+             --secondary-background-color: #e5e5e5;
+             --clear-background-color: #ffffff;
+
+             --paper-font-body1_-_font-family: var(--paper-font-common-base_-_font-family);
+             --paper-font-body1_-_-webkit-font-smoothing: var(--paper-font-common-base_-_-webkit-font-smoothing);
+             --paper-font-body1_-_font-size: 14px;
+             --paper-font-body1_-_font-weight: 400;
+             --paper-font-body1_-_line-height: 20px;
+             --paper-font-common-base_-_font-family: Roboto, Noto, sans-serif;
+             --paper-font-common-base_-_-webkit-font-smoothing: antialiased;
+             --paper-font-common-code_-_font-family: 'Roboto Mono', Consolas, Menlo, monospace;
+             --paper-font-common-code_-_-webkit-font-smoothing: antialiased;
+             --paper-font-common-expensive-kerning_-_text-rendering: optimizeLegibility;
+             --paper-font-common-nowrap_-_white-space: nowrap;
+             --paper-font-common-nowrap_-_overflow: hidden;
+             --paper-font-common-nowrap_-_text-overflow: ellipsis;         
+             --mdc-theme-primary: var(--primary-color);
+             --mdc-theme-secondary: var(--accent-color);
+             --mdc-theme-background: var(--primary-background-color);
+             --mdc-theme-surface: var(--card-background-color);
+             --mdc-theme-on-primary: var(--text-primary-color);
+             --mdc-theme-on-secondary: var(--text-primary-color);
+             --mdc-theme-on-surface: var(--primary-text-color);
+             --mdc-theme-text-disabled-on-light: var(--disabled-text-color);
+             --mdc-theme-text-primary-on-background: var(--primary-text-color);
+             --mdc-theme-text-secondary-on-background: var(--secondary-text-color);
+             --mdc-theme-text-hint-on-background: var(--secondary-text-color);
+             --mdc-theme-text-icon-on-background: var(--secondary-text-color);
+             --mdc-theme-error: var(--error-color);
+         }
+         ha-progress-button {
+             
+         }
+        </style>
+        <script>
+         window.frontendVersion = '20260501';
+         function getInitUiCfg() {
+             return { nextAlertUiId: 1,
+                      defaults: {},
+                      alertInfos: [],
+                      topLevelOptions: {},
+                      oneTime: {},
+             };
+         }
+         function waitForEvent(element, eventName) {
+             return new Promise((resolve) => {
+                 element.addEventListener(eventName, (event) => {
+                     resolve(event);
+                 });
+             });
+         }
+         function jasserteqSet(sa, sb) {
+             const eqSet = (xs, ys) => (xs.size === ys.size) && [...xs].every((x) => ys.has(x));
+             if (!eqSet(sa, sb)) {
+                 console.error('set ', sa, ' != ', sb);
+                 jassert(false);
+             }
+         }
+
+         async function loadScript(src, ttype) {
+             var script = document.createElement('script');
+             script.src = src;
+             if (ttype) {
+                 script.type = ttype;
+             }
+             script.id = "jalid";
+             document.head.appendChild(script);
+             await waitForEvent(script, 'load');
+         }
+         //let createRowElementHass = null;
+         window.loadCardHelpers = async function() {
+             return { createRowElement: function(cfg) {
+                 var er = document.createElement('hui-alert2-entity-row');
+                 er.setConfig(cfg);
+                 return er;
+             }};
+         }
+         let testDiv;
+         window.addEventListener('DOMContentLoaded', async function() {
+             await customElements.whenDefined('wa-input');
+             await loadScript('./ha-lib.js', 'module');
+             await loadScript('../alert2.js');
+             testDiv = document.querySelector('#testDiv');
+             let alert2Tools = customElements.get('alert2-tools');
+             alert2Tools.debounceMs = 1;
+             if (0) {
+                 jassert(await startTest(doTestMoreInfo));
+                 return;
+             }
+             jassert(await startTest(doTestDefaults));
+             jassert(await startTest(doTestRender));
+             jassert(await startTest(doTestCreate));
+             jassert(await startTest(doTestAlertManager));
+             jassert(await startTest(doTestAlertManager2));
+             jassert(await startTest(doTestData));
+             jassert(await startTest(doTest5));
+             jassert(await startTest(doTest6));
+             jassert(await startTest(doTest7));
+             jassert(await startTest(doTest8));
+             jassert(await startTest(doTest10));
+             jassert(await startTest(doTestConfig));
+             jassert(await startTest(doTestColorConfig));
+             jassert(await startTest(doTestSupersedeMgr));
+             jassert(await startTest(doTestInternal));
+             jassert(await startTest(doTestMoreInfo));
+             jassert(await startTest(doTestAck));
+             jassert(await startTest(doTestAnon));
+             let testStatusEl = document.querySelector('#testStatus');
+             if (jassertFailCount == 0) {
+                 testStatusEl.innerHTML = `Test: All done`;
+             } else {
+                 testStatusEl.innerHTML = `Test: Ended with errors`;
+             }
+         });
+         // jassert and jassertFailCount are declared in alert2.js
+         function jasserteq(a, b) {
+             if (a !== b) {
+                 jassertFailCount += 1;
+                 throw new Error(`assert failed "${a}" != "${b}"`);
+                 
+             }
+         }
+         function testObjeq(obj1, obj2) {
+             if (obj1 === obj2) return true;
+             if (typeof obj1 !== 'object' || obj1 === null || 
+                 typeof obj2 !== 'object' || obj2 === null) {
+                 return false;
+             }
+             if ((obj1 instanceof Set) !== (obj2 instanceof Set)) { return false; }
+             if (obj1 instanceof Set) {
+                 if (obj1.size !== obj2.size) { return false; }
+                 return obj1.intersection(obj2).size === obj1.size;
+             }
+             const keys1 = Object.keys(obj1);
+             const keys2 = Object.keys(obj2);
+             if (keys1.length !== keys2.length) return false;
+             for (const key of keys1) {
+                 if (!keys2.includes(key) || !testObjeq(obj1[key], obj2[key])) {
+                     return false;
+                 }
+             }
+             return true;
+         }
+         function jassertObjeq(a, b) {
+             if (!testObjeq(a, b)) {
+                 console.error(a, '  !=  ', b);
+                 jassert(false);
+             }
+         }
+         function sleepMs(ms) {
+             return new Promise(resolve => setTimeout(resolve, ms));
+         }
+         function getRecentIso(msAgo) {
+             if (msAgo === null) {
+                 return null;
+             }
+             return (new Date((new Date()).getTime() - msAgo)).toISOString();
+         }
+         function cloneHass(ahass) {
+                 return {
+                     states: Object.assign({}, ahass['states'])
+                 };
+         }
+         function createState(name, onAgoMs, offAgoMs, ackAgoMs, dopts = {}) {
+             let opts = { priority: 'low', ack_required: false };
+             Object.assign(opts, dopts);
+             jasserteq(typeof(opts.priority), 'string');
+             if (offAgoMs === null) {
+                 let obj = { state: getRecentIso(onAgoMs),
+                             attributes: { 'notification_control': NOTIFICATIONS_ENABLED,
+                                           'last_ack_time': getRecentIso(ackAgoMs),
+                                           'is_acked': ackAgoMs < onAgoMs,
+                                           'fires_since_last_notify': 0,
+                                           'last_fired_time': getRecentIso(onAgoMs),
+                                           'priority': opts.priority,
+                                           'ack_required': opts.ack_required,
+                                           domain: 'd',
+                                           name: name,
+                             },
+                             entity_id: 'alert2.d_'+name };
+                 return obj;
+             }
+             let obj = { state: (onAgoMs && onAgoMs < offAgoMs) ? 'on' : 'off',
+                         attributes: { 'last_on_time': getRecentIso(onAgoMs),
+                                       'last_off_time': getRecentIso(offAgoMs),
+                                       'notification_control': NOTIFICATIONS_ENABLED,
+                                       'last_ack_time': getRecentIso(ackAgoMs),
+                                       'is_acked': ackAgoMs < onAgoMs,
+                                       'fires_since_last_notify': 0,
+                                       'last_fired_time': getRecentIso(onAgoMs),
+                                       'priority': opts.priority,
+                                       'ack_required': opts.ack_required,
+                                       domain: 'd',
+                                       name: name,
+                         },
+                         entity_id: 'alert2.d_'+name };
+             if (opts.supersedes) {
+                 obj.attributes.supersedes = opts.supersedes;
+             }
+             if (opts.actions_on_script_running) {
+                 obj.attributes.actions_on_script_running = opts.actions_on_script_running;
+             }
+             return obj;
+         }
+         async function createExperiment(z, stateList, nodeList, nBelow=0) {
+             let hass = { states: {
+                 'binary_sensor.alert2_ha_startup_done': { state: 'on', attributes: { manifest_version: 'v.a.b.c' } },
+             },
+                          callApi: z.firstHass.callApi,
+                          callWs: z.firstHass.callWs,
+                          connection: z.firstHass.connection
+             };
+             for (const astate of stateList) {
+                 hass.states['alert2.'+astate.attributes.domain+'_'+astate.attributes.name] = astate;
+             }
+             console.log('createExperiment with', hass);
+             z.ao.hass = hass;
+             await sleepMs(1200);
+             let tEls = z.ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jasserteq(tEls.length, nodeList.length);
+             for (let idx = 0 ; idx < nodeList.length ; idx++) {
+                 jassert(tEls[idx].shadowRoot.innerHTML.includes(nodeList[idx]));
+             }
+             let foundBelow = 0;
+             tEls = z.ao.shadowRoot.querySelectorAll('div#ackbar ~ hui-alert2-entity-row');
+             foundBelow += tEls.length;
+             tEls = z.ao.shadowRoot.querySelectorAll('div#ackbar ~ details');
+             tEls.forEach((el)=> {
+                 foundBelow += el.querySelectorAll('hui-alert2-entity-row').length;
+             });
+             jasserteq(foundBelow, nBelow);
+         }
+         function createEventState(name, fireAgoMs, ackAgoMs=200) {
+             return { state: getRecentIso(fireAgoMs),
+                      attributes: { 'notification_control': NOTIFICATIONS_ENABLED,
+                                    'last_ack_time': getRecentIso(ackAgoMs),
+                                    'fires_since_last_notify': 0 },
+                      entity_id: 'alert2.'+name };
+         }
+         async function callApi(type, method, opts) {
+             const settings = {
+                 method: type,
+                 headers: {
+                     Accept: 'application/json',
+                     'Content-Type': 'application/json',
+                 },
+                 body: JSON.stringify(opts),
+             };
+             let fetchResponse;
+             let data;
+             try {
+                 fetchResponse = await fetch(`http://localhost:50005/api/${method}`, settings);
+                 if (fetchResponse.ok) {
+                     data = await fetchResponse.json();
+                 } else {
+                     let txt = await fetchResponse.text();
+                     throw {
+                         error: `Response error: ${fetchResponse.status} with txt=${txt}`,
+                         status_code: fetchResponse.status,
+                     };
+                 }
+             } catch (e) {
+                 console.error(method, opts, 'err=', e);
+                 throw e;
+             }
+             console.log('got response to', method, opts, '   as   ', data, 'ok=',fetchResponse.ok);
+             if (!fetchResponse.ok) {
+                 throw {
+                     error: `Response error: ${fetchResponse.status} with msg=${data.message}`,
+                     status_code: fetchResponse.status,
+                     message: data.message,
+                     body: data
+                 };
+             }
+             return data;
+         }
+         async function initTest(eName, extraParams, config=null) {
+             let evCbMap = {};
+             let rezCbMap = {};
+             let ws = new WebSocket('http://localhost:50005/api/websocket');
+             ws.addEventListener('close', function(ev) {             console.log('ws got close', ev); });
+             ws.addEventListener('error', function(ev) {             console.log('ws got error', ev); });
+             let done = new Promise( (resolve) => {
+                 const handle_msg = function(ev) {
+                     const msg = JSON.parse(ev.data);
+                     console.log('ws got message', msg);
+                     if (msg.type == 'auth_ok') {
+                         ws.removeEventListener('message', handle_msg);
+                         resolve();
+                     }
+                 };
+                 ws.addEventListener('message', handle_msg);
+                 ws.addEventListener('open', function(ev) {
+                     console.log('ws got open', ev);
+                     ws.send(JSON.stringify({ type: 'auth', access_token: 'foobar'}));
+                 });
+             });
+             await done;
+             let msgId = 1;
+             let hmsg = function(ev) {
+                 const msg = JSON.parse(ev.data);
+                 console.log('got ws message inside subscribe: ', msg);
+                 if (msg.type == 'result') {
+                     jasserteq(msg.success, true);
+                 }
+                 if (evCbMap['z'+msg.id]) {
+                     jassert(msg.type == 'event' || msg.type == 'result');
+                     if (msg.type == 'event') {
+                         jasserteq(msg.type, 'event');
+                         evCbMap['z'+msg.id](msg.event);
+                     }
+                 }
+                 if (rezCbMap['z'+msg.id]) {
+                     jasserteq(msg.type, 'result');
+                     rezCbMap['z'+msg.id](msg.result);
+                 }
+             }
+             ws.addEventListener('message', hmsg);
+
+             let connection = {
+                 sendMessagePromise: async function (mdata) {
+                     msgId += 1;
+                     let myId = msgId;
+                     mdata.id = myId;
+                     console.log(`ah, got call to sendMessagePromise. new id=${myId}. mdata=`, mdata);
+                     let rez = await (new Promise((resolve)=>{
+                         rezCbMap['z'+myId] = function (ev) {
+                             delete rezCbMap['z'+myId];
+                             resolve(ev);
+                         }
+                         ws.send(JSON.stringify(mdata));
+                     }));
+                     return rez;
+                 },
+                 subscribeMessage: function (cb, mdata) {
+                     msgId += 1;
+                     let myId = msgId;
+                     console.log(`ah, got call to subscribeMessage. new id=${myId}. mdata=`, mdata);
+                     evCbMap['z'+myId] = cb;
+                     let subDonePromise = new Promise((resolve)=>{
+                         resolve( ()=>{
+                             msgId += 1;
+                             let myId2 = msgId;
+                             console.log(`Got unsubscribe to id=${myId}. Sending unsub with id=${myId2}`);
+                             jassert(evCbMap['z'+myId]);
+                             delete evCbMap['z'+myId];
+                             ws.send(JSON.stringify({ type: 'unsubscribe_events', subscription: myId, id: myId2 }));
+                         } );
+                     });
+                     mdata.id = myId;
+                     jassert(mdata.type == 'alert2_watch_display_msg' || mdata.type == 'alert2_watch_display_config');
+                     ws.send(JSON.stringify(mdata));
+                     return subDonePromise;
+                 }
+             };
+             let callWs = async function(params) {
+                 msgId += 1;
+                 let myId = msgId;
+                 jasserteq(params.type, 'execute_script');
+                 params.id = myId;
+                 ws.send(JSON.stringify(params));
+             }
+             let newHass = {
+                 states: { 'binary_sensor.alert2_ha_startup_done' : { attributes: { manifest_version: 'v.a.b.c' } } },
+                 callApi: callApi,
+                 callWs: callWs,
+                 connection: connection,
+             };
+
+             
+             //ws.close();
+             
+             let ao = document.createElement(eName);
+             //console.log('ao is ', ao, eName);
+             ao.hass = newHass;
+             if (extraParams) {
+                 Object.assign(ao, extraParams);
+             }
+             if (config) {
+                 ao.setConfig(config);
+             }
+             if (eName == 'alert2-create') {
+                 jassert(extraParams && Object.hasOwn(extraParams, 'entInfo'));
+                 ao.didSomethingCb = ()=>{
+                     //console.log('alert2-create didSomethingCb');
+                 };
+             }
+             testDiv.appendChild(ao);
+             let z = {ao: ao, ws: ws, firstHass: newHass, callWs: callWs };
+             if (['alert2-create','alert2-edit-defaults'].includes(eName)) {
+                 let c = 0;
+                 while (true) {
+                     await sleepMs(10);
+                     //if (ao.innerHTML) { break; }
+                     let tt = ao.shadowRoot.querySelector(`alert2-cfg-field[name="notifier"]`);
+                     if (tt) { break; }
+                     //console.log('no ao :(...', !!tt);
+                     jassert(c < 50);
+                     c++;
+                 }
+                 Object.assign(z, createHelpers(ao));
+             }
+             return z;
+         }
+         async function startTest(afunc) {
+             let testStatusEl = document.querySelector('#testStatus');
+
+             let tobj = await callApi('POST', 'alert2test/tcheck', { stage:'reset'} );
+             if (!testObjeq(tobj, {})) {
+                 testStatusEl.innerHTML = `Test: Server data not empty. Needs restart`;
+                 return false;
+             }
+             testStatusEl.innerHTML = `Test: Running ${afunc.name}...`;
+             await afunc();
+             //ao.remove();
+             testStatusEl.innerHTML = `Test: Done ${afunc.name}`;
+             return true;
+         }
+         async function waitSearch(z) {
+             while (true) {
+                 await sleepMs(10);
+                 let s = z.ao.getSearchStatus();
+                 if (s.inProgress === false) {
+                     await sleepMs(3);
+                     return s.rez;
+                 }
+             }
+         }
+         async function waitDone(abutton) {
+             await sleepMs(10);
+             while (true) {
+                 if (!abutton.progress) { return; }
+                 await sleepMs(50);
+             }
+         }
+         async function clickWait(abutton) {
+             jassert(abutton);
+             abutton.click();
+             await waitDone(abutton);
+         }
+         function createHelpers(ao) {
+             function checkField(aname, val) {
+                 let currP = ao.shadowRoot.querySelector(`alert2-cfg-field[name="${aname}"]`).currP;
+                 //console.log('checkField', aname, JSON.stringify(currP));
+                 jassert(currP);
+                 if (val === null) {
+                     jassert(!Object.hasOwn(currP, aname));
+                 } else {
+                     jasserteq(currP[aname], val);
+                 }
+             }
+             async function checkRender(aname, aregex, hasErr=false) {
+                 let cf = ao.shadowRoot.querySelector(`alert2-cfg-field[name="${aname}"]`);
+                 await sleepMs(3);
+                 //console.log(aname, cf.shadowRoot.innerHTML);
+                 while (true) {
+                     await sleepMs(20);
+                     let jj = cf.shadowRoot.querySelector('ha-circular-progress');
+                     if (!jj) { break; }
+                 }
+                 await sleepMs(3);
+                 let ri = cf.shadowRoot.querySelector('div.renderInfo');
+                 jassert(ri);
+                 jasserteq(ri.querySelector('ha-alert') !== null, hasErr);
+                 
+                 let inner = ri.innerHTML;
+                 jassert(inner);
+                 let txt = ri.textContent;
+                 let idx = txt.search(aregex);
+                 //console.log('Render to be tested is:', inner, aregex, idx);
+                 //console.log('Render3 to be tested is:', ri.textContent);
+                 if (! (idx >= 0)) {
+                     console.log(`Did not find "${aregex}" in ${txt}`);
+                     jassert(false);
+                 }
+                 //if (!aregex.source.includes('alert') && inner.includes('alert')) {
+                 //    console.log(`Unexpected alert found in ${inner}`);
+                 //    jassert(false);
+                 // }
+             }
+             async function setField(aname, val) {
+                 jasserteq(typeof val, "string");
+                 let cf = ao.shadowRoot.querySelector(`alert2-cfg-field[name="${aname}"]`);
+                 let jj = cf.shadowRoot.querySelector('ha-input');
+                 if (jj) {
+                     if (val == '') {
+                         jj.value = val;
+                     }
+                     jFireEvent(jj, 'input', { value: val });
+                     //jj.value = val;
+                 } else {
+                     jj = cf.shadowRoot.querySelector('ha-code-editor');
+                     jassert(jj);
+                     if (val == '') {
+                         let cc = 100;
+                         if (0) {
+                             jj = cf.shadowRoot.querySelector('ha-code-editor')
+                                    .shadowRoot.querySelector('ha-input')
+                                    .shadowRoot.querySelector('input');
+                             jassert(jj);
+                             jj.focus();
+                             await sleepMs(1);
+                         } else {
+                         }
+                         jj.value = val;
+                         jFireEvent(jj, 'value-changed', { value: val });
+                         while (cc-- > 0) {
+                             await sleepMs(1);
+                             //jFireEvent(jj, 'input', { value: val });
+                             //jFireEvent(jj, 'change', { value: val });
+                             await sleepMs(1);
+                             if (jj.value == val &&
+                                 !Object.hasOwn(cf.currP, aname)) {
+                                 break;
+                             }
+                             await sleepMs(10);
+                             console.log('    waiting for val to become empty', jj.value, val, cf.currP[aname]);
+                         }
+                     } else {
+                         jFireEvent(jj, 'value-changed', { value: val });
+                     }
+                 }
+                 await sleepMs(5);
+                 let hasSub = ['value','hysteresis','maximum','minimum'].includes(aname);
+                 
+                 console.log(`setting ${aname} to "${val}" and data=${cf.currP[aname]}`);
+                 if (val == '') {
+                     if (hasSub) {
+                         jassert(!Object.hasOwn(cf.currP, 'threshold') || !Object.hasOwn(cf.currP['threshold'], aname));
+                     } else {
+                         jassert(!Object.hasOwn(cf.currP, aname));
+                     }
+                 } else {
+                     if (hasSub) {
+                         jasserteq(cf.currP['threshold'][aname], val);
+                     } else {
+                         jasserteq(cf.currP[aname], val);
+                     }
+                 }
+             }
+             function checkErr(aregex) {
+                 let errD = ao.shadowRoot.querySelector('ha-alert');
+                 if (!aregex) {
+                     jassert(!errD);
+                 } else {
+                     let txt = errD.textContent;
+                     let idx = txt.search(aregex);
+                     if (! (idx >= 0)) {
+                         console.log(`Did not find "${aregex}" in ${txt}`);
+                         jassert(false);
+                     }
+                 }
+             }
+             function checkDefault(aname, aregex) {
+                 let cf = ao.shadowRoot.querySelector(`alert2-cfg-field[name="${aname}"]`);
+                 let pp = cf.shadowRoot.querySelector(`div.defaultInfo`);
+                 if (aregex === null) {
+                     jassert(!pp);
+                 } else {
+                     let txt = pp.textContent;
+                     let idx = txt.search(aregex);
+                     if (! (idx >= 0)) {
+                         console.log(`Did not find "${aregex}" in ${txt}`);
+                         jassert(false);
+                     }
+                 }
+             }
+             return {
+                 checkField: checkField,
+                 checkRender: checkRender,
+                 setField: setField,
+                 checkErr: checkErr,
+                 checkDefault: checkDefault,
+             };
+         }
+         async function doTestDefaults() {
+             let z = await initTest('alert2-edit-defaults');
+             await sleepMs(10); // seems to help dom get itself sorted out
+                     
+             // We start with an empty defaults page
+             //
+             z.checkField('notifier', null);
+             z.checkField('summary_notifier', null);
+             z.checkField('done_notifier', null);
+             z.checkField('annotate_messages', null);
+             z.checkField('persistent_notifier_grouping', null);
+             z.checkField('reminder_frequency_mins', null);
+             z.checkField('supersede_debounce_secs', null);
+             z.checkField('throttle_fires_per_mins', null);
+             z.checkField('priority', null);
+             z.checkField('icon', null);
+             z.checkField('skip_internal_errors', null);
+             z.checkField('notifier_startup_grace_secs', null);
+             z.checkField('defer_startup_notifications', null);
+             z.checkField('reminder_message', null);
+             let uiCfg = getInitUiCfg();
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+             // Save the empty page
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button'));
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+             // Change a field
+             await z.setField('notifier', 'foo');
+             await z.checkRender('notifier', /len=1.*"foo"/);
+             await z.setField('notifier', '');
+             await z.checkRender('notifier', /^\s+$/);
+             await z.setField('notifier', 'foo,bar');
+             await z.checkRender('notifier', /illegal characters/, hasErr=true);
+             await z.setField('notifier', '[foo,bar]');
+             await z.checkRender('notifier', /len=2.*"foo","bar"/);
+             await z.setField('notifier', '{{ ["foo","baz"   ] }}');
+             await z.checkRender('notifier', /len=2.*"foo","baz"/);
+             await z.setField('notifier', 'foo');
+             await z.checkRender('notifier', /len=1.*"foo"/);
+
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button'));
+             uiCfg.defaults.notifier = 'foo';
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+             
+             // Reload dialog and check foo is there.
+             z.ao.remove();
+             await sleepMs(11);
+             z = await initTest('alert2-edit-defaults');
+             await sleepMs(100);
+             z.checkField('notifier', 'foo');
+             // Now remove foo 
+             await z.setField('notifier', '');
+             await z.checkRender('notifier', /^\s+$/);
+             z.checkField('notifier', null);
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button'));
+             uiCfg = getInitUiCfg();
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+
+             // summary_notifier
+             await z.setField('summary_notifier', 'sfoo');
+             await z.checkRender('summary_notifier', /len=1.*"sfoo"/);
+             await z.setField('summary_notifier', '["sfoo","ss"]');
+             await z.checkRender('summary_notifier', /len=2.*"sfoo","ss"/);
+             await z.setField('summary_notifier', '');
+             await z.checkRender('summary_notifier', /^\s+$/);
+
+             // done_notifier
+             await z.setField('done_notifier', 'sfoo');
+             await z.checkRender('done_notifier', /len=1.*"sfoo"/);
+             await z.setField('done_notifier', '["sfoo","ss"]');
+             await z.checkRender('done_notifier', /len=2.*"sfoo","ss"/);
+             await z.setField('done_notifier', '');
+             await z.checkRender('done_notifier', /^\s+$/);
+
+             // annotate_messages
+             await z.setField('annotate_messages', 'on');
+             await z.checkRender('annotate_messages', /result:true/);
+             await z.setField('annotate_messages', 'foo');
+             await z.checkRender('annotate_messages', /invalid boolean/, hasErr=true);
+             await z.setField('annotate_messages', 'off');
+             await z.checkRender('annotate_messages', /result:false/);
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button'));
+             uiCfg.defaults.annotate_messages = 'off';
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+             await sleepMs(100);
+             await z.setField('annotate_messages', '');
+             await sleepMs(500);
+             await z.checkRender('annotate_messages', /^\s+$/);
+
+             // persistent_notifier_grouping
+             await z.setField('persistent_notifier_grouping', 'separate');
+             await z.checkRender('persistent_notifier_grouping', /result:"separate"/);
+             await z.setField('persistent_notifier_grouping', 'foo');
+             await z.checkRender('persistent_notifier_grouping', /must be one of/, hasErr=true);
+             await z.setField('persistent_notifier_grouping', 'collapse');
+             await z.checkRender('persistent_notifier_grouping', /result:"collapse"/);
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button'));
+             uiCfg = getInitUiCfg();
+             uiCfg.defaults.persistent_notifier_grouping = 'collapse';
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+             await sleepMs(100);
+             await z.setField('persistent_notifier_grouping', '');
+             await sleepMs(500);
+             await z.checkRender('persistent_notifier_grouping', /^\s+$/);
+
+             // reminder_frequency_mins
+             await z.setField('reminder_frequency_mins', '3');
+             await z.checkRender('reminder_frequency_mins', /len=1\):\[3\]/);
+             await z.setField('reminder_frequency_mins', '3,4');
+             await z.checkRender('reminder_frequency_mins', /expected float/, hasErr=true);
+             await z.setField('reminder_frequency_mins', '[3,4]');
+             await z.checkRender('reminder_frequency_mins', /len=2\):\[3,4\]/);
+
+             // supersede_debounce_secs
+             await z.setField('supersede_debounce_secs', '3');
+             await z.checkRender('supersede_debounce_secs', /result:3/);
+             await z.setField('supersede_debounce_secs', '3,4');
+             await z.checkRender('supersede_debounce_secs', /expected float/, hasErr=true);
+             
+             // throttle_fires_per_mins
+             await z.setField('throttle_fires_per_mins', '3');
+             await z.checkRender('throttle_fires_per_mins', /not a valid value/, hasErr=true);
+             await z.setField('throttle_fires_per_mins', '[3,5]');
+             await z.checkRender('throttle_fires_per_mins', /len=2\):\[3,5\]/);
+             
+             // priority
+             await z.setField('priority', '3');
+             await z.checkRender('priority', /must be one of/, hasErr=true);
+             await z.setField('priority', 'low');
+             await z.checkRender('priority', /"low"/);
+
+             // icon
+             await z.setField('icon', '3');
+             await z.checkRender('icon', /prefix:name/, hasErr=true);
+             await z.setField('icon', 'a:b');
+             await z.checkRender('icon', /"a:b"/);
+
+             // data
+             await z.setField('data', '3');
+             await z.checkRender('data', /must be either a dict/, hasErr=true);
+             await z.setField('data', '{"a":7 }');
+             await z.checkRender('data', /{"a":7}/);
+             await z.setField('data', '{{ {"a":7 } }}');
+             await z.checkRender('data', /{"a":7}/);
+
+             await z.setField('skip_internal_errors', 'foo');
+             await z.checkRender('skip_internal_errors', /invalid boolean/, hasErr=true);
+             await z.setField('skip_internal_errors', 'on');
+             await z.checkRender('skip_internal_errors', /result:true/);
+
+             await z.setField('notifier_startup_grace_secs', '-3');
+             await z.checkRender('notifier_startup_grace_secs', /must be at least 0.0/, hasErr=true);
+             await z.setField('notifier_startup_grace_secs', '3');
+             await z.checkRender('notifier_startup_grace_secs', /result:3/);
+
+             await z.setField('defer_startup_notifications', 'yes');
+             await z.checkRender('defer_startup_notifications', /result:true/);
+             await z.setField('defer_startup_notifications', '[foo, zz ]');
+             await z.checkRender('defer_startup_notifications', /len=2\):\["foo","zz"\]/);
+
+             // reminder_message
+             await z.setField('reminder_message', 'sfoo');
+             await z.checkRender('reminder_message', /sfoo/);
+             await z.setField('reminder_message', '');
+             await z.checkRender('reminder_message', /^\s+$/);
+
+
+             
+             // Try setting all
+             z.setField('notifier', '[nfoo,  nnfoo]');
+             z.setField('summary_notifier', 'snfoo');
+             z.setField('done_notifier', 'dnfoo');
+             z.setField('annotate_messages', 'yes');
+             z.setField('persistent_notifier_grouping', 'collapse');
+             z.setField('reminder_frequency_mins', '77');
+             z.setField('supersede_debounce_secs', '78');
+             z.setField('throttle_fires_per_mins', '[2,5]');
+             z.setField('skip_internal_errors', 'no');
+             z.setField('notifier_startup_grace_secs', '6.2');
+             z.setField('defer_startup_notifications', '[blah,ick]');
+             z.setField('priority', 'medium');
+             z.setField('icon', 'c:d');
+             z.setField('data', '{"a":8}');
+             z.setField('reminder_message', 'rmsg');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button'));
+             uiCfg = getInitUiCfg();
+             uiCfg.defaults = {
+                              notifier: '[nfoo,  nnfoo]',
+                              summary_notifier: 'snfoo',
+                              done_notifier: 'dnfoo',
+                              annotate_messages: 'yes',
+                              persistent_notifier_grouping: 'collapse',
+                              reminder_frequency_mins: '77',
+                              supersede_debounce_secs: '78',
+                              throttle_fires_per_mins: '[2,5]',
+                              priority: 'medium',
+                              icon: 'c:d',
+                              data: '{"a":8}',
+                              reminder_message: 'rmsg',
+             };
+             uiCfg.topLevelOptions = {
+                 skip_internal_errors: 'no',
+                 notifier_startup_grace_secs: '6.2',
+                 defer_startup_notifications: '[blah,ick]'
+             };
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+
+             // Update two and remove two
+             z.setField('notifier', '[nfoo,  nnfoo3]');
+             z.setField('summary_notifier', '');
+             z.setField('done_notifier', '');
+             z.setField('notifier_startup_grace_secs', '6.3');
+             z.setField('defer_startup_notifications', '');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button'));
+             uiCfg = getInitUiCfg();
+             uiCfg.defaults = {
+                              notifier: '[nfoo,  nnfoo3]',
+                              annotate_messages: 'yes',
+                              persistent_notifier_grouping: 'collapse',
+                              reminder_frequency_mins: '77',
+                              supersede_debounce_secs: '78',
+                              throttle_fires_per_mins: '[2,5]',
+                              priority: 'medium',
+                              icon: 'c:d',
+                              data: '{"a":8}',
+                 reminder_message: 'rmsg',
+             };
+             uiCfg.topLevelOptions = {
+                                    skip_internal_errors: 'no',
+                                    notifier_startup_grace_secs: '6.3',
+             };
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+
+             // Reload page to see if we get what we expect
+             z.ao.remove();
+             await sleepMs(11);
+             z = await initTest('alert2-edit-defaults');
+             await sleepMs(11);
+             z.checkField('notifier', '[nfoo,  nnfoo3]');
+             z.checkField('summary_notifier', null);
+             z.checkField('done_notifier', null);
+             z.checkField('annotate_messages', 'yes');
+             z.checkField('persistent_notifier_grouping', 'collapse');
+             z.checkField('reminder_frequency_mins', '77');
+             z.checkField('supersede_debounce_secs', '78');
+             z.checkField('throttle_fires_per_mins', '[2,5]');
+             z.checkField('priority', 'medium');
+             z.checkField('icon', 'c:d');
+             z.checkField('data', '{"a":8}');
+             z.checkField('reminder_message', 'rmsg');
+             
+             z.checkField('skip_internal_errors', 'no');
+             z.checkField('notifier_startup_grace_secs', '6.3');
+             z.checkField('defer_startup_notifications', null);
+             z.ao.remove();
+         }
+         async function doTestRender() {
+             // Create new alert
+             let z = await initTest('alert2-create', {entInfo:null});
+             await sleepMs(10); // seems to help dom get itself sorted out
+
+             // domain
+             await z.setField('domain', '');
+             await z.checkField('domain', null);
+             await z.setField('domain', 'a');
+             await z.checkRender('domain', /result:"a"/);
+             await z.setField('domain', 'a{{"b"');
+             await z.checkRender('domain', /invalid template/, hasErr=true);
+             await z.setField('domain', 'a{{"b"}}');
+             await z.checkRender('domain', /result:"ab"/);
+             await z.setField('domain', 'd');
+             
+             // name
+             await z.setField('name', '');
+             await z.checkField('name', null);
+             await z.setField('name', 'a');
+             await z.checkRender('name', /result:"a"/);
+             await z.setField('name', 'a{{"b"}}');
+             await z.checkRender('name', /result:"ab"/);
+             await z.setField('name', 'n');
+
+             // friendly_name
+             await z.setField('friendly_name', '');
+             await z.checkField('friendly_name', null);
+             await z.setField('friendly_name', 'a');
+             await z.checkRender('friendly_name', /result:"a"/);
+             await z.setField('friendly_name', 'a{{"b"}}');
+             await z.checkRender('friendly_name', /result:"ab"/);
+             await z.setField('friendly_name', 'f');
+
+             // condition
+             await z.setField('condition', '');
+             await z.checkField('condition', null);
+             await z.setField('condition', 'on');
+             await z.checkRender('condition', /result:true/);
+             await z.setField('condition', '{{"yes"}}');
+             await z.checkRender('condition', /result:true/);
+             await z.setField('condition', 'off');
+
+             // condition_on
+             await z.setField('condition_on', '');
+             await z.checkField('condition_on', null);
+             await z.setField('condition_on', 'on');
+             await z.checkRender('condition_on', /result:true/);
+             await z.setField('condition_on', '{{"yes"}}');
+             await z.checkRender('condition_on', /result:true/);
+             await z.setField('condition_on', 'off');
+
+             // condition_off
+             await z.setField('condition_off', '');
+             await z.checkField('condition_off', null);
+             await z.setField('condition_off', 'on');
+             await z.checkRender('condition_off', /result:true/);
+             await z.setField('condition_off', '{{"yes"}}');
+             await z.checkRender('condition_off', /result:true/);
+             await z.setField('condition_off', 'off');
+
+             // actions_on
+             await z.setField('actions_on', '');
+             await z.checkField('actions_on', null);
+             await z.setField('actions_on', 'on');
+             await z.checkRender('actions_on', /expected a mapping/, hasErr=true);
+             await z.setField('actions_on', "{ actions: [ { action: alert2.ack_all } ] }");
+             await z.checkRender('actions_on', /{"actions":\[{"action":"alert2.ack_all"}\]/);
+             await z.setField('actions_on', '');
+             await z.checkField('actions_on', null);
+
+             // trigger
+             await z.setField('trigger', '');
+             await z.checkField('trigger', null);
+             await z.setField('trigger', 'on');
+             await z.checkRender('trigger', /is not .*iterable/, hasErr=true);
+             await z.setField('trigger', "[{'platform':'state','entity_id':'sensor.zz'}]");
+             await z.checkRender('trigger', /\[{"platform":"state/);
+             await z.setField('trigger', '');
+             await z.checkField('trigger', null);
+
+             // trigger_on
+             await z.setField('trigger_on', '');
+             await z.checkField('trigger_on', null);
+             await z.setField('trigger_on', 'on');
+             await z.checkRender('trigger_on', /is not .*iterable/, hasErr=true);
+             await z.setField('trigger_on', "[{'platform':'state','entity_id':'sensor.zz'}]");
+             await z.checkRender('trigger_on', /\[{"platform":"state/);
+             await z.setField('trigger_on', '');
+             await z.checkField('trigger_on', null);
+
+             // trigger_off
+             await z.setField('trigger_off', '');
+             await z.checkField('trigger_off', null);
+             await z.setField('trigger_off', 'on');
+             await z.checkRender('trigger_off', /is not .*iterable/, hasErr=true);
+             await z.setField('trigger_off', "[{'platform':'state','entity_id':'sensor.zz'}]");
+             await z.checkRender('trigger_off', /\[{"platform":"state/);
+             await z.setField('trigger_off', '');
+             await z.checkField('trigger_off', null);
+
+             // threshold: value
+             await z.setField('value', '3');
+             await z.checkRender('value', /result:3/);
+             await z.setField('value', '');
+             await z.checkField('value', null);
+             
+             // threshold: hysteresis
+             await z.setField('hysteresis', '3');
+             await z.checkRender('hysteresis', /result:3/);
+             await z.setField('hysteresis', '-3');
+             await z.checkRender('hysteresis', /float must be > 0/, hasErr=true);
+             await z.setField('hysteresis', '');
+             await z.checkField('hysteresis', null);
+             
+             // threshold: minimum
+             await z.setField('minimum', '3');
+             await z.checkRender('minimum', /result:3/);
+             await z.setField('minimum', '');
+             await z.checkField('minimum', null);
+             
+             // threshold: maximum
+             await z.setField('maximum', '3');
+             await z.checkRender('maximum', /result:3/);
+             await z.setField('maximum', '');
+             await z.checkField('maximum', null);
+
+             // delay_on_secs
+             await z.setField('delay_on_secs', '3');
+             await z.checkRender('delay_on_secs', /result:3/);
+             await z.setField('delay_on_secs', 'a');
+             await z.checkRender('delay_on_secs', /not a float/, hasErr=true);
+             await z.setField('delay_on_secs', '');
+             await z.checkField('delay_on_secs', null);
+
+             // early_start
+             await z.setField('early_start', 'off');
+             await z.checkRender('early_start', /result:false/);
+             await z.setField('early_start', '');
+             await z.checkField('early_start', null);
+
+             // manual_on
+             await z.setField('manual_on', 'off');
+             await z.checkRender('manual_on', /result:false/);
+             await z.setField('manual_on', '');
+             await z.checkField('manual_on', null);
+
+             // manual_off
+             await z.setField('manual_off', 'off');
+             await z.checkRender('manual_off', /result:false/);
+             await z.setField('manual_off', '');
+             await z.checkField('manual_off', null);
+
+             // message
+             await z.setField('message', 'yay');
+             await z.checkRender('message', /result:"yay"/);
+             await z.setField('message', '{{"a"+"b"}}');
+             await z.checkRender('message', /result:"ab"/);
+             await z.setField('message', '');
+             await z.checkField('message', null);
+
+             // done_message
+             await z.setField('done_message', 'yay');
+             await z.checkRender('done_message', /result:"yay"/);
+             await z.setField('done_message', '{{"a"+"b"}}');
+             await z.checkRender('done_message', /result:"ab"/);
+             await z.setField('done_message', '');
+             await z.checkField('done_message', null);
+
+             // reminder_message
+             await z.setField('reminder_message', 'yay');
+             await z.checkRender('reminder_message', /result:"yay"/);
+             await z.setField('reminder_message', '{{"a"+"b"}}');
+             await z.checkRender('reminder_message', /result:"ab"/);
+             await z.setField('reminder_message', '');
+             await z.checkField('reminder_message', null);
+
+             // ack_reminder_message
+             await z.setField('ack_reminder_message', 'yay');
+             await z.checkRender('ack_reminder_message', /result:"yay"/);
+             await z.setField('ack_reminder_message', '{{"a"+"b"}}');
+             await z.checkRender('ack_reminder_message', /result:"ab"/);
+             await z.setField('ack_reminder_message', '');
+             await z.checkField('ack_reminder_message', null);
+
+             // notifier
+             await z.setField('notifier', 'yay');
+             await z.checkRender('notifier', /result \(len=1\):\["yay"\]/);
+             await z.setField('notifier', '{{"a"+"b"}}');
+             await z.checkRender('notifier', /result \(len=1\):\["ab"\]/);
+             await z.setField('notifier', '[a,b]');
+             await z.checkRender('notifier', /result \(len=2\):\["a","b"\]/);
+             await z.setField('notifier', '');
+             await z.checkField('notifier', null);
+             await z.setField('notifier', 'null');
+             await z.checkRender('notifier', /result \(len=0\):\[\]/);
+
+             // summary_notifier
+             await z.setField('summary_notifier', 'yay');
+             await z.checkRender('summary_notifier', /result \(len=1\):\["yay"\]/);
+             await z.setField('summary_notifier', '{{"a"+"b"}}');
+             await z.checkRender('summary_notifier', /result \(len=1\):\["ab"\]/);
+             await z.setField('summary_notifier', '[a,b]');
+             await z.checkRender('summary_notifier', /result \(len=2\):\["a","b"\]/);
+             await z.setField('summary_notifier', '');
+             await z.checkField('summary_notifier', null);
+
+             // done_notifier
+             await z.setField('done_notifier', 'yay');
+             await z.checkRender('done_notifier', /result \(len=1\):\["yay"\]/);
+             await z.setField('done_notifier', '{{"a"+"b"}}');
+             await z.checkRender('done_notifier', /result \(len=1\):\["ab"\]/);
+             await z.setField('done_notifier', '[a,b]');
+             await z.checkRender('done_notifier', /result \(len=2\):\["a","b"\]/);
+             await z.setField('done_notifier', '');
+             await z.checkField('done_notifier', null);
+
+             // title
+             await z.setField('title', 'yay');
+             await z.checkRender('title', /result:"yay"/);
+             await z.setField('title', '{{"a"+"b"}}');
+             await z.checkRender('title', /result:"ab"/);
+             await z.setField('title', '');
+             await z.checkField('title', null);
+
+             // display_msg
+             await z.setField('display_msg', 'yay');
+             await z.checkRender('display_msg', /result:"yay"/);
+             await z.setField('display_msg', '{{"a"+"b"}}');
+             await z.checkRender('display_msg', /result:"ab"/);
+             await z.setField('display_msg', '');
+             await z.checkField('display_msg', null);
+             await z.setField('display_msg', 'null');
+             await z.checkRender('display_msg', /result:null/);
+
+             // target
+             await z.setField('target', 'yay');
+             await z.checkRender('target', /result:"yay"/);
+             await z.setField('target', '{{"a"+"b"}}');
+             await z.checkRender('target', /result:"ab"/);
+             await z.setField('target', '');
+             await z.checkField('target', null);
+
+             // data
+             await z.setField('data', 'yay');
+             await z.checkRender('data', /must be either a dict/, hasErr=true);
+             await z.setField('data', '{a: 3}');
+             await z.checkRender('data', /result:{"a":3}/);
+             await z.setField('data', '{{ {"a": 3} }}');
+             await z.checkRender('data', /result:{"a":3}/);
+             await z.setField('data', '{a: 3, "b": foo, "c": 3}');
+             await z.checkRender('data', /result:{"a":3,"b":"foo","c":3}/);
+             await z.setField('data', '');
+             await z.checkField('data', null);
+
+             // throttle_fires_per_mins
+             await z.setField('throttle_fires_per_mins', '3,4');
+             await z.checkRender('throttle_fires_per_mins', /not a valid/, hasErr=true);
+             await z.setField('throttle_fires_per_mins', '[3,4]');
+             await z.checkRender('throttle_fires_per_mins', /result \(len=2\):\[3,4\]/);
+             await z.setField('throttle_fires_per_mins', '');
+             await z.checkField('throttle_fires_per_mins', null);
+
+             // reminder_frequency_mins
+             await z.setField('reminder_frequency_mins', '3');
+             await z.checkRender('reminder_frequency_mins', /result \(len=1\):\[3\]/);
+             await z.setField('reminder_frequency_mins', '[3,4]');
+             await z.checkRender('reminder_frequency_mins', /result \(len=2\):\[3,4\]/);
+             await z.setField('reminder_frequency_mins', '');
+             await z.checkField('reminder_frequency_mins', null);
+
+             // exception_ignore_regexes
+             await z.setField('exception_ignore_regexes', 'foo');
+             await z.checkRender('exception_ignore_regexes', /result \(len=1\):\["foo"\]/);
+             await z.setField('exception_ignore_regexes', '[foo,"bar"]');
+             await z.checkRender('exception_ignore_regexes', /result \(len=2\):\["foo","bar"\]/);
+             await z.setField('exception_ignore_regexes', '');
+             await z.checkField('exception_ignore_regexes', null);
+
+             // supersede_debounce_secs
+             await z.setField('supersede_debounce_secs', '3');
+             await z.checkRender('supersede_debounce_secs', /result:3/);
+             await z.setField('supersede_debounce_secs', '3,4');
+             await z.checkRender('supersede_debounce_secs', /expected float/, hasErr=true);
+             await z.setField('supersede_debounce_secs', '');
+             await z.checkField('supersede_debounce_secs', null);
+             
+             // priority
+             await z.setField('priority', 'high');
+             await z.checkRender('priority', /result:"high"/);
+             await z.setField('priority', '');
+             await z.checkField('priority', null);
+
+             // icon
+             await z.setField('icon', 'e:f');
+             await z.checkRender('icon', /result:"e:f"/);
+             await z.setField('icon', '');
+             await z.checkField('icon', null);
+
+             // annotate_messages
+             await z.setField('annotate_messages', 'off');
+             await z.checkRender('annotate_messages', /result:false/);
+             await z.setField('annotate_messages', '');
+             await z.checkField('annotate_messages', null);
+
+             // persistent_notifier_grouping
+             await z.setField('persistent_notifier_grouping', 'separate');
+             await z.checkRender('persistent_notifier_grouping', /result:"separate"/);
+             await z.setField('persistent_notifier_grouping', '');
+             await z.checkField('persistent_notifier_grouping', null);
+
+             // ack_reminders_only
+             await z.setField('ack_reminders_only', 'off');
+             await z.checkRender('ack_reminders_only', /result:false/);
+             await z.setField('ack_reminders_only', '');
+             await z.checkField('ack_reminders_only', null);
+
+             // ack_required
+             await z.setField('ack_required', 'off');
+             await z.checkRender('ack_required', /result:false/);
+             await z.setField('ack_required', '');
+             await z.checkField('ack_required', null);
+
+             // supersedes
+             await z.setField('supersedes', '{ domain: d, name: n2 }');
+             await z.checkRender('supersedes', /result \(len=1\):\[{"domain":"d","name":"n2"}\]/);
+             await z.setField('supersedes', '{ "domain":"d","name":"n" }');
+             await z.checkRender('supersedes', /result \(len=1\):\[{"domain":"d","name":"n"}\]/);
+             await z.setField('supersedes', '{domain: d, name: n3}');
+             await z.checkRender('supersedes', /result \(len=1\):\[{"domain":"d","name":"n3"}\]/);
+             await z.setField('supersedes', '[{ "domain":"d","name":"n" },{ "domain":"d","name":"n2" }]');
+             await z.checkRender('supersedes', /result \(len=2\):\[{"domain":"d","name":"n"},{"domain":"d","name":"n2"}\]/);
+             await z.setField('supersedes', '');
+             await z.checkField('supersedes', null);
+             await z.setField('supersedes', 'null');
+             await z.checkRender('supersedes', /result:null/);
+             await z.setField('supersedes', '{{ { "domain": "d", "name": genElem } }}');
+             await z.checkRender('supersedes', /expected a mapping/, hasErr=true);
+
+             //    and if generator is specified, that triggers a reeval
+             await z.setField('generator', 'ff');
+             await sleepMs(150);
+             await z.checkRender('supersedes', /result \(len=1\):\[{"domain":"d","name":"ff"}\]/);
+             await z.setField('generator', 'fg');
+             await sleepMs(150);
+             await z.checkRender('supersedes', /result \(len=1\):\[{"domain":"d","name":"fg"}\]/);
+             await z.setField('supersedes', 'null');
+             await z.checkRender('supersedes', /result:null/);
+             await z.setField('generator', 'fh');
+             await z.checkRender('supersedes', /result:null/);
+             // Resetting generator to empty string seems a bit flaky.
+             //await z.setField('generator', '');
+
+             await z.setField('generator', '[3]');
+             await sleepMs(150);
+             await z.setField('delay_on_secs', '{{ genElem }}');
+             await z.checkRender('delay_on_secs', /result:3/);
+             await z.setField('generator', '[4]');
+             await sleepMs(150);
+             await z.checkRender('delay_on_secs', /result:4/);
+
+             // generator
+             await z.setField('generator', 'ff');
+             await z.checkRender('generator', /len=1\):\["ff"\].*\n.*First element vars/);
+             await z.setField('generator', '[f1,f2]');
+             await z.checkRender('generator', /len=2\):\["f1","f2"\].*\n.*First element vars/);
+             await z.setField('generator', '');
+             await z.checkField('generator', null);
+             await z.setField('generator', '[20, 10');
+             await z.checkRender('generator', /YAML parse error/, hasErr=true);
+             await z.setField('generator', '[20, 10]');
+             await z.checkRender('generator', /len=2\):\[20,10\].*\n.*First element vars/);
+
+             // generator_name
+             await z.setField('generator_name', 'yay');
+             await z.checkRender('generator_name', /result:"yay"/);
+             await z.setField('generator_name', '');
+             await z.checkField('generator_name', null);
+             z.ao.remove();
+         }
+         async function doTestCreate() {
+             // Create new alert
+             let z = await initTest('alert2-create', { entInfo: null });
+             await sleepMs(10); // seems to help dom get itself sorted out
+
+             // Update with empty fields fails
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.updateB'));
+             z.checkErr(/no alert uiId/);
+             uiCfg = getInitUiCfg();
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg)
+             // Delete with empty fields fails
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.deleteB'));
+             z.checkErr(/no alert uiId/);
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg)
+
+             
+             // Create fails - missing fields
+             await z.setField('domain', 'd1');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.createB'));
+             z.checkErr(/required key.*domain/);
+
+             // So does validate
+             await z.setField('name', 'n1');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.validateB'));
+             z.checkErr(/Must specify either/);
+             
+             // Complete fields, validate succeeds
+             await z.setField('condition', 'off');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.validateB'));
+             z.checkErr(null);
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg)
+             
+             // So does create
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.createB'));
+             z.checkErr(null);
+             uiCfg = getInitUiCfg();
+             uiCfg.nextAlertUiId = 2;
+             uiCfg.alertInfos = [ { uiId: 1, cfg: {domain: 'd1', name: 'n1', condition: 'off' }} ];
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg)
+
+             // duplicate create should fail
+             await z.setField('condition', 'on');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.createB'));
+             z.checkErr(/alert already exists/);
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg)
+
+             // Update
+             await z.setField('condition', 'false');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.updateB'));
+             z.checkErr(null);
+             uiCfg.alertInfos[0].cfg.condition = 'false';
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg)
+
+             // Update can change alert
+             //await z.setField('condition', 'false');
+             await z.setField('name', 'n2');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.updateB'));
+             z.checkErr(null);
+             uiCfg.alertInfos = [ { uiId: 1, cfg: {domain: 'd1', name: 'n2', condition: 'false' }} ];
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg)
+             //await z.setField('name', 'n1');
+             
+             // Delete succeeds
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.deleteB'));
+             z.checkErr(null);
+             uiCfg.alertInfos = [];
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg)
+
+             // Delete again should fail
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.deleteB'));
+             z.checkErr(/does not exist/);
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg)
+
+             // Let's check generator updating
+             await z.setField('name', '{{genElem}}');
+             await z.checkRender('name', /result:""/);
+             await z.setField('generator', 'f2');
+             await sleepMs(100); // extra sleep needed for some reason ;(
+             await z.checkRender('name', /result:"f2"/);
+             await z.setField('generator', '');
+             await z.checkRender('name', /result:""/);
+
+             // Create a generator
+             await z.setField('generator', 'f3');
+             await z.setField('generator_name', 'g1');
+             await z.setField('name', '{{genElem}}');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.createB'));
+             z.checkErr(null);
+             uiCfg.nextAlertUiId = 3;
+             uiCfg.alertInfos = [{ uiId: 2,
+                                   cfg: { domain: 'd1', name: '{{genElem}}', condition: 'false', generator_name:'g1', generator: 'f3' }}];
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg)
+
+             // Create a simple alert
+             await z.setField('generator', '');
+             await z.setField('generator_name', '');
+             await z.setField('name', 'n2');
+             await z.setField('delay_on_secs', '3');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.createB'));
+             z.checkErr(null);
+             uiCfg.nextAlertUiId = 4;
+             uiCfg.alertInfos = [{ uiId: 2,
+                                   cfg: { domain: 'd1', name: '{{genElem}}', condition: 'false', generator_name:'g1', generator: 'f3' }},
+                                 { uiId: 3,
+                                   cfg: { domain: 'd1', name: 'n2', condition: 'false', delay_on_secs: '3' }},
+             ];
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+
+             // Now let's reopen the create dialog as if editing existing alert
+             z.ao.remove();
+             z = await initTest('alert2-create', {entInfo: { 'uiId': 3 }});
+             await sleepMs(50); // extra sleep needed for some reason ;(
+             await z.checkField('domain', 'd1');
+             await z.checkRender('domain', 'result:"d1"');
+             await z.checkField('name', 'n2');
+             await z.checkField('delay_on_secs', '3');
+
+             // Try updating it
+             await z.setField('delay_on_secs', '4');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.updateB'));
+             z.checkErr(null);
+             uiCfg.alertInfos = [{ uiId: 2,
+                                   cfg: { domain: 'd1', name: '{{genElem}}', condition: 'false', generator_name:'g1', generator: 'f3' }},
+                                 { uiId: 3,
+                                   cfg: { domain: 'd1', name: 'n2', condition: 'false', delay_on_secs: '4' }},
+             ];
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+
+             // Now reopen dialog of generator alert
+             z.ao.remove();
+             z = await initTest('alert2-create', {entInfo: { uiId: 2 }});
+             await sleepMs(100); // extra sleep needed for some reason ;(
+             await z.checkField('domain', 'd1');
+             await z.checkField('name', '{{genElem}}');
+             await sleepMs(100); // extra sleep needed for some reason ;(
+             await z.checkRender('name', 'result:"f3"');
+             await z.checkField('delay_on_secs', null);
+             
+             // Try updating it
+             await z.setField('name', '{{genElem}}z');
+             await z.checkRender('name', 'result:"f3z"');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.updateB'));
+             z.checkErr(null);
+             uiCfg.alertInfos = [{ uiId: 2,
+                                   cfg: { domain: 'd1', name: '{{genElem}}z', condition: 'false', generator_name:'g1', generator: 'f3' }},
+                                 { uiId: 3,
+                                   cfg: { domain: 'd1', name: 'n2', condition: 'false', delay_on_secs: '4' }},
+             ];
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+
+             // Delete succeeds
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.deleteB'));
+             z.checkErr(null);
+             uiCfg.alertInfos = [{ uiId: 3,
+                                   cfg: { domain: 'd1', name: 'n2', condition: 'false', delay_on_secs: '4' }},
+             ];
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+             
+             z.ao.remove();
+         }
+         async function doTestAlertManager() {
+             let z = await initTest('alert2-manager');
+             await sleepMs(10); // seems to help dom get itself sorted out
+
+             // Check when there are no alerts in existence
+             jasserteq((await waitSearch(z)).results.length, 0);
+             let rs = z.ao.shadowRoot.querySelectorAll('div.results div');
+             jasserteq(rs.length, 0);
+             z.ao.remove();
+
+             // Now create a few alerts
+             z = await initTest('alert2-create', { entInfo: null });
+             await sleepMs(10); // seems to help dom get itself sorted out
+             await z.setField('domain', 'd1');
+             await z.setField('name', 'n1');
+             await z.setField('condition', 'off');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.createB'));
+             z.checkErr(null);
+             let uiCfg = getInitUiCfg();
+             uiCfg.nextAlertUiId = 2;
+             uiCfg.alertInfos = [ { uiId: 1, cfg: {domain: 'd1', name: 'n1', condition: 'off' }} ];
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+             await z.setField('name', 'n3');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.createB'));
+             z.checkErr(null);
+             await z.setField('name', 'n2');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.createB'));
+             z.checkErr(null);
+             await z.setField('domain', 'd0');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.createB'));
+             z.checkErr(null);
+             uiCfg.nextAlertUiId = 5;
+             uiCfg.alertInfos = [
+                 { uiId: 1, cfg: {domain: 'd1', name: 'n1', condition: 'off' }},
+                 { uiId: 2, cfg: {domain: 'd1', name: 'n3', condition: 'off' }},
+                 { uiId: 3, cfg: {domain: 'd1', name: 'n2', condition: 'off' }},
+                 { uiId: 4, cfg: {domain: 'd0', name: 'n2', condition: 'off' }},
+             ];
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+             await z.setField('name', 'n5');
+             await z.setField('generator', 'n4');
+             await z.setField('generator_name', 'g1');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.createB'));
+             z.checkErr(null);
+             uiCfg.nextAlertUiId = 6;
+             uiCfg.alertInfos = [
+                 { uiId: 1, cfg: {domain: 'd1', name: 'n1', condition: 'off' }},
+                 { uiId: 2, cfg: {domain: 'd1', name: 'n3', condition: 'off' }},
+                 { uiId: 3, cfg: {domain: 'd1', name: 'n2', condition: 'off' }},
+                 { uiId: 4, cfg: {domain: 'd0', name: 'n2', condition: 'off' }},
+                 { uiId: 5, cfg: { domain: 'd0', name: 'n5', condition: 'off', generator_name:'g1',generator:'n4' }},
+             ];
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+             z.ao.remove();
+             
+             z = await initTest('alert2-manager');
+             z.firstHass.states['sensor.alert2generator_g1'] = { attributes: { generated_ids: ['abc', 'def' ] } };
+             await sleepMs(100);
+             let srez = (await waitSearch(z)).results;
+             jasserteq(srez.length, 5);
+             rs = z.ao.shadowRoot.querySelectorAll('div.results > div.anent');
+             jasserteq(rs.length, 5);
+             jasserteq(rs[0].textContent, 'sensor.alert2generator_g1');
+             jasserteq(rs[1].textContent, 'alert2.d0_n2');
+             jasserteq(rs[2].textContent, 'alert2.d1_n1');
+             jasserteq(rs[3].textContent, 'alert2.d1_n2');
+             jasserteq(rs[4].textContent, 'alert2.d1_n3');
+
+             let dets = z.ao.shadowRoot.querySelector('div.results > details');
+             jasserteq(dets.querySelector('summary').textContent, '2 entities');
+             let detEnts = dets.querySelectorAll('div');
+             jasserteq(detEnts.length, 2);
+             jasserteq(detEnts[0].textContent, 'abc');
+             jasserteq(detEnts[1].textContent, 'def');
+             
+             // Type a search term
+             let txtf = z.ao.shadowRoot.querySelector('ha-input');
+             jassert(txtf);
+             jFireEvent(txtf, 'input', { value: 'z' });
+             //txtf.value = 'z';
+             await sleepMs(100);
+             jasserteq((await waitSearch(z)).results.length, 0);
+             rs = z.ao.shadowRoot.querySelectorAll('div.results > div.anent');
+             jasserteq(rs.length, 0);
+
+             jFireEvent(txtf, 'input', { value: 'n' });
+             await sleepMs(100);
+             jasserteq((await waitSearch(z)).results.length, 5);
+             rs = z.ao.shadowRoot.querySelectorAll('div.results > div.anent');
+             jasserteq(rs.length, 5);
+
+             jFireEvent(txtf, 'input', { value: 'n1' });
+             await sleepMs(100);
+             jasserteq((await waitSearch(z)).results.length, 1);
+             rs = z.ao.shadowRoot.querySelectorAll('div.results > div.anent');
+             jasserteq(rs.length, 1);
+             jassertObjeq(z.ao.getSearchStatus().rez, { results: [ { uiId: 1, id: 'alert2.d1_n1', domain: 'd1', name: 'n1' }]});
+             
+             jFireEvent(txtf, 'input', { value: 'g1' });
+             await sleepMs(100);
+             jasserteq((await waitSearch(z)).results.length, 1);
+             rs = z.ao.shadowRoot.querySelectorAll('div.results > div.anent');
+             jasserteq(rs.length, 1);
+             jassertObjeq(z.ao.getSearchStatus().rez, { results: [ { uiId: 5, id: 'sensor.alert2generator_g1', domain: 'alert2generator', name: 'g1' }]});
+
+             z.ao.remove();
+         }
+
+         async function doTestAlertManager2() {
+             // Now reload alerts, creating a YAML one that conflicts with a UI one
+             let uiCfg = getInitUiCfg();
+             uiCfg.nextAlertUiId = 3;
+             uiCfg.alertInfos = [
+                 {uiId:1, cfg:{ domain: 'd1', name: 'n1', condition: 'no' }},
+                 {uiId:2, cfg:{ domain: 'd1', name: 'n2', condition: 'off' }}
+             ];
+             let tobj = await callApi('POST', 'alert2test/tcheck',
+                                      { stage:'reset', yaml: { alerts: [ { domain: 'd1', name: 'n1', condition: 'off' },
+                                      ] },
+                                        uiCfg: uiCfg});
+             jassertObjeq(tobj, {});
+
+             let z = await initTest('alert2-manager');
+             await sleepMs(10); // seems to help dom get itself sorted out
+
+             // Dup alert shows as failed to load
+             jasserteq((await waitSearch(z)).results.length, 2);
+             rs = z.ao.shadowRoot.querySelectorAll('div.results > div.anent > span.loadFailure');
+             jasserteq(rs.length, 1);
+             jassertObjeq(z.ao.getSearchStatus().rez, { results: [ { uiId:1, id: 'alert2.d1_n1', domain: 'd1', name: 'n1', failedToLoad: true },
+                                                                   { uiId:2, id: 'alert2.d1_n2', domain: 'd1', name: 'n2' },
+             ]});
+             z.ao.remove();
+
+             // Now delete the UI duplicate alert
+             z = await initTest('alert2-create', { entInfo: { uiId: 1 } } );
+             await sleepMs(10); // seems to help dom get itself sorted out
+             await z.setField('domain', 'd1');
+             await z.setField('name', 'n1');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.deleteB'));
+             z.checkErr(null);
+             uiCfg.alertInfos = [
+                 {uiId:2, cfg:{ domain: 'd1', name: 'n2', condition: 'off' }}
+             ];
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+             z.ao.remove();
+
+             // And should just see the n2 alert
+             z = await initTest('alert2-manager');
+             await sleepMs(10); // seems to help dom get itself sorted out
+             jasserteq((await waitSearch(z)).results.length, 1);
+             rs = z.ao.shadowRoot.querySelectorAll('div.results > div.anent');
+             jasserteq(rs.length, 1);
+             jasserteq(rs[0].textContent, 'alert2.d1_n2');
+             z.ao.remove();
+         }
+
+         async function doTestData() {
+             // Now reload alerts, creating a YAML one that conflicts with a UI one
+             let uiCfg = getInitUiCfg();
+             uiCfg.defaults.data = "{{ {'b':2} }}";
+             let tobj = await callApi('POST', 'alert2test/tcheck',
+                                      { stage:'reset', yaml: { defaults: { data: "{{ { 'a': 1 } }}" } },
+                                        uiCfg: uiCfg    });
+             jassertObjeq(tobj, {});
+             let z = null;
+
+             z = await initTest('alert2-create', { entInfo: null });
+             await sleepMs(10); // seems to help dom get itself sorted out
+             z.checkDefault('data', /Default if empty: \["{{ { 'a': 1 } }}","{{ {'b':2} }}"\]/);
+
+             await z.setField('data', 'c: 3');
+             //await sleepMs(100); // extra sleep needed for some reason ;(
+             await z.checkRender('data', 'result:{"a":1,"b":2,"c":3}');
+             await z.setField('data', '{{ {"c":3} }}');
+             //await sleepMs(100); // extra sleep needed for some reason ;(
+             await z.checkRender('data', 'result:{"a":1,"b":2,"c":3}');
+
+             z.ao.remove();
+         }
+         
+         async function doTest5() {
+             let tobj = await callApi('POST', 'alert2test/tcheck',
+                                      { stage:'reset', yaml: { defaults: { reminder_frequency_mins: 3,
+                                                                           annotate_messages: false,
+                                      },
+                                                               notifier_startup_grace_secs: 3,
+                                                               defer_startup_notifications: ['foo']
+                                      } } );
+             jassertObjeq(tobj, {});
+
+             z = await initTest('alert2-edit-defaults');
+             await sleepMs(11);
+             z.setField('annotate_messages', 'yes');
+             z.setField('notifier', 'happy');
+             z.setField('notifier_startup_grace_secs', '5');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button'));
+             z.ao.remove();
+
+             // now let's test edit defaults
+             z = await initTest('alert2-edit-defaults');
+             await sleepMs(100);
+             z.checkDefault('notifier', /"persistent_notification"/);
+             z.checkDefault('summary_notifier', /empty: false/);
+             z.checkDefault('done_notifier', /empty: true/);
+             z.checkDefault('annotate_messages', /empty: false/);
+             z.checkDefault('persistent_notifier_grouping', /empty: "separate"/);
+             z.checkDefault('reminder_frequency_mins', /empty: 3/);
+             z.checkDefault('throttle_fires_per_mins', /empty: ""/);
+             z.checkDefault('supersede_debounce_secs', /empty: 0.5/);
+             z.checkDefault('skip_internal_errors', /empty: false/);
+             z.checkDefault('notifier_startup_grace_secs', /empty: 3/);
+             z.checkDefault('defer_startup_notifications', /empty: \["foo"\]/);
+             z.checkDefault('icon', /empty: "mdi:alert"/);
+             z.checkDefault('data', null);
+
+             z.ao.remove();
+             // now let's test create alert
+             z = await initTest('alert2-create', { entInfo: null });
+             await sleepMs(100);
+             z.checkDefault('domain', null);
+             z.checkDefault('name', null);
+             z.checkDefault('friendly_name', null);
+             z.checkDefault('condition', null);
+             z.checkDefault('condition_on', null);
+             z.checkDefault('condition_off', null);
+             z.checkDefault('actions_on', null);
+             z.checkDefault('trigger', null);
+             z.checkDefault('trigger_on', null);
+             z.checkDefault('trigger_off', null);
+             z.checkDefault('value', null);
+             z.checkDefault('hysteresis', null);
+             z.checkDefault('minimum', null);
+             z.checkDefault('maximum', null);
+             z.checkDefault('delay_on_secs', null);
+             z.checkDefault('early_start', null);
+             z.checkDefault('manual_off', null);
+             z.checkDefault('manual_on', null);
+             z.checkDefault('message', null);
+             z.checkDefault('done_message', null);
+             z.checkDefault('reminder_message', null);
+             z.checkDefault('ack_reminder_message', null);
+             z.checkDefault('notifier', /empty: "happy"/);
+             z.checkDefault('summary_notifier', /empty: false/);
+             z.checkDefault('done_notifier', /empty: true/);
+             z.checkDefault('title', null);
+             z.checkDefault('display_msg', null);
+             z.checkDefault('target', null);
+             z.checkDefault('data', null);
+             
+             z.checkDefault('throttle_fires_per_mins', /empty: ""/);
+             z.checkDefault('reminder_frequency_mins', /empty: 3/);
+             z.checkDefault('supersede_debounce_secs', /empty: 0.5/);
+             z.checkDefault('annotate_messages', /empty: "yes"/);
+             z.checkDefault('persistent_notifier_grouping', /empty: "separate"/);
+             z.checkDefault('ack_required', /empty: false/);
+             z.checkDefault('ack_reminders_only', /empty: false/);
+
+             z.checkDefault('generator', null);
+             z.checkDefault('generator_name', null);
+             z.ao.remove();
+
+             // Now set data default
+             z = await initTest('alert2-edit-defaults');
+             await sleepMs(11);
+             z.setField('data', '{"a":13}');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button'));
+             z.ao.remove();
+
+             // now let's test create alert
+             z = await initTest('alert2-create', { entInfo: null });
+             await sleepMs(100);
+             z.checkDefault('data', /empty: {"a":13}/);
+             z.ao.remove();
+         }
+         async function doTest6() {
+             let yamlCfg = { alerts: [
+                 { domain: 'dd', name: 'nn', condition: 'off' },
+                 { domain: 'dd', name: 'nn2', condition: 'off', display_msg: '{{ states("sensor.a") }}' }
+             ] };
+             let tobj = await callApi('POST', 'alert2test/tcheck', { stage:'reset', yaml: yamlCfg });
+             jassertObjeq(tobj, {});
+             tobj = await callApi('POST', 'alert2test/tcheck',
+                                  { stage:'setEnt', entity_id: 'sensor.a', state: 'yippy'});
+             jassertObjeq(tobj, {});
+             
+             z = await initTest('alert2-overview');
+             const handle_msg = function(ev) {
+                 const msg = JSON.parse(ev.data);
+                 console.log('yay got ws msg', msg);
+             }
+             z.ws.addEventListener('message', handle_msg);
+
+             let recent = new Date();
+             recent.setSeconds(recent.getSeconds() - 10);
+             let recent2 = new Date();
+             recent2.setSeconds(recent2.getSeconds() - 12);
+             z.ao.hass = {
+                 states: { 'binary_sensor.alert2_ha_startup_done' : { attributes: { manifest_version: 'v.a.b.c' } },
+                           'alert2.dd_nn': { state: 'on', attributes: { last_on_time: recent.toISOString(),
+                                                                        fires_since_last_notify: 0,
+                                                                        has_display_msg: false,
+                                                                        domain: 'dd', name: 'nn',
+                           }, entity_id: 'alert2.dd_nn' },
+                           'alert2.dd_nn2': { state: 'on', attributes: { last_on_time: recent2.toISOString(),
+                                                                         fires_since_last_notify: 0,
+                                                                         has_display_msg: true,
+                                                                        domain: 'dd', name: 'nn2',
+                           }, entity_id: 'alert2.dd_nn2' },
+                 },
+                 callApi: z.firstHass.callApi,
+                 callWs: z.firstHass.callWs,
+                 connection: z.firstHass.connection,
+             };
+             await sleepMs(2000); // for subscription to happen, and actually for refresh to happen
+             console.log('ding');
+             //let ac = z.ao.shadowRoot.querySelector('ha-card');
+             //jassert(ac);
+             let rows = z.ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             jasserteq(rows.length, 2);
+             jassert(rows[0].shadowRoot.textContent.match(/alert2.dd_nn/));
+             jassert(rows[1].shadowRoot.textContent.match(/alert2.dd_nn2/));
+
+             console.log(rows);
+             let ad;
+             ad = rows[0].shadowRoot.querySelector('div.dispMsg');
+             jassert(!ad);
+             ad = rows[1].shadowRoot.querySelector('div.dispMsg');
+             jassert(ad);
+             console.log(ad.textContent);
+             jassert(ad.textContent.match(/yippy/));
+
+             tobj = await callApi('POST', 'alert2test/tcheck',
+                                  { stage:'setEnt', entity_id: 'sensor.a', state: 'yi<b>pp</b>y2'});
+             jassertObjeq(tobj, {});
+             await sleepMs(100);
+             ad = rows[0].shadowRoot.querySelector('div.dispMsg');
+             jassert(!ad);
+             ad = rows[1].shadowRoot.querySelector('div.dispMsg');
+             jassert(ad);
+             console.log(ad.textContent);
+             jassert(ad.textContent.match(/yi<b>pp<.b>y2/));
+
+             // Test harness doesn't support reload
+             //await z.callWs({ type: "execute_script", sequence: [ { service: 'alert2.reload', data: {}, }], });
+
+             // Check to see if we track display_msg even if reload happens
+             //
+             yamlCfg.alerts[1].display_msg = '{{ states("sensor.b") }}';
+             tobj = await callApi('POST', 'alert2test/tcheck', { stage:'reset', yaml: yamlCfg });
+             jassertObjeq(tobj, {});
+             tobj = await callApi('POST', 'alert2test/tcheck',
+                                  { stage:'setEnt', entity_id: 'sensor.a', state: 'yippy3'});
+             jassertObjeq(tobj, {});
+             await sleepMs(100);
+             ad = rows[0].shadowRoot.querySelector('div.dispMsg');
+             jassert(!ad);
+             ad = rows[1].shadowRoot.querySelector('div.dispMsg');
+             jassert(ad);
+             console.log(ad.textContent);
+             jassert(ad.textContent.match(/unknown/)); // since sensor.b doesn't exist
+             
+             if (0) {
+                 console.log('long sleep............');
+                 while (true) {
+                     //console.log(z.ws.readyState);
+                     await sleepMs(3000);
+                 }
+             }
+
+             z.ao.remove();
+         }
+         async function doTest7() {
+             // Make sure null for notifier and display_msg get saved correctly
+             z = await initTest('alert2-create',{ entInfo: null});
+             await sleepMs(10); // seems to help dom get itself sorted out
+             await z.setField('domain', 'd1');
+             await z.setField('name', 'ny');
+             await z.setField('condition', 'off');
+             await z.setField('notifier', 'null');
+             await z.setField('display_msg', 'null');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.createB'));
+             z.checkErr(null);
+             let uiCfg = getInitUiCfg();
+             uiCfg.nextAlertUiId = 2;
+             uiCfg.alertInfos = [ { uiId: 1, cfg: { domain: 'd1', name: 'ny', condition: 'off', notifier: 'null', display_msg: 'null' }} ];
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+             z.ao.remove();
+         }
+         async function doTest8() {
+             let z = await initTest('alert2-overview');
+             let yamlCfg = { alerts: [
+                 { domain: 'dd', name: 'foo', condition: 'off', display_msg: '{{ states("sensor.foo") }}' },
+                 { domain: 'dd', name: 'bar', condition: 'off', display_msg: '{{ states("sensor.bar") }}' }
+             ] };
+             let tobj = await callApi('POST', 'alert2test/tcheck', { stage:'reset', yaml: yamlCfg });
+             jassertObjeq(tobj, {});
+             tobj = await callApi('POST', 'alert2test/tcheck',
+                                  { stage:'setEnt', entity_id: 'sensor.foo', state: 'sfoo'} );
+             jassertObjeq(tobj, {});
+             tobj = await callApi('POST', 'alert2test/tcheck',
+                                  { stage:'setEnt', entity_id: 'sensor.bar', state: 'sbar'} );
+             jassertObjeq(tobj, {});
+
+             let alert2Tools = customElements.get('alert2-tools');
+             let hass = { states: {
+                 'alert2.dd_foo': { attributes: { domain: 'dd', name: 'foo', has_display_msg: false } },
+                 'alert2.dd_bar': { attributes: { domain: 'dd', name: 'bar', has_display_msg: true } } },
+                          callApi: z.firstHass.callApi,
+                          callWs: z.firstHass.callWs,
+                          connection: z.firstHass.connection
+             };
+             
+             let dm = new alert2Tools.DisplayValMonitor();
+             dm.updateHass(hass);
+             let cb1Calls = [];
+             let cb1 = (msg, has_msg) => { cb1Calls.push({msg, has_msg}); };
+             let cb2Calls = [];
+             let cb2 = (msg, has_msg) => { cb2Calls.push({msg, has_msg}); };
+
+             dm.addChangeCb('alert2.dd_foo', cb1);
+             tobj = cb1Calls.pop();
+             jassertObjeq(tobj, {msg: null, has_msg: false});
+             jasserteq(cb1Calls.length, 0);
+             jasserteq(cb2Calls.length, 0);
+
+             // Initial result is null, cuz hasn't had time to fetch
+             dm.addChangeCb('alert2.dd_bar', cb2);
+             tobj = cb2Calls.pop();
+             jassertObjeq(tobj, {msg: null, has_msg: true});
+             jasserteq(cb1Calls.length, 0);
+             jasserteq(cb2Calls.length, 0);
+
+             // First fetch of display_msg
+             await sleepMs(100);
+             jasserteq(cb2Calls.length, 1);
+             tobj = cb2Calls.pop();
+             jassertObjeq(tobj, {msg: 'sbar', has_msg: true});
+             jasserteq(cb1Calls.length, 0);
+             jasserteq(cb2Calls.length, 0);
+
+             // Update template val, should update in the monitor
+             tobj = await callApi('POST', 'alert2test/tcheck',
+                                  { stage:'setEnt', entity_id: 'sensor.bar', state: 'sbar2'} );
+             jassertObjeq(tobj, {});
+             await sleepMs(100);
+             jasserteq(cb2Calls.length, 1);
+             tobj = cb2Calls.pop();
+             jassertObjeq(tobj, {msg: 'sbar2', has_msg: true});
+             jasserteq(cb1Calls.length, 0);
+             jasserteq(cb2Calls.length, 0);
+
+             // Reloading config shouldn't change vals
+             // only bar refreshes val cuz foo has has_display_msg set to false
+             tobj = await callApi('POST', 'alert2test/tcheck', { stage:'reset', yaml: yamlCfg });
+             jassertObjeq(tobj, {});
+             await sleepMs(100);
+             jasserteq(cb2Calls.length, 1);
+             tobj = cb2Calls.pop();
+             jassertObjeq(tobj, {msg: 'sbar2', has_msg: true});
+             jasserteq(cb1Calls.length, 0);
+             jasserteq(cb2Calls.length, 0);
+             
+             // set has_display_msg false for bar.
+             hass = { states: {
+                 'alert2.dd_foo': { attributes: { domain: 'dd', name: 'foo', has_display_msg: false } },
+                 'alert2.dd_bar': { attributes: { domain: 'dd', name: 'bar', has_display_msg: false } } },
+                      callApi: z.firstHass.callApi,
+                      callWs: z.firstHass.callWs,
+                      connection: z.firstHass.connection
+             };
+             dm.updateHass(hass);
+             await sleepMs(100);
+             jasserteq(cb1Calls.length, 1);
+             tobj = cb1Calls.pop();
+             jassertObjeq(tobj, {msg: null, has_msg: false});
+             jasserteq(cb1Calls.length, 0);
+             jasserteq(cb2Calls.length, 1);
+             tobj = cb2Calls.pop();
+             jassertObjeq(tobj, {msg: 'sbar2', has_msg: false});
+             jasserteq(cb2Calls.length, 0);
+
+             // now set has_display_msg true for foo.
+             hass = { states: {
+                 'alert2.dd_foo': { attributes: { domain: 'dd', name: 'foo', has_display_msg: true } },
+                 'alert2.dd_bar': { attributes: { domain: 'dd', name: 'bar', has_display_msg: false } } },
+                      callApi: z.firstHass.callApi,
+                      callWs: z.firstHass.callWs,
+                      connection: z.firstHass.connection
+             };
+             dm.updateHass(hass);
+             await sleepMs(100);
+             jasserteq(cb1Calls.length, 2);
+             tobj = cb1Calls.shift();
+             // First cb to convey has_display_msg has changed to true
+             jassertObjeq(tobj, {msg: null, has_msg: true});
+             tobj = cb1Calls.shift();
+             // One cb cuz server sends initial value of sfoo
+             jassertObjeq(tobj, {msg: 'sfoo', has_msg: true});
+             jasserteq(cb1Calls.length, 0);
+             jasserteq(cb2Calls.length, 1);
+             tobj = cb2Calls.pop();
+             jassertObjeq(tobj, {msg: null, has_msg: false});
+             jasserteq(cb2Calls.length, 0);
+
+             // Now switch cb2 from bar to foo
+             dm.removeChangeCb('alert2.dd_bar', cb2);
+             await sleepMs(50);
+             jasserteq(cb1Calls.length, 0);
+             jasserteq(cb2Calls.length, 0);
+             dm.addChangeCb('alert2.dd_foo', cb2);
+             await sleepMs(50);
+             jasserteq(cb1Calls.length, 0);
+             jasserteq(cb2Calls.length, 1);
+             tobj = cb2Calls.shift();
+             jassertObjeq(tobj, {msg: 'sfoo', has_msg: true});
+             jasserteq(cb2Calls.length, 0);
+
+             // update foo should update both cbs
+             tobj = await callApi('POST', 'alert2test/tcheck',
+                                  { stage:'setEnt', entity_id: 'sensor.foo', state: 'sfoo2'} );
+             jassertObjeq(tobj, {});
+             await sleepMs(100);
+             jasserteq(cb1Calls.length, 1);
+             tobj = cb1Calls.shift();
+             jassertObjeq(tobj, {msg: 'sfoo2', has_msg: true});
+             jasserteq(cb2Calls.length, 1);
+             tobj = cb2Calls.shift();
+             jassertObjeq(tobj, {msg: 'sfoo2', has_msg: true});
+
+             z.ao.remove();
+         }
+         async function doTest10() {
+             let z = await initTest('alert2-overview');
+             const supersedeN2 = [{domain:'d',name:'n1'}];
+             const supersedeN3 = [{domain:'d',name:'n1'}];
+             const supersedeN4 = [ { domain: 'd', name: 'n2' },{ domain:'d', name: 'n3'} ];
+
+             // n5 is higher priority so should be above if on
+             await createExperiment(z, [ createState('n1', 1000, 7000, 20000),
+                                      createState('n5', 5000, 7000, 20000, {priority:'medium'}) ],
+                                    ['n5', 'n1']);
+             let tEls = z.ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             let stateBadge = tEls[0].shadowRoot.querySelector('state-badge');
+             jassert(stateBadge.classList.contains('mediumpri'));
+             stateBadge = tEls[1].shadowRoot.querySelector('state-badge');
+             jassert(stateBadge.classList.contains('lowpri'));
+             
+             // n2 supersedes n1 so should be below
+             await createExperiment(z, [ createState('n1', 8000, 7000, 20000),
+                                      createState('n4', 5000, 7000, 20000, {supersedes:supersedeN4}),
+                                      createState('n7', 6000, 7000, 20000),
+                                      createState('n6', 3000, 7000, 20000),
+                                      createState('n2', 4000, 7000, 20000, {supersedes:supersedeN2}) ],
+                                    ['n6', 'n4', 'n2', 'n1', 'n7']);
+             tEls = z.ao.shadowRoot.querySelectorAll('details > hui-alert2-entity-row');
+             jasserteq(tEls.length, 2);
+             
+             // Check spacing when superseded clump is last alert
+             await createExperiment(z, [ createState('n1', 8000, 7000, 20000),
+                                      createState('n4', 5000, 7000, 20000, {supersedes:supersedeN4}),
+                                      createState('n6', 3000, 7000, 20000),
+                                      createState('n2', 4000, 7000, 20000, {supersedes:supersedeN2}) ],
+                                    ['n6', 'n4', 'n2', 'n1']);
+             
+
+             // same with n3, even with "on" time ordering reversed
+             await createExperiment(z, [ createState('n1', 2000, 7000, 20000),
+                                      createState('n3', 1000, 7000, 20000, {supersedes:supersedeN3}) ],
+                                    ['n3', 'n1']);
+             // n2 and n3 don't supersede each other, so should be time ordered.
+             await createExperiment(z, [ createState('n2', 2000, 7000, 20000, {supersedes:supersedeN2}),
+                                      createState('n3', 1000, 7000, 20000, {supersedes:supersedeN3}) ],
+                                    ['n3', 'n2']);
+             await createExperiment(z, [ createState('n2', 1000, 7000, 20000, {supersedes:supersedeN2}),
+                                      createState('n3', 2000, 7000, 20000, {supersedes:supersedeN3}) ],
+                                    ['n2', 'n3']);
+
+             // supersedes works even if separated by one
+             const hrAgoMs5 = 5 * 60 * 60 * 1000;
+             await createExperiment(z, [ createState('n1', 1000, 7000, 20000),
+                                      createState('n2', hrAgoMs5+1, hrAgoMs5, hrAgoMs5, {supersedes:supersedeN2}),
+                                      createState('n4', 2000, 7000, 20000, {supersedes:supersedeN4}) ],
+                                    ['n4', 'n1']);
+             tEls = z.ao.shadowRoot.querySelectorAll('details > hui-alert2-entity-row');
+             jasserteq(tEls.length, 1);
+
+             // Supersedes picks up even off alerts if they're shown. n2 is off
+             await createExperiment(z, [ createState('n1', 2000, 7000, 20000),
+                                      createState('n2', 8000, 7000, 1000, {supersedes:supersedeN2}),
+                                      createState('n4', 1000, 7000, 20000, {supersedes:supersedeN4}) ],
+                                    ['n4', 'n2', 'n1']);
+             tEls = z.ao.shadowRoot.querySelectorAll('details > hui-alert2-entity-row');
+             jasserteq(tEls.length, 2);
+             // Supersedes starts with the on alert, ignores a higher off superseding alert. n4 is off.
+             await createExperiment(z, [ createState('n1', 6000, 7000, 20000),
+                                      createState('n2', 5000, 7000, 20000, {supersedes:supersedeN2}),
+                                      createState('n4', 4000, 3000, 20000, {supersedes:supersedeN4}) ],
+                                    ['n2', 'n1', 'n4']);
+             tEls = z.ao.shadowRoot.querySelectorAll('details > hui-alert2-entity-row');
+             jasserteq(tEls.length, 1);
+             
+             // supersedes doesn't apply to off alerts.  supersedes alert is off.
+             await createExperiment(z, [ createState('n1', 9000, 10000, 20000),
+                                      createState('n2', 8000, 7000, 20000, {supersedes:supersedeN2}) ],
+                                    ['n1', 'n2']);
+             tEls = z.ao.shadowRoot.querySelectorAll('details > hui-alert2-entity-row');
+             jasserteq(tEls.length, 0);
+             // superseded alert is off. it gets picked up
+             await createExperiment(z, [ createState('n1', 8000, 7000, 20000),
+                                      createState('n2', 9000, 10000, 20000, {supersedes:supersedeN2}) ],
+                                    ['n2', 'n1']);
+             tEls = z.ao.shadowRoot.querySelectorAll('details > hui-alert2-entity-row');
+             jasserteq(tEls.length, 1);
+
+             await createExperiment(z, [ createState('n4', 1000, 10000, 20000, {supersedes:supersedeN4}),
+                                      createState('n2', 3000, 10000, 20000, {supersedes:supersedeN2}),
+                                      createState('n1', 2000, 10000, 20000) ],
+                                    ['n4', 'n2', 'n1']);
+             tEls = z.ao.shadowRoot.querySelectorAll('details > hui-alert2-entity-row');
+             jasserteq(tEls.length, 2);
+
+             // n2 and n3 superseded n1.  n2 and n3 should be time ordered
+             await createExperiment(z, [ createState('n1', 1000, 10000, 20000),
+                                      createState('n2', 3000, 10000, 20000, {supersedes:supersedeN2}),
+                                      createState('n3', 2000, 10000, 20000, {supersedes:supersedeN3}) ],
+                                    ['n3', 'n2', 'n1']);
+             await createExperiment(z, [ createState('n1', 1000, 10000, 20000),
+                                      createState('n2', 2000, 10000, 20000, {supersedes:supersedeN2}),
+                                      createState('n3', 3000, 10000, 20000, {supersedes:supersedeN3}) ],
+                                    ['n2', 'n3', 'n1']);
+
+             // Supersedes applies to ack'd alerts
+             await createExperiment(z, [ createState('n1', 3000, 7000, 20000),
+                                      createState('n2', 5000, 7000, 4000, {supersedes:supersedeN2}) ],
+                                    ['n2', 'n1'], nBelow=2);
+             tEls = z.ao.shadowRoot.querySelectorAll('details > hui-alert2-entity-row');
+             jasserteq(tEls.length, 1);
+             await createExperiment(z, [ createState('n1', 3000, 7000, 2000),
+                                      createState('n2', 5000, 7000, 20000, {supersedes:supersedeN2}) ],
+                                    ['n2', 'n1'], nBelow=0);
+             tEls = z.ao.shadowRoot.querySelectorAll('details > hui-alert2-entity-row');
+             jasserteq(tEls.length, 1);
+             await createExperiment(z, [ createState('n1', 3000, 7000, 20000),
+                                      createState('n2', 5000, 7000, 20000, {supersedes:supersedeN2}) ],
+                                    ['n2', 'n1']);
+             tEls = z.ao.shadowRoot.querySelectorAll('details > hui-alert2-entity-row');
+             jasserteq(tEls.length, 1);
+             
+             z.ao.remove();
+         }
+         async function doTestConfig() {
+             let z = await initTest('alert2-overview', {}, null);
+             const supersedeN4 = [ { domain: 'd', name: 'n1' } ];
+             let tEls;
+             const hrAgoMs = 60 * 60 * 1000;
+             
+             // n2 off and unacked, but outside interval
+             await createExperiment(z, [ createState('n1', 4*hrAgoMs + 12000, 4*hrAgoMs - 10000, 4*hrAgoMs + 20000),
+                                         createState('n2', 4*hrAgoMs + 12000, 4*hrAgoMs + 11000, 4*hrAgoMs + 20000) ],
+                                    ['n1']);
+             jasserteq(z.ao.shadowRoot.querySelector('h1').textContent.trim(), 'Alerts');
+
+             z.ao.remove();
+             z = await initTest('alert2-overview', {}, { title: 'yay', include_old_unacked: 'true' });
+             // n2 off and unacked, but outside interval but config set to include
+             await createExperiment(z, [ createState('n1', 4*hrAgoMs + 12000, 4*hrAgoMs - 10000, 4*hrAgoMs + 20000),
+                                         createState('n2', 4*hrAgoMs + 12000, 4*hrAgoMs + 11000, 4*hrAgoMs + 20000),
+                                         createState('n3', null, null, null) ],
+                                    ['n1', 'n2']);
+             jasserteq(z.ao.shadowRoot.querySelector('h1').textContent.trim(), 'yay');
+
+             z.ao.remove();
+             z = await initTest('alert2-overview', {}, { include_old_unacked: 'true', filter_entity_id: '*n2' });
+             // Try filter
+             await createExperiment(z, [ createState('n1', 4*hrAgoMs + 12000, 4*hrAgoMs - 10000, 4*hrAgoMs + 20000),
+                                         createState('n2', 4*hrAgoMs + 12000, 4*hrAgoMs + 11000, 4*hrAgoMs + 20000),
+                                         createState('n3', null, null, null) ],
+                                    ['n2']);
+
+             z.ao.remove();
+             z = await initTest('alert2-overview', {}, { include_old_unacked: 'true', filter_entity_id: '/n1/' });
+             // Try filter with regex
+             await createExperiment(z, [ createState('n1', 4*hrAgoMs + 12000, 4*hrAgoMs - 10000, 4*hrAgoMs + 20000),
+                                         createState('n2', 4*hrAgoMs + 12000, 4*hrAgoMs + 11000, 4*hrAgoMs + 20000),
+                                         createState('n3', null, null, null) ],
+                                    ['n1']);
+             z.ao.remove();
+             
+             // Check option to hide superseded alerts
+             //
+             z = await initTest('alert2-overview', {}, { });
+             //tobj = await callApi('POST', 'alert2test/tcheck', { stage:'reset', yaml: yamlCfg });
+             //jassertObjeq(tobj, {});
+             await createExperiment(z, [ createState('n1', 2000, 3000, 10000),
+                                         createState('n4', 1500, 3000, 10000, {supersedes:supersedeN4}) ],
+                                    ['n4', 'n1']);
+             tEls = z.ao.shadowRoot.querySelectorAll('details > hui-alert2-entity-row');
+             jasserteq(tEls.length, 1);
+             z.ao.remove();
+             
+             z = await initTest('alert2-overview', {}, { hide_superseded: 'true' });
+             //tobj = await callApi('POST', 'alert2test/tcheck', { stage:'reset', yaml: yamlCfg });
+             //jassertObjeq(tobj, {});
+             await createExperiment(z, [ createState('n1', 2000, 3000, 10000),
+                                         createState('n4', 1500, 3000, 10000, {supersedes:supersedeN4}) ],
+                                    ['n4' ]);
+             z.ao.remove();
+
+
+             // what about old unacked that was superseded
+             z.ao.remove();
+             z = await initTest('alert2-overview', {}, { include_old_unacked: 'true' });
+             //tobj = await callApi('POST', 'alert2test/tcheck', { stage:'reset', yaml: yamlCfg });
+             //jassertObjeq(tobj, {});
+             await createExperiment(z, [ createState('n1', 4*hrAgoMs + 12000, 4*hrAgoMs - 10000, 4*hrAgoMs + 20000),
+                                         createState('n4', 3000, 5000, 20000, {supersedes:supersedeN4}) ],
+                                    ['n4', 'n1']);
+             tEls = z.ao.shadowRoot.querySelectorAll('details > hui-alert2-entity-row');
+             jasserteq(tEls.length, 1);
+             z.ao.remove();
+             // what about old unacked that supersedes.  No collapsing happens
+             z = await initTest('alert2-overview', {}, { include_old_unacked: 'true' });
+             //tobj = await callApi('POST', 'alert2test/tcheck', { stage:'reset', yaml: yamlCfg });
+             //jassertObjeq(tobj, {});
+             await createExperiment(z, [ createState('n4', 4*hrAgoMs + 12000, 4*hrAgoMs - 10000, 4*hrAgoMs + 20000, supersedes=supersedeN4),
+                                         createState('n1', 3000, 5000, 20000) ],
+                                    ['n1', 'n4']);
+             tEls = z.ao.shadowRoot.querySelectorAll('details > hui-alert2-entity-row');
+             jasserteq(tEls.length, 0);
+             z.ao.remove();
+         }
+         async function doTestColorConfig() {
+             let tEls;
+             let z;
+             let stateBadge;
+             const hrAgoMs = 60 * 60 * 1000;
+             
+             // test low priority color
+             z = await initTest('alert2-overview', {}, {low_priority_color: 'rgb(1, 1, 1)'});
+             await createExperiment(z, [ createState('n1', 1000, 7000, 20000),
+                                         createState('n2', 3000, 7000, 20000, {priority: 'medium'}),
+                                         createState('n3', 5000, 7000, 2000), // acked
+             ], ['n2', 'n1', 'n3'], nBelow=1);
+             tEls = z.ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             stateBadge = tEls[1].shadowRoot.querySelector('state-badge');
+             jasserteq(getComputedStyle(stateBadge).color, 'rgb(1, 1, 1)');
+             // Low pri color should not apply to medium pri alert
+             stateBadge = tEls[0].shadowRoot.querySelector('state-badge');
+             jassert(getComputedStyle(stateBadge).color != 'rgb(1, 1, 1)');
+             // low pri should apply to acked low pri alert
+             stateBadge = tEls[1].shadowRoot.querySelector('state-badge');
+             jasserteq(getComputedStyle(stateBadge).color, 'rgb(1, 1, 1)');
+             z.ao.remove();
+
+             // test medium/high priority color
+             z = await initTest('alert2-overview', {}, {medium_priority_color: 'rgb(1, 1, 2)',
+                                                        high_priority_color: 'rgb(1, 1, 3)',
+                                                        off_color: 'rgb(1,1,4)',
+             });
+             await createExperiment(z, [ createState('n1', 1000, 7000, 20000, {priority: 'high'}),
+                                         createState('n2', 3000, 7000, 20000, {priority: 'medium'}),
+                                         createState('n2a', 3200, 7000, 20000, {priority: 'medium', ack_required: true}),
+                                         createState('n3', 5000, 7000, 2000, {priority: 'medium'}), // acked
+                                         createState('n3a', 5200, 7000, 2000, {priority: 'medium', ack_required: true}), // acked
+                                         createState('n4', 8000, 7200, 20000, {priority: 'medium'}), // off
+                                         createState('n4a', 8000, 7300, 20000, {priority: 'medium', ack_required: true}), // off
+                                         createState('n5', 8000, 7000, 2000, {priority: 'medium'}), // off & acked
+                                         createState('n5a', 8000, 7400, 2000, {priority: 'medium', ack_required: true}), // off & acked
+                                         createState('n6', 6* hrAgoMs, 5* hrAgoMs, 20* hrAgoMs, {priority: 'medium'}),
+                                         createState('n6a', 6* hrAgoMs, 5* hrAgoMs, 20* hrAgoMs, {priority: 'medium', ack_required: true}),
+             ], ['n1', 'n2', 'n2a', 'n4', 'n4a', 'n6a', 'n3', 'n3a', 'n5', 'n5a'], nBelow=4);
+             tEls = z.ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             let tt = function(tEls, anum, acol) {
+                 stateBadge = tEls[anum].shadowRoot.querySelector('state-badge');
+                 jasserteq(getComputedStyle(stateBadge).color, acol);
+             }
+             tt(tEls, 0, 'rgb(1, 1, 3)'); // n1
+             tt(tEls, 1, 'rgb(1, 1, 2)'); // n2
+             tt(tEls, 2, 'rgb(1, 1, 2)'); // n2a
+             tt(tEls, 3, 'rgb(1, 1, 4)'); // n4
+             tt(tEls, 4, 'rgb(1, 1, 2)'); // n4a
+             tt(tEls, 5, 'rgb(1, 1, 2)'); // n6a
+             tt(tEls, 6, 'rgb(1, 1, 2)'); // n3
+             tt(tEls, 7, 'rgb(1, 1, 2)'); // n3a
+             tt(tEls, 8, 'rgb(1, 1, 4)'); // n5
+             tt(tEls, 9, 'rgb(1, 1, 4)'); // n5a
+             z.ao.remove();
+
+             z = await initTest('alert2-overview', {}, {medium_priority_color: 'rgb(1, 1, 4)',
+                                                        off_color: 'rgb(1, 1, 5)'      });
+             await createExperiment(z, [ createState('n1', 1000, 7000, 20000, {priority: 'medium'}),
+                                         createState('n2', 8000, 7000, 20000, {priority: 'medium'}), // off
+                                         createState('n3', 5000, 7000, 2000, {priority: 'medium'}), // acked
+                                         createState('n4', 8000, 7000, 2000, {priority: 'medium'}), // off & acked
+             ], ['n1', 'n2', 'n3','n4'], nBelow=2);
+             tEls = z.ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             stateBadge = tEls[0].shadowRoot.querySelector('state-badge');
+             jasserteq(getComputedStyle(stateBadge).color, 'rgb(1, 1, 4)');
+             z.ao.remove();
+
+             // Event alerts
+             z = await initTest('alert2-overview', {}, {medium_priority_color: 'rgb(1, 1, 4)',
+                                                        off_color: 'rgb(1, 1, 5)'      });
+             await createExperiment(z, [ createState('n1', 1000, null, 20000, {priority: 'medium'}), // event
+                                         createState('n2', 8000, null, 7000, {priority: 'medium'}), // acked event
+                                         createState('n2a', 8000, null, 7200, {priority: 'medium', ack_required:true}), // acked event
+                                         createState('n3a', 2000, null, 20000, {priority: 'medium', ack_required:true}), // unacked event
+                                         createState('n4', 6* hrAgoMs, null, 20* hrAgoMs, {priority: 'medium'}),
+                                         createState('n4a', 6* hrAgoMs, null, 20* hrAgoMs, {priority: 'medium', ack_required: true}),
+             ], ['n1', 'n3a', 'n4a','n2', 'n2a'], nBelow=2);
+             tEls = z.ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
+             tt(tEls, 0, 'rgb(1, 1, 4)'); // n1
+             tt(tEls, 1, 'rgb(1, 1, 4)'); // n3a
+             tt(tEls, 2, 'rgb(1, 1, 4)'); // n4a
+             tt(tEls, 3, 'rgb(1, 1, 5)'); // n2
+             tt(tEls, 4, 'rgb(1, 1, 5)'); // n2a
+             z.ao.remove();
+         }
+         async function doTestSupersedeMgr() {
+             let alert2Tools = customElements.get('alert2-tools');
+
+             let smgr = new alert2Tools.SupersedeMgr();
+             
+             jasserteqSet(smgr.supersededBySet('alert2.d_n1'), new Set());
+             jasserteq(smgr.addNode('alert2.d_n1', []), true);
+             jasserteqSet(smgr.supersededBySet('alert2.d_n1'), new Set());
+             // n2 supersedes n1
+             jasserteq(smgr.addNode('alert2.d_n2', [ 'alert2.d_n1' ]), true);
+             jasserteqSet(smgr.supersededBySet('alert2.d_n1'), new Set([ 'alert2.d_n2']));
+             // Trying to add dup doesn't mess up results
+             jasserteq(smgr.addNode('alert2.d_n2', [ 'alert2.d_n1' ]), false);
+             jasserteqSet(smgr.supersededBySet('alert2.d_n1'), new Set([ 'alert2.d_n2']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n2'), new Set());
+
+             // Trying to add n1 supersedes n2 should fail
+             smgr.removeNode('alert2.d_n1');
+             jasserteq(smgr.addNode('alert2.d_n1', [ 'alert2.d_n2' ]), false);
+             jasserteqSet(smgr.supersededBySet('alert2.d_n1'), new Set([ 'alert2.d_n2']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n2'), new Set());
+
+             // n3 supersedes n2
+             jasserteq(smgr.addNode('alert2.d_n3', [ 'alert2.d_n2' ]), true);
+             jasserteqSet(smgr.supersededBySet('alert2.d_n1'), new Set([ 'alert2.d_n2', 'alert2.d_n3']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n2'), new Set([ 'alert2.d_n3' ]));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n3'), new Set());
+
+             // Trying to add n1 supersedes n3 should fail
+             jasserteq(smgr.addNode('alert2.d_n1', [ 'alert2.d_n3' ]), false);
+             jasserteqSet(smgr.supersededBySet('alert2.d_n1'), new Set([ 'alert2.d_n2', 'alert2.d_n3']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n2'), new Set([ 'alert2.d_n3' ]));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n3'), new Set());
+
+             // should be able to supersede an alert that doesn't yet exist
+             jasserteq(smgr.addNode('alert2.d_n5', [ 'alert2.d_n4','alert2.d_n3','alert2.d_n2' ]), true);
+             jasserteqSet(smgr.supersededBySet('alert2.d_n1'), new Set([ 'alert2.d_n2', 'alert2.d_n3','alert2.d_n5']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n2'), new Set([ 'alert2.d_n3','alert2.d_n5' ]));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n3'), new Set([ 'alert2.d_n5' ]));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n4'), new Set(['alert2.d_n5']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n5'), new Set());
+
+             // supersedes graph is
+             //
+             // n5 -> (n4, n3, n2)
+             // n3 -> n2 -> n1
+
+             jasserteq(smgr.addNode('alert2.d_n4', [ 'alert2.d_n5' ]), false);
+             // Now try n4 supersedes n2
+             jasserteq(smgr.addNode('alert2.d_n4', [ 'alert2.d_n2' ]), true);
+             jasserteqSet(smgr.supersededBySet('alert2.d_n1'), new Set([ 'alert2.d_n2', 'alert2.d_n3','alert2.d_n4','alert2.d_n5']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n2'), new Set([ 'alert2.d_n3','alert2.d_n5','alert2.d_n4' ]));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n3'), new Set([ 'alert2.d_n5' ]));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n4'), new Set(['alert2.d_n5']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n5'), new Set());
+             
+             smgr.removeNode('alert2.d_n2');
+             jasserteqSet(smgr.supersededBySet('alert2.d_n1'), new Set());
+             jasserteqSet(smgr.supersededBySet('alert2.d_n2'), new Set([ 'alert2.d_n3','alert2.d_n5','alert2.d_n4' ]));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n3'), new Set([ 'alert2.d_n5' ]));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n4'), new Set(['alert2.d_n5']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n5'), new Set());
+
+             // try two roots
+             smgr = new alert2Tools.SupersedeMgr();
+             jasserteq(smgr.addNode('alert2.d_n1', [ 'alert2.d_n3' ]), true);
+             jasserteq(smgr.addNode('alert2.d_n2', [ 'alert2.d_n3' ]), true);
+             jasserteq(smgr.addNode('alert2.d_n3', [ ]), true);
+             jasserteqSet(smgr.supersededBySet('alert2.d_n1'), new Set());
+             jasserteqSet(smgr.supersededBySet('alert2.d_n2'), new Set());
+             jasserteqSet(smgr.supersededBySet('alert2.d_n3'), new Set(['alert2.d_n1','alert2.d_n2']));
+
+             // Try cycle separated by a node
+             smgr = new alert2Tools.SupersedeMgr();
+             jasserteq(smgr.addNode('alert2.d_n6', [ 'alert2.d_n7','alert2.d_n8' ]), true);
+             jasserteq(smgr.addNode('alert2.d_n7', [ 'alert2.d_n8' ]), true);
+             jasserteq(smgr.addNode('alert2.d_n8', [ 'alert2.d_n6' ]), false);
+             jasserteqSet(smgr.supersededBySet('alert2.d_n6'), new Set());
+             jasserteqSet(smgr.supersededBySet('alert2.d_n7'), new Set(['alert2.d_n6']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n8'), new Set(['alert2.d_n7','alert2.d_n6']));
+
+             // Try diamond shape
+             smgr = new alert2Tools.SupersedeMgr();
+             jasserteq(smgr.addNode('alert2.d_n9', [ 'alert2.d_n10','alert2.d_n11' ]), true);
+             jasserteq(smgr.addNode('alert2.d_n10', [ 'alert2.d_n12' ]), true);
+             jasserteqSet(smgr.supersededBySet('alert2.d_n9'), new Set());
+             jasserteqSet(smgr.supersededBySet('alert2.d_n10'), new Set(['alert2.d_n9']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n11'), new Set(['alert2.d_n9']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n12'), new Set(['alert2.d_n9','alert2.d_n10']));
+             jasserteq(smgr.addNode('alert2.d_n11', [ 'alert2.d_n12' ]), true);
+             jasserteqSet(smgr.supersededBySet('alert2.d_n9'), new Set());
+             jasserteqSet(smgr.supersededBySet('alert2.d_n10'), new Set(['alert2.d_n9']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n11'), new Set(['alert2.d_n9']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n12'), new Set(['alert2.d_n9','alert2.d_n10','alert2.d_n11']));
+             jasserteq(smgr.addNode('alert2.d_n12', [ ]), true);
+             jasserteqSet(smgr.supersededBySet('alert2.d_n9'), new Set());
+             jasserteqSet(smgr.supersededBySet('alert2.d_n10'), new Set(['alert2.d_n9']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n11'), new Set(['alert2.d_n9']));
+             jasserteqSet(smgr.supersededBySet('alert2.d_n12'), new Set(['alert2.d_n9','alert2.d_n10','alert2.d_n11']));
+
+             // Try removing node that collapses parent
+             smgr = new alert2Tools.SupersedeMgr();
+             jasserteq(smgr.addNode('alert2.d_n1', [ 'alert2.d_n2' ]), true);
+             jasserteqSet(smgr.supersededBySet('alert2.d_n1'), new Set());
+             jasserteqSet(smgr.supersededBySet('alert2.d_n2'), new Set(['alert2.d_n1']));
+             smgr.removeNode('alert2.d_n1');
+             jasserteqSet(smgr.supersededBySet('alert2.d_n1'), new Set());
+             jasserteqSet(smgr.supersededBySet('alert2.d_n2'), new Set());
+
+             //
+             // NOTE - if add more tests here, also add then to test_t1.py::test_supersede_mgr
+             //
+             //
+             
+         }
+         async function doTestInternal() {
+             z = await initTest('alert2-create', {entInfo:null});
+             await sleepMs(10); // seems to help dom get itself sorted out
+             z.checkDefault('throttle_fires_per_mins', /Default if empty: ""/);
+             await z.setField('domain', 'alert2');
+             await z.setField('name', 'global_exception');
+             z.checkDefault('throttle_fires_per_mins', /Default if empty: \[\d+,\d+\]/);
+
+             z.ao.remove();
+         }
+
+         async function doTestMoreInfo() {
+             let z = await initTest('more-info-alert2');
+             let elem = z.ao;
+             elem.stateObj = createState('nn', 5000, 10000, null, { actions_on_script_running: true });
+             await sleepMs(500); // wait for history rpc
+             jassert(z.ao.shadowRoot.querySelector('div.alist div').textContent.trim().startsWith('No state updates found since'));
+             //console.log(z.ao.shadowRoot.querySelector('div#actionsOnStatus').textContent.trim());
+             jassert(z.ao.shadowRoot.querySelector('div#actionsOnStatus').textContent.trim().match('actions_on script running:\\s+true'));
+             z.ao.remove();
+         }
+
+         async function doTestAck() {
+             let z = await initTest('alert2-overview');
+
+             await createExperiment(z, [ createState('n1', 2000, 7000, 20000),
+                                         createState('n2', 3000, 7000, 1000),
+                                         createState('n3', 7000, 5000, 1000),
+                                         createState('n4', 7200, 4000, 10000) ],
+                                    ['n1', 'n4', 'n2', 'n3'], nBelow=2);
+             z.ao.remove();
+         }
+         async function doTestAnon() {
+             z = await initTest('alert2-create',{ entInfo: null});
+             await sleepMs(10); // seems to help dom get itself sorted out
+             await z.setField('domain', 'd');
+             await z.setField('name', '{{ genElem }}');
+             await z.setField('condition', 'off');
+             await z.setField('generator', '[ "z" ]');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.createB'));
+             z.checkErr(null);
+             
+             await z.setField('domain', 'alert2');
+             await z.setField('name', 'warning');
+             await z.setField('condition', '');
+             await z.setField('generator', '');
+             await z.setField('friendly_name', 'foo');
+             await clickWait(z.ao.shadowRoot.querySelector('ha-progress-button.createB'));
+             z.checkErr(null);
+
+             let uiCfg = getInitUiCfg();
+             uiCfg.nextAlertUiId = 3;
+             uiCfg.alertInfos = [
+                 { uiId: 1, cfg: { domain: 'd', name: '{{ genElem }}', condition: 'off', generator: '[ "z" ]' }},
+                 { uiId: 2, cfg: { domain: 'alert2', name: 'warning', 'friendly_name': 'foo' }}
+             ];
+             jassertObjeq(await callApi('POST', 'alert2test/tcheck', { stage:'getUiData'} ), uiCfg);
+             z.ao.remove();
+             
+             z = await initTest('alert2-manager');
+             await sleepMs(10); // seems to help dom get itself sorted out
+             jasserteq((await waitSearch(z)).results.length, 2);
+             rs = z.ao.shadowRoot.querySelectorAll('div.results > div.anent');
+             jasserteq(rs.length, 2);
+             jasserteq(rs[0].textContent, 'alert2.alert2_warning');
+             jasserteq(rs[1].textContent, 'sensor.alert2generator_anonymous_0');
+             z.ao.remove();
+         }
+
+         async function emptyCreate() {
+             let z = await initTest('alert2-create', {entInfo:null});
+             await sleepMs(10); // seems to help dom get itself sorted out
+         }
+         
+        </script>
+    </head>
+    <body>
+        <wa-input label="ick" ></wa-input>
+        <h2 id="testStatus">Test: Loading libraries...</h2>
+        <div id="testDiv" style="width: 100%; max-width: 30em;"></div>
+    </body>
+</html>
