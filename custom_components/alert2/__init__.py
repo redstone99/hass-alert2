@@ -925,8 +925,20 @@ class Alert2Data:
     #
     # isBulk True means that either this is called during HA startup, or it's part of a reload and
     # someone will update last_reload_time
+    # Maximum number of alerts/tracked-alerts that may be created via the UI, to prevent
+    # an authenticated user from exhausting disk/memory by flooding alert declarations (CWE-770).
+    MAX_UI_ALERTS = 500
+
     async def declareAlert(self, obj, genVars=None, doReport=True, checkForUpdate=False, isTracked=False, fromUI=False):
         newEnt = None
+        if fromUI and not checkForUpdate:
+            curCount = sum(len(v) for v in self.alerts.values()) + sum(len(v) for v in self.tracked.values())
+            if curCount >= self.MAX_UI_ALERTS:
+                errMsg = f'Cannot create alert via UI: limit of {self.MAX_UI_ALERTS} alerts reached'
+                if doReport:
+                    report(DOMAIN, 'error', errMsg)
+                    return False
+                return errMsg
         try:
             if isTracked:
                 #_LOGGER.info(f'validated tracked alert: {obj}')
