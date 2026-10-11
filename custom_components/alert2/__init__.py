@@ -759,10 +759,11 @@ class Alert2Data:
                     # We're in storage mode
                     fallbackRegister = False
 
+                    foundLovelaceResource = False
                     if not getattr(resources, "loaded", True):
                         await resources.async_load()
+                        resources.loaded = True
 
-                    foundLovelaceResource = False
                     for item in resources.async_items():
                         if (item.get("url") or "").split("?")[0] != JS_URL:
                             continue
