@@ -5477,3 +5477,39 @@ async def test_actions(hass, service_calls, caplog):
     service_calls.popNotifyEmpty('persistent_notification', 't10: turned on')
     await hass.async_block_till_done()
     assert hass.states.get('input_text.txt10').state == 'x=t10 r=Fire'
+
+# no frontend
+async def test_frontend1(hass, service_calls, caplog):
+    cfg = { 'alert2' : { } }
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert 'Not registering Alert2 frontend' in caplog.text
+# yaml frontend
+async def test_frontend2(hass, service_calls, caplog):
+    cfg = { 'alert2' : { }, 'frontend': { 'development_repo': '/tmp' }, 'lovelace': {
+        'resource_mode': 'yaml',
+    }}
+    assert await async_setup_component(hass, "lovelace", cfg)
+    assert await async_setup_component(hass, "frontend", cfg)
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert 'Registered fallback Alert2 JS resource' in caplog.text
+# storage frontend
+async def test_frontend3(hass, service_calls, caplog):
+    cfg = { 'alert2' : { }, 'frontend': { 'development_repo': '/tmp' }, 'lovelace': {
+        'resource_mode': 'storage',
+    }}
+    assert await async_setup_component(hass, "lovelace", cfg)
+    assert await async_setup_component(hass, "frontend", cfg)
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+    assert 'Registered Lovelace resource' in caplog.text
+    
+    
+    

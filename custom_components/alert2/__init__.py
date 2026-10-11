@@ -786,8 +786,9 @@ class Alert2Data:
                 frontend_integration = async_get_loaded_integration(self._hass, 'frontend')
                 from homeassistant.components.frontend import add_extra_js_url
                 add_extra_js_url(self._hass, url)
-                _LOGGER.info("Registered fallback JS resource %s", url)
+                _LOGGER.info("Registered fallback Alert2 JS resource %s", url)
             except IntegrationNotLoaded:
+                _LOGGER.info("Not registering Alert2 frontend")
                 pass  # no frontend, so fine if we don't load JS
     
     async def shutdown_alerts(self):

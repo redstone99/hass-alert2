@@ -2,10 +2,9 @@
 <html lang="en">
     <!-- 
          Run server with (from the Alert2 repo):
-              JTESTDIR=/home/redstone/home-monitoring/homeassistant JTEST_JS_DIR=/home/redstone/tmp/hass-alert2-ui venv/bin/pytest tests/dummy_server.py
+              venv/bin/pytest --show-capture=no tests/dummy_server.py
          View page at:
-             http://localhost:50005/jtest/tests/t2.html
-         
+             http://localhost:50005/jtest/t2.html         
     -->
     <head>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -87,6 +86,7 @@
              const eqSet = (xs, ys) => (xs.size === ys.size) && [...xs].every((x) => ys.has(x));
              if (!eqSet(sa, sb)) {
                  console.error('set ', sa, ' != ', sb);
+                 alert2Tools.incrJassertFailCount();
                  jassert(false);
              }
          }
@@ -110,15 +110,22 @@
              }};
          }
          let testDiv;
+         let alert2Tools;
+         let jassert;
+         let jasserteq;
+         let jFireEvent;
          window.addEventListener('DOMContentLoaded', async function() {
              await customElements.whenDefined('wa-input');
              await loadScript('./ha-lib.js', 'module');
-             await loadScript('../alert2.js');
+             await loadScript('../js/alert2.js');
              testDiv = document.querySelector('#testDiv');
-             let alert2Tools = customElements.get('alert2-tools');
+             alert2Tools = customElements.get('alert2-tools');
              alert2Tools.debounceMs = 1;
+             jassert = alert2Tools.jassert;
+             jasserteq = alert2Tools.jasserteq;
+             jFireEvent = alert2Tools.fireEvent;
              if (0) {
-                 jassert(await startTest(doTestMoreInfo));
+                 jassert(await startTest(doTestColorConfig));
                  return;
              }
              jassert(await startTest(doTestDefaults));
@@ -139,21 +146,14 @@
              jassert(await startTest(doTestMoreInfo));
              jassert(await startTest(doTestAck));
              jassert(await startTest(doTestAnon));
+             jassert(await startTest(doTestVersion));
              let testStatusEl = document.querySelector('#testStatus');
-             if (jassertFailCount == 0) {
+             if (alert2Tools.jassertFailCount === 0) {
                  testStatusEl.innerHTML = `Test: All done`;
              } else {
                  testStatusEl.innerHTML = `Test: Ended with errors`;
              }
          });
-         // jassert and jassertFailCount are declared in alert2.js
-         function jasserteq(a, b) {
-             if (a !== b) {
-                 jassertFailCount += 1;
-                 throw new Error(`assert failed "${a}" != "${b}"`);
-                 
-             }
-         }
          function testObjeq(obj1, obj2) {
              if (obj1 === obj2) return true;
              if (typeof obj1 !== 'object' || obj1 === null || 
@@ -178,6 +178,7 @@
          function jassertObjeq(a, b) {
              if (!testObjeq(a, b)) {
                  console.error(a, '  !=  ', b);
+                 alert2Tools.incrJassertFailCount();
                  jassert(false);
              }
          }
@@ -238,7 +239,7 @@
          }
          async function createExperiment(z, stateList, nodeList, nBelow=0) {
              let hass = { states: {
-                 'binary_sensor.alert2_ha_startup_done': { state: 'on', attributes: { manifest_version: 'v.a.b.c' } },
+                 'binary_sensor.alert2_ha_startup_done': { state: 'on', attributes: { manifest_version: 'v.a.b.c', js_version: alert2Tools.version } },
              },
                           callApi: z.firstHass.callApi,
                           callWs: z.firstHass.callWs,
@@ -247,8 +248,8 @@
              for (const astate of stateList) {
                  hass.states['alert2.'+astate.attributes.domain+'_'+astate.attributes.name] = astate;
              }
-             console.log('createExperiment with', hass);
              z.ao.hass = hass;
+             console.log('createExperiment with', hass, z.ao.hass);
              await sleepMs(1200);
              let tEls = z.ao.shadowRoot.querySelectorAll('hui-alert2-entity-row');
              jasserteq(tEls.length, nodeList.length);
@@ -395,7 +396,7 @@
                  ws.send(JSON.stringify(params));
              }
              let newHass = {
-                 states: { 'binary_sensor.alert2_ha_startup_done' : { attributes: { manifest_version: 'v.a.b.c' } } },
+                 states: { 'binary_sensor.alert2_ha_startup_done' : { attributes: { manifest_version: 'v.a.b.c', js_version: alert2Tools.version  } } },
                  callApi: callApi,
                  callWs: callWs,
                  connection: connection,
@@ -1700,7 +1701,7 @@
              let recent2 = new Date();
              recent2.setSeconds(recent2.getSeconds() - 12);
              z.ao.hass = {
-                 states: { 'binary_sensor.alert2_ha_startup_done' : { attributes: { manifest_version: 'v.a.b.c' } },
+                 states: { 'binary_sensor.alert2_ha_startup_done' : { attributes: { manifest_version: 'v.a.b.c', js_version: alert2Tools.version  } },
                            'alert2.dd_nn': { state: 'on', attributes: { last_on_time: recent.toISOString(),
                                                                         fires_since_last_notify: 0,
                                                                         has_display_msg: false,
@@ -2408,6 +2409,28 @@
          async function emptyCreate() {
              let z = await initTest('alert2-create', {entInfo:null});
              await sleepMs(10); // seems to help dom get itself sorted out
+         }
+
+         async function doTestVersion() {
+             let z = await initTest('alert2-overview');
+             let oldVersion = z.ao.shadowRoot.querySelectorAll('ha-alert.oldversion');
+             jasserteq(oldVersion.length, 0);
+             
+             await createExperiment(z, [ createState('n1', 1000, 7000, 20000),
+                                      createState('n5', 5000, 7000, 20000, {priority:'medium'}) ],
+                                    ['n5', 'n1']);
+             z.ao.hass = {
+                 states: { 'binary_sensor.alert2_ha_startup_done' : { attributes: { manifest_version: 'v.a.b.c', js_version: 'old'  } },
+                 },
+                 callApi: z.firstHass.callApi,
+                 callWs: z.firstHass.callWs,
+                 connection: z.firstHass.connection,
+             };
+             await sleepMs(1000); // for subscription to happen, and actually for refresh to happen
+             oldVersion = z.ao.shadowRoot.querySelectorAll('ha-alert.oldversion');
+             console.log(oldVersion);
+             jasserteq(oldVersion.length, 1);
+             z.ao.remove();
          }
          
         </script>

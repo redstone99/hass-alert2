@@ -1,8 +1,8 @@
 // VERSION is machine-read, so the following line must not be changed without also
 // changing alert2/binary_sensor.py::getUiVersion
 const VERSION = '1.23';
-const INTERNAL_VERSION = 163;
-const VERSION_STR = `${VERSION} (internal version ${INTERNAL_VERSION})`;
+const INTERNAL_VERSION = 165;
+const VERSION_STR = `v${VERSION} (internal version ${INTERNAL_VERSION})`;
 console.log(`alert2.js ${VERSION_STR}. HA frontend version ${window.frontendVersion}`);
 
 // notificaiton_control uses same string for enable/disable.  for snooze it uses timestamp
@@ -14,6 +14,7 @@ const EVENT_ALERT_NEVER_FIRED_STATE = 'has never fired'
 // TODDO - maybe in 2028, remove this legacy support.
 const useHaInput = window.frontendVersion >= '20260415';
 const useRadioGroup = window.frontendVersion >= '20260527'; // HA 2026.6
+
 
 //
 //
@@ -33,7 +34,7 @@ const css = LitElement.prototype.css;
 function checkJsUpgradeAlert(hass) {
     let mObj = hass.states['binary_sensor.alert2_ha_startup_done'];
     const serverJsVersion = Object.hasOwn(mObj.attributes, 'js_version') ? mObj.attributes.js_version : 'unknown';
-    return (serverJsVersion !== VERSION) ? html`<ha-alert alert-type=${"warning"}>New Alert2 frontend version available.  Reload card (${jsVersion} vs ${VERSION})</ha-alert>` : '';
+    return (serverJsVersion !== VERSION) ? html`<ha-alert class="oldversion" alert-type=${"warning"}>New Alert2 frontend version available.  Reload card (${serverJsVersion} vs ${VERSION})</ha-alert>` : '';
 }
     
 // From
@@ -2247,7 +2248,7 @@ class MoreInfoAlert2 extends LitElement {
             }
             data.enable = 'on';
             let hours = val;
-            var newDate = new Date((new Date()).getTime() + hours*60*60*1000);
+            let newDate = new Date((new Date()).getTime() + hours*60*60*1000);
             data.snooze_until = newDate;
             data.ack_at_snooze_start = this._snooze_includes_ack;
         }
@@ -2512,6 +2513,11 @@ class Alert2Tools {
     static set debounceMs(v) { gDebounceMs = v; }
     static get DisplayValMonitor() { return DisplayValMonitor; }
     static get SupersedeMgr() { return SupersedeMgr; }
+    static get jassert() { return jassert; }
+    static get jasserteq() { return jasserteq; }
+    static get jassertFailCount() { return jassertFailCount; }
+    static incrJassertFailCount() { jassertFailCount += 1; }
+    static get version() { return VERSION; }
 };
 
 let gDebounceMs = 750;

@@ -2,7 +2,7 @@
 <html lang="en">
     <!-- 
          Run server with (from the Alert2 repo):
-              JTESTDIR=~/home-monitoring/homeassistant venv/bin/pytest tests/dummy_server.py
+              venv/bin/pytest --show-capture=no tests/dummy_server.py
          View page at:
              http://localhost:50005/jtest/t.html
          
@@ -104,9 +104,15 @@
                  }
              }};
          }
+         let alert2Tools;
+         let jassert;
+         let jasserteq;
          window.addEventListener('DOMContentLoaded', async function() {
              await loadScript('ha-lib.js', 'module');
              await loadScript('../js/alert2.js');
+             alert2Tools = customElements.get('alert2-tools');
+             jassert = alert2Tools.jassert;
+             jasserteq = alert2Tools.jasserteq;
              await startTest(doTest);
              await startTest(doTest2);
              await startTest(doTest3);
@@ -117,22 +123,12 @@
              await startTest(doTest8);
              await startTest(doTestOld);
              let testStatusEl = document.querySelector('#testStatus');
-             if (jassertFailCount == 0) {
+             if (alert2Tools.jassertFailCount == 0) {
                  testStatusEl.innerHTML = `Test: All done`;
              } else {
                  testStatusEl.innerHTML = `Test: Ended with errors`;
              }
          });
-         function jassert(abool) {
-             if (!abool) {
-                 throw new Error("assert failed");
-             }
-         }
-         function jasserteq(a, b) {
-             if (a !== b) {
-                 throw new Error(`assert failed "${a}" != "${b}"`);
-             }
-         }
          function sleepMs(ms) {
              return new Promise(resolve => setTimeout(resolve, ms));
          }

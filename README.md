@@ -1029,7 +1029,7 @@ alert2:
 
 ## Front-end UI
 
-Alert2 automatically loads two custom Lovelace cards called "Alert2 Overview" and "Alert2 Manager" into your HA frontend. The cars allow you to view recent alerts and create new alerts via the UI.  Alerts2 also loads extra functionality to the more-info popup that appears when you click on an Alert2 entity.  Details below.
+Alert2 automatically loads two custom Lovelace cards called "Alert2 Overview" and "Alert2 Manager" into your HA frontend. The cards allow you to view recent alerts and create new alerts via the UI.  Alert2 also loads extra functionality to the more-info popup that appears when you click on an Alert2 entity.  Details below.
 
 If you configure dashboards via the UI, start editing a dashboard, then click on "Add Card" (or the "+" icon), then search for either card and click to add.
 
@@ -1157,38 +1157,27 @@ Times are displayed in the browser local time zone.
 
 Lastly, if the alert config specifies an [automation action](https://github.com/redstone99/hass-alert2#automation-actions), you will see a line reporting the run status of the automation along with buttons to cancel or initiate a run.
 
-
-
-
-
-
-
-
-### Updating the frontend.
-
-
-After installing or upgrading, you can verify the Alert2 UI version you're running by clicking on the "Alerts" header of the Lovelace card:
-
-![Alert2 overview card with version info](resources/overview2.png)
-
-
-
-
-
-
-
-
-
-
-
-
-### Other ways to view alerts
+#### Other ways to view alerts
 
 You may also add alert2 entities to entities cards and other cards that support entities.  If you click on an alert shown in such a situation, you'll see a popup (called a "more-info dialog") similar to the one shown above.  However, since Alert2 isn't integrated into the core HomeAssistant, that dialog will include some extra default sections like "history", but will also include the sections described above.
 
 Finally, you can also view alert information by going to Settings -> Devices & Services -> Entities, typing "alert2." in the search box and browsing the list.  Clicking on one will popup the "more-info dialog".
 
 If you ever need to know, Alert2 stores the UI state, including entities defined, in your configuration directory in a JSON file called `.storage/alert2.storage`.
+
+
+### Updating the frontend
+
+When a new version of the Alert2 UI frontend is available, you will see a warning at the top of the Alert2 Overview or Alert2 Manager cards:
+
+<img src="resources/upgrade.png" width="500"/>
+
+Reloading the dashboard (possibly twice) should upgrade the frontend and remove the warning.  You can verify the Alert2 UI version you're running by clicking on the "Alerts" header of the Lovelace card:
+
+![Alert2 overview card with version info](resources/overview2.png)
+
+On the Android HA companion app, click on the vertical dots at the top and click on "Reload resources". You may need to do that twice to upgrade the frontend.
+
 
 
 ### Editing Alert2 entity settings
@@ -1329,21 +1318,16 @@ Feel free to jump in on any of the threads!
 
 ### Testing
 
-To run the tests:
+To run the HA component tests:
 
     cd [ hass-alert2 directory ]
     python3 -m venv venv
     venv/bin/pip install --upgrade -r requirements.txt -r requirements_test.txt
     venv/bin/pytest
 
+To run the frontend tests:
 
-You can run each test individually and/or load the alert2 source code from a different directory.
-If your custom_components directory is in /myha/custom_components, you'd say:
-
-    JTESTDIR=/myha venv/bin/pytest --show-capture=no tests/test_t1.py
-    JTESTDIR=/myha venv/bin/pytest --show-capture=no tests/test_ui.py
-
-
-To run the tests in hass-alert2-ui, you'll need to run the dummy server. It listens on port 50005. If you're alert2-ui repo is in /tmp/hass-alert2-ui, you'd run the dummy server like:
-
-    JTEST_JS_DIR=/tmp/hass-alert2-ui  venv/bin/pytest tests/dummy_server.py
+    venv/bin/pytest --show-capture=no tests/dummy_server.py
+    # view in browser:
+    #    http://localhost:50005/jtest/t.html
+    #    http://localhost:50005/jtest/t2.html
