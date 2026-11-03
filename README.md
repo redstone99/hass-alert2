@@ -57,6 +57,7 @@ See also the companion guide, [Alert2 Recipes](Recipes.md), for additional examp
    - Create or edit alerts via the UI. Also reload YAML without restarting HA.
    - Overview card showing recently active alerts, prioritized, and custom, dynamic messages.
 - **Hysteresis**. Reduce spurious alerts as sensors fluctuate.
+- **Actions**. Specify actions to run when an alert fires.
 
 Suggestions welcome! Start a [Discussion](https://github.com/redstone99/hass-alert2/discussions) or file an [Issue](https://github.com/redstone99/hass-alert2/issues).  Or follow the [development thread](https://community.home-assistant.io/t/alert2-a-new-alerting-component).
 
