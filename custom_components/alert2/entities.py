@@ -1162,6 +1162,8 @@ class AlertBase(AlertCommon, RestoreEntity):
                 tdate = dt.parse_datetime(last_state.attributes['last_tried_notify_time'])
                 if not self.last_tried_notify_time or tdate > self.last_tried_notify_time:
                     self.last_tried_notify_time = tdate
+            elif self.last_notified_time and not self.last_tried_notify_time:
+                self.last_tried_notify_time = self.last_notified_time
             if 'last_fired_time' in last_state.attributes and last_state.attributes['last_fired_time']:
                 tdate = dt.parse_datetime(last_state.attributes['last_fired_time'])
                 if not self.last_fired_time or tdate > self.last_fired_time:
@@ -1208,6 +1210,7 @@ class AlertBase(AlertCommon, RestoreEntity):
             'custom_ui_more_info' : 'more-info-alert2',
             "custom_ui_state_card": 'state-card-alert2',
             'last_notified_time': self.last_notified_time,
+            'last_tried_notify_time': self.last_tried_notify_time,
             'last_fired_time': self.last_fired_time,
             'last_fired_message': self.last_fired_message,
             'last_ack_time': self.last_ack_time,
