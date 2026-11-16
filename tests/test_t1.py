@@ -5019,6 +5019,11 @@ async def test_restore_state(hass, service_calls):
     assert hass.states.get('alert2.d_t9').state == 'on' # stays on
     assert hass.states.get('alert2.d_t10').state == 'on'
     assert hass.states.get('alert2.d_t11').state == 'on' # stays on
+    gad = hass.data[DOMAIN]
+    t11LastTriedNotifyTime = gad.alerts['d']['t11'].last_tried_notify_time
+    assert t11LastTriedNotifyTime
+    #_LOGGER.info(f'   last time was {t11LastTriedNotifyTime} with type={type(t11LastTriedNotifyTime)}')
+
     service_calls.popNotifySearch('persistent_notification', 't12', 't12: turned off')
     assert hass.states.get('alert2.d_t12').state == 'off'
     assert service_calls.isEmpty()
@@ -5033,6 +5038,16 @@ async def test_restore_state(hass, service_calls):
     assert len(mock_write_data.mock_calls) == 1
     acall = mock_write_data.mock_calls[0]
     slist = acall.args[0]
+    found = False
+    # First make sure last_tried_notify_time is persisted
+    for astate in slist:
+        pstate = orjson.loads(orjson.dumps(astate['state']))
+        attr = pstate['attributes']
+        assert 'last_tried_notify_time' in attr, pstate
+        if pstate["entity_id"] == 'alert2.d_t11':
+            assert attr['last_tried_notify_time'] == t11LastTriedNotifyTime.isoformat()
+            found = True
+    assert found
     found = False
     for astate in slist:
         pstate = orjson.loads(orjson.dumps(astate['state']))
@@ -5510,6 +5525,33 @@ async def test_frontend3(hass, service_calls, caplog):
     await hass.async_block_till_done()
     assert service_calls.isEmpty()
     assert 'Registered Lovelace resource' in caplog.text
+    
+    
+async def skip_test_missing(hass, service_calls):
+    # Test how defaults can be overridden on a key-by-key basis
+    await setAndWait(hass, "sensor.a", 'off')
+    await setAndWait(hass, "sensor.b", 'off')
+    cfg = { 'alert2' : { 'alerts': [
+        # missing sensor becomes empty string
+        #{ 'domain':'test', 'name':'t1', 'condition':'{{ states("sensor.b") == "yum" }}' },
+        # bad conversion error 'unknown' does not convert to float
+        #{ 'domain':'test', 'name':'t2', 'condition':'{{ states("sensor.b")|float(3) > 5 }}' },
+        #{ 'domain':'test', 'name':'t3', 'condition':'{{ states("sensor.a") == "on" }}' },
+        #{ 'domain':'test', 'name':'t4', 'condition':'{{ states.sensor["foo"].last_changed }}' },
+        { 'domain':'test', 'name':'t5', 'condition':'{{ states("sensor.a") == "on" or states("sensor.b") == "on" }}' },
+    ]}}
+    assert await async_setup_component(hass, DOMAIN, cfg)
+    await hass.async_start()
+    await hass.async_block_till_done()
+    assert service_calls.isEmpty()
+
+    _LOGGER.info('-------------------------------')
+    await setAndWait(hass, "sensor.a", 'unknown')
+
+
+    #await setAndWait(hass, "sensor.a", 'on')
+    #service_calls.popNotifySearch('persistent_notification', 't1', 't1: turned on', extraFields={ 'data': {'a':7}})
+    #assert service_calls.isEmpty()
     
     
     
